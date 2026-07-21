@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.85 MSVC
+        uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $packageVersion = $metadata.packages[0].version
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($tagVersion -ne $packageVersion) {
+            throw "Tag version $tagVersion does not match Cargo version $packageVersion"
+          }
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run tests
+        run: cargo test --all-targets
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build release executable
+        run: cargo build --release
+
+      - name: Create release archive
+        id: package
+        shell: pwsh
+        run: |
+          $archiveBase = "codex-usage-monitor-$env:GITHUB_REF_NAME-windows-x86_64"
+          $staging = Join-Path $env:RUNNER_TEMP $archiveBase
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item target\release\codex-usage-monitor.exe $staging
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, SECURITY.md $staging
+          Copy-Item docs\RELEASE_CHECKLIST.md (Join-Path $staging "RELEASE_CHECKLIST.md")
+          $archive = Join-Path $env:GITHUB_WORKSPACE "$archiveBase.zip"
+          Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $archive
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "name=$archiveBase.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+      - name: Attach archive to GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: |
+          if (gh release view $env:GITHUB_REF_NAME) {
+            gh release upload $env:GITHUB_REF_NAME $env:ARCHIVE --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME $env:ARCHIVE --verify-tag --generate-notes
+          }
