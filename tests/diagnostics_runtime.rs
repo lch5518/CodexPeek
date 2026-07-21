@@ -156,3 +156,57 @@ fn separately_constructed_loggers_share_rotation_lock_and_keep_complete_lines() 
     let _ = fs::remove_file(backup);
     let _ = fs::remove_file(path);
 }
+
+#[test]
+fn loggers_created_before_and_after_parent_creation_share_the_rotation_gate() {
+    let root = std::env::temp_dir().join(format!(
+        "diagnostic-missing-parent-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let path = root.join("nested").join("diagnostic.log");
+    let first = DiagnosticLogger::for_path(&path);
+    first
+        .record_safe(SafeDiagnostic::Settings { valid: true })
+        .unwrap();
+    let second = DiagnosticLogger::for_path(&path);
+    let start = Arc::new(Barrier::new(8));
+    let mut workers = Vec::new();
+    for worker in 0..8 {
+        let logger = if worker % 2 == 0 {
+            first.clone()
+        } else {
+            second.clone()
+        };
+        let start = Arc::clone(&start);
+        workers.push(std::thread::spawn(move || {
+            start.wait();
+            for event in 0..600 {
+                logger
+                    .record_safe(SafeDiagnostic::Cli {
+                        path: std::path::PathBuf::from(format!(
+                            "creation-order-{worker}-{event}-{}",
+                            "x".repeat(240)
+                        )),
+                        exists: true,
+                    })
+                    .unwrap();
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+
+    let backup = path.with_extension("log.1");
+    assert!(fs::metadata(&path).unwrap().len() <= 1024 * 1024);
+    assert!(backup.exists());
+    for candidate in [&path, &backup] {
+        for line in fs::read_to_string(candidate).unwrap().lines() {
+            assert!(line.contains("cli_unavailable") || line.contains("settings_invalid"));
+        }
+    }
+    let _ = fs::remove_dir_all(root);
+}

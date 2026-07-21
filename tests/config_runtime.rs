@@ -251,3 +251,39 @@ fn separately_constructed_stores_do_not_back_up_a_newly_saved_settings_file() {
     }));
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn stores_created_before_and_after_root_creation_share_load_save_gate() {
+    let root = test_root("creation-order-gate");
+    let first = SettingsStore::for_root(&root);
+    let initial = Settings {
+        taskbar_offset: 1,
+        ..Settings::default()
+    };
+    first.save(&initial).unwrap();
+    let second = SettingsStore::for_root(&root);
+    let saved = Settings {
+        taskbar_offset: 888,
+        ..Settings::default()
+    };
+
+    for _ in 0..200 {
+        fs::write(first.path(), "{".repeat(256 * 1024)).unwrap();
+        let reader = first.clone();
+        let reader_thread = std::thread::spawn(move || reader.load());
+        second.save(&saved).unwrap();
+        let _ = reader_thread.join().unwrap();
+        assert_eq!(second.load().unwrap(), saved);
+    }
+
+    assert!(fs::read_dir(&root).unwrap().all(|entry| {
+        let path = entry.unwrap().path();
+        !path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("settings.corrupt")
+            || !fs::read_to_string(path).unwrap_or_default().contains("888")
+    }));
+    let _ = fs::remove_dir_all(root);
+}

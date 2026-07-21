@@ -240,8 +240,7 @@ fn shared_gate(root: &Path) -> Arc<Mutex<()>> {
 }
 
 fn normalized_path(path: &Path) -> PathBuf {
-    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    fs::canonicalize(&absolute).unwrap_or(absolute)
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 impl Default for SettingsStore {

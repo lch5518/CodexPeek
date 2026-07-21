@@ -62,3 +62,12 @@
   손상 백업으로 이동하지 않음을 확인한다. 백업 이름에는 초 단위, PID, nonce를 포함한다.
 - 입력 하드닝: 공백 전용 monitor name, `.`/`..` GitHub owner/repo, `vv` 버전 태그를 RED로 확인한 뒤
   거부하도록 변경했다. 단일 `v` 접두사는 계속 허용한다.
+
+## Gate 키 안정화 RED/GREEN 증거
+
+- 기존 gate registry는 경로가 없을 때 `absolute` 키를, 생성된 뒤에는 `canonicalize` 키를 사용했다. Windows에서
+  생성 전 store와 생성 후 store가 동시에 load/save하는 RED 회귀는 서로 다른 gate 때문에 atomic replace 중
+  `Access denied`로 실패했다.
+- logger와 settings 모두 파일시스템 존재 여부를 보지 않는 `std::path::absolute` 결과만 gate 키로 사용하도록
+  통일했다. 누락된 parent/root 상태에서 인스턴스 A를 만든 뒤 첫 write/save로 생성하고, 같은 원래 경로로 B를
+  만든 GREEN 회귀는 동시 log rotation 및 200회 load/save를 각각 통과했다.

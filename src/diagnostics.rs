@@ -142,16 +142,7 @@ impl DiagnosticLogger {
 }
 
 fn normalized_path(path: PathBuf) -> PathBuf {
-    let absolute = std::path::absolute(&path).unwrap_or(path);
-    absolute
-        .parent()
-        .and_then(|parent| {
-            fs::canonicalize(parent)
-                .ok()
-                .zip(absolute.file_name())
-                .map(|(parent, file_name)| parent.join(file_name))
-        })
-        .unwrap_or(absolute)
+    std::path::absolute(&path).unwrap_or(path)
 }
 
 fn shared_gate(path: &Path) -> Arc<Mutex<()>> {
