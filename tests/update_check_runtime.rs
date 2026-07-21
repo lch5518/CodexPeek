@@ -1,6 +1,8 @@
 use std::time::{Duration, SystemTime};
 
-use codex_usage_monitor::{HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateChecker};
+use codex_usage_monitor::{
+    HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateChecker, UreqHttpClient,
+};
 
 struct FakeClient {
     response: HttpResponse,
@@ -74,4 +76,18 @@ fn malformed_oversized_non_success_and_unsafe_urls_do_not_report_updates() {
             .unwrap()
             .is_none());
     }
+}
+
+#[test]
+fn production_http_client_refuses_non_https_before_network_io() {
+    let client = UreqHttpClient;
+    assert_eq!(
+        client.get(
+            "http://github.com/owner/repo",
+            "CodexUsageMonitor/test",
+            Duration::from_secs(1),
+            1024,
+        ),
+        Err(UpdateCheckError::Network)
+    );
 }

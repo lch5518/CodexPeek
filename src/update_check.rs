@@ -35,6 +35,46 @@ pub trait ReleaseHttpClient: Send + Sync {
     ) -> Result<HttpResponse, UpdateCheckError>;
 }
 
+/// ureq 기반의 HTTPS 전용 릴리스 HTTP 클라이언트입니다.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UreqHttpClient;
+
+impl ReleaseHttpClient for UreqHttpClient {
+    fn get(
+        &self,
+        url: &str,
+        user_agent: &str,
+        timeout: Duration,
+        max_bytes: usize,
+    ) -> Result<HttpResponse, UpdateCheckError> {
+        if !url.starts_with("https://") || max_bytes == 0 {
+            return Err(UpdateCheckError::Network);
+        }
+        let max_bytes = u64::try_from(max_bytes).map_err(|_| UpdateCheckError::Network)?;
+        let config = ureq::Agent::config_builder()
+            .https_only(true)
+            .timeout_global(Some(timeout))
+            .user_agent(user_agent)
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
+        let mut response = agent
+            .get(url)
+            .call()
+            .map_err(|_| UpdateCheckError::Network)?;
+        let status = response.status().as_u16();
+        let body = response
+            .body_mut()
+            .with_config()
+            .limit(max_bytes)
+            .read_to_vec()
+            .map_err(|_| UpdateCheckError::Network)?;
+        if u64::try_from(body.len()).map_err(|_| UpdateCheckError::Network)? > max_bytes {
+            return Err(UpdateCheckError::Network);
+        }
+        Ok(HttpResponse { status, body })
+    }
+}
+
 /// 안전하게 표시할 새 버전 정보입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AvailableUpdate {
