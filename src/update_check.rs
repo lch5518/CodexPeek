@@ -1,0 +1,156 @@
+use std::time::{Duration, SystemTime};
+
+use semver::Version;
+use serde::Deserialize;
+
+const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const USER_AGENT: &str = "CodexUsageMonitor/0.1 update-check";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 제한된 HTTP 응답 정보입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpResponse {
+    /// HTTP 상태 코드입니다.
+    pub status: u16,
+    /// 제한된 길이로 읽은 응답 본문입니다.
+    pub body: Vec<u8>,
+}
+
+/// 업데이트 검사 통신 실패를 나타내는 안전한 오류입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateCheckError {
+    /// 네트워크 요청을 완료하지 못했습니다.
+    Network,
+}
+
+/// 업데이트 확인에 필요한 최소 HTTP 인터페이스입니다.
+pub trait ReleaseHttpClient: Send + Sync {
+    /// 제한된 응답 크기와 시간 제한을 사용하여 GET 요청을 보냅니다.
+    fn get(
+        &self,
+        url: &str,
+        user_agent: &str,
+        timeout: Duration,
+        max_bytes: usize,
+    ) -> Result<HttpResponse, UpdateCheckError>;
+}
+
+/// 안전하게 표시할 새 버전 정보입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AvailableUpdate {
+    /// 비교를 통과한 새 버전입니다.
+    pub version: Version,
+    /// GitHub의 HTTPS 릴리스 페이지입니다.
+    pub release_url: String,
+}
+
+/// GitHub 릴리스만 조회하는 업데이트 검사기입니다.
+#[derive(Clone, Debug)]
+pub struct UpdateChecker {
+    current_version: Version,
+    owner: String,
+    repository: String,
+    max_bytes: usize,
+}
+
+impl UpdateChecker {
+    /// 유효한 GitHub 저장소 메타데이터가 있을 때만 검사기를 만듭니다.
+    pub fn new(
+        current_version: &str,
+        repository_url: Option<&str>,
+        max_bytes: usize,
+    ) -> Option<Self> {
+        let current_version = Version::parse(current_version).ok()?;
+        let (owner, repository) = parse_repository(repository_url?)?;
+        (max_bytes > 0).then_some(Self {
+            current_version,
+            owner,
+            repository,
+            max_bytes,
+        })
+    }
+
+    /// 마지막 검사 시각이 지났을 때만 최신 릴리스를 확인합니다.
+    pub fn check_if_due(
+        &self,
+        client: &dyn ReleaseHttpClient,
+        last_check: Option<SystemTime>,
+        now: SystemTime,
+    ) -> Result<Option<AvailableUpdate>, UpdateCheckError> {
+        if last_check.is_some_and(|at| {
+            now.duration_since(at)
+                .is_ok_and(|elapsed| elapsed < CHECK_INTERVAL)
+        }) {
+            return Ok(None);
+        }
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/releases/latest",
+            self.owner, self.repository
+        );
+        let response = client.get(&url, USER_AGENT, REQUEST_TIMEOUT, self.max_bytes)?;
+        if response.status / 100 != 2 || response.body.len() > self.max_bytes {
+            return Ok(None);
+        }
+        let release: ReleaseDto = match serde_json::from_slice(&response.body) {
+            Ok(release) => release,
+            Err(_) => return Ok(None),
+        };
+        let version = match Version::parse(release.tag_name.trim_start_matches('v')) {
+            Ok(version) => version,
+            Err(_) => return Ok(None),
+        };
+        if version <= self.current_version || !self.is_safe_release_url(&release.html_url) {
+            return Ok(None);
+        }
+        Ok(Some(AvailableUpdate {
+            version,
+            release_url: release.html_url,
+        }))
+    }
+
+    fn is_safe_release_url(&self, value: &str) -> bool {
+        let prefix = format!(
+            "https://github.com/{}/{}/releases/",
+            self.owner, self.repository
+        );
+        value.starts_with(&prefix)
+            && !value.contains(['?', '#', '@', '\\'])
+            && value[prefix.len()..]
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+    }
+}
+
+#[derive(Deserialize)]
+struct ReleaseDto {
+    tag_name: String,
+    html_url: String,
+}
+
+fn parse_repository(value: &str) -> Option<(String, String)> {
+    if !value.starts_with("https://github.com/") || value.contains(['?', '#', '@']) {
+        return None;
+    }
+    let path = value.strip_prefix("https://github.com/")?;
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let repository_part = parts.next()?;
+    let repository = repository_part
+        .strip_suffix(".git")
+        .unwrap_or(repository_part);
+    if owner.is_empty()
+        || repository.is_empty()
+        || parts.next().is_some()
+        || !valid_segment(owner)
+        || !valid_segment(repository)
+    {
+        return None;
+    }
+    Some((owner.to_owned(), repository.to_owned()))
+}
+
+fn valid_segment(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}

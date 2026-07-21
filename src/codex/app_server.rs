@@ -31,7 +31,7 @@ pub trait UsageProvider: Send + Sync {
     ///
     /// 매개변수는 없으며, 성공하면 수집 시각을 포함한 사용량을 반환합니다.
     /// 로컬 CLI, app-server, 응답 형식 문제가 생기면 민감한 원인을 포함하지 않는 `UsageError`를 반환합니다.
-    fn fetch_usage(&self) -> Result<CodexUsage, UsageError>;
+    fn fetch(&self, allow_auth_refresh: bool) -> Result<CodexUsage, UsageError>;
 }
 
 /// 로컬 Codex app-server RPC를 이용하는 사용량 제공자입니다.
@@ -39,7 +39,6 @@ pub trait UsageProvider: Send + Sync {
 /// 제공자는 호출마다 단명 프로세스를 사용하며, 전체 호출은 30초 안에 끝나야 합니다.
 #[derive(Clone, Debug)]
 pub struct AppServerUsageProvider {
-    allow_auth_refresh: bool,
     in_flight: Arc<AtomicBool>,
 }
 
@@ -48,9 +47,8 @@ impl AppServerUsageProvider {
     ///
     /// `allow_auth_refresh`가 참이면 rate-limit 요청이 인증 관련 요청 오류로 실패할 때만
     /// 계정 갱신을 한 번 시도합니다. 반환값은 해당 정책을 보관하는 제공자입니다.
-    pub fn new(allow_auth_refresh: bool) -> Self {
+    pub fn new() -> Self {
         Self {
-            allow_auth_refresh,
             in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -58,26 +56,29 @@ impl AppServerUsageProvider {
 
 impl Default for AppServerUsageProvider {
     fn default() -> Self {
-        Self::new(true)
+        Self::new()
     }
 }
 
 impl UsageProvider for AppServerUsageProvider {
-    fn fetch_usage(&self) -> Result<CodexUsage, UsageError> {
+    fn fetch(&self, allow_auth_refresh: bool) -> Result<CodexUsage, UsageError> {
         let deadline = Instant::now() + PROVIDER_TIMEOUT;
         let provider = self.clone();
         run_serialized_operation(self.in_flight.clone(), deadline, move || {
-            provider.fetch_usage_until(deadline)
+            provider.fetch_usage_until(deadline, allow_auth_refresh)
         })
     }
 }
 
 impl AppServerUsageProvider {
-    fn fetch_usage_until(&self, deadline: Instant) -> Result<CodexUsage, UsageError> {
+    fn fetch_usage_until(
+        &self,
+        deadline: Instant,
+        allow_auth_refresh: bool,
+    ) -> Result<CodexUsage, UsageError> {
         let candidate = locate_cli(deadline)?;
         let mut guard = ProcessGuard::start(candidate, deadline)?;
         let transport = guard.take_transport()?;
-        let allow_auth_refresh = self.allow_auth_refresh;
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             let mut transport = ProcessJsonlTransport { transport };
