@@ -1,11 +1,13 @@
 use std::{
+    collections::HashMap,
     fs, io,
-    path::PathBuf,
-    sync::{Arc, Mutex},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
+static LOGGER_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 
 /// 기록 가능한 안정적인 진단 코드입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,9 +74,10 @@ impl DiagnosticLogger {
     /// `path`의 부모 디렉터리는 첫 기록 시 생성됩니다. 반환된 기록기는 동일 경로의 기록을 프로세스 내에서
     /// 직렬화하고, 1 MiB를 넘기기 전에 `.log.1`로 한 번 회전합니다.
     pub fn for_path(path: impl Into<PathBuf>) -> Self {
+        let path = normalized_path(path.into());
         Self {
-            path: path.into(),
-            gate: Arc::new(Mutex::new(())),
+            gate: shared_gate(&path),
+            path,
         }
     }
 
@@ -91,7 +94,7 @@ impl DiagnosticLogger {
             sanitize(description)
         );
         line.truncate(line.trim_end_matches('\n').len());
-        line.truncate((MAX_LOG_BYTES.saturating_sub(1)) as usize);
+        truncate_at_char_boundary(&mut line, (MAX_LOG_BYTES.saturating_sub(1)) as usize);
         line.push('\n');
         let existing = fs::metadata(&self.path)
             .map(|metadata| metadata.len())
@@ -136,6 +139,42 @@ impl DiagnosticLogger {
             ),
         }
     }
+}
+
+fn normalized_path(path: PathBuf) -> PathBuf {
+    let absolute = std::path::absolute(&path).unwrap_or(path);
+    absolute
+        .parent()
+        .and_then(|parent| {
+            fs::canonicalize(parent)
+                .ok()
+                .zip(absolute.file_name())
+                .map(|(parent, file_name)| parent.join(file_name))
+        })
+        .unwrap_or(absolute)
+}
+
+fn shared_gate(path: &Path) -> Arc<Mutex<()>> {
+    let gates = LOGGER_GATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut gates = gates.lock().unwrap_or_else(|error| error.into_inner());
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = gates.get(path).and_then(Weak::upgrade) {
+        return gate;
+    }
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(path.to_path_buf(), Arc::downgrade(&gate));
+    gate
+}
+
+fn truncate_at_char_boundary(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
 }
 
 impl Default for DiagnosticLogger {

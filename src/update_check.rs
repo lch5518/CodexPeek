@@ -146,7 +146,14 @@ impl UpdateChecker {
             Ok(release) => release,
             Err(_) => return Ok(None),
         };
-        let version = match Version::parse(release.tag_name.trim_start_matches('v')) {
+        let version_text = release
+            .tag_name
+            .strip_prefix('v')
+            .unwrap_or(&release.tag_name);
+        if version_text.starts_with('v') {
+            return Ok(None);
+        }
+        let version = match Version::parse(version_text) {
             Ok(version) => version,
             Err(_) => return Ok(None),
         };
@@ -204,4 +211,6 @@ fn valid_segment(value: &str) -> bool {
     value
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.')
+        && value != "."
+        && value != ".."
 }

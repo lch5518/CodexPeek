@@ -121,6 +121,14 @@ fn checked_load_preserves_each_corrupt_file_with_unique_backup() {
         })
         .collect();
     assert_eq!(backups.len(), 2);
+    let pid_marker = format!("-{}-", std::process::id());
+    assert!(backups.iter().all(|backup| {
+        backup
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains(&pid_marker)
+    }));
     let _ = fs::remove_dir_all(root);
 }
 
@@ -176,6 +184,7 @@ fn complete_json_field_mutations_are_backed_up_exactly() {
         ("schema", serde_json::json!(2)),
         ("interval", serde_json::json!(2)),
         ("monitor_empty", serde_json::json!("")),
+        ("monitor_whitespace", serde_json::json!("   \t")),
         ("monitor_long", serde_json::json!("x".repeat(513))),
         ("monitor_control", serde_json::json!("a\nb")),
         ("offset", serde_json::json!(2_000_001)),
@@ -209,4 +218,36 @@ fn complete_json_field_mutations_are_backed_up_exactly() {
         assert_eq!(fs::read(backup).unwrap(), bytes);
         let _ = fs::remove_dir_all(root);
     }
+}
+
+#[test]
+fn separately_constructed_stores_do_not_back_up_a_newly_saved_settings_file() {
+    let root = test_root("load-save-race");
+    fs::create_dir_all(&root).unwrap();
+    let reader = SettingsStore::for_root(&root);
+    let writer = SettingsStore::for_root(&root);
+    let saved = Settings {
+        taskbar_offset: 777,
+        ..Settings::default()
+    };
+
+    for _ in 0..200 {
+        fs::write(reader.path(), "{".repeat(256 * 1024)).unwrap();
+        let reader_store = reader.clone();
+        let reader_thread = std::thread::spawn(move || reader_store.load());
+        writer.save(&saved).unwrap();
+        let _ = reader_thread.join().unwrap();
+        assert_eq!(writer.load().unwrap(), saved);
+    }
+
+    assert!(fs::read_dir(&root).unwrap().all(|entry| {
+        let path = entry.unwrap().path();
+        !path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("settings.corrupt")
+            || !fs::read_to_string(path).unwrap_or_default().contains("777")
+    }));
+    let _ = fs::remove_dir_all(root);
 }

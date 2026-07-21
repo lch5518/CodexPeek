@@ -48,3 +48,17 @@
 - `cargo test --all-targets`: 단위 38건, 런타임 통합 32건, 총 70건 통과.
 - `cargo fmt --check`: 통과.
 - `cargo clippy --all-targets --all-features -- -D warnings`: 통과.
+
+## 재검토 동시성 보완 RED/GREEN 증거
+
+- UTF-8 로그 상한: 다바이트 한글 경로를 1 MiB보다 크게 기록하는 RED 테스트는 문자열 중간 바이트를
+  `truncate`하여 `is_char_boundary` panic을 재현했다. 문자를 나누지 않는 마지막 경계까지 자른 뒤 newline을
+  붙이도록 바꾼 GREEN 테스트는 panic 없이 유효 UTF-8과 활성 로그 1 MiB 이하를 확인했다.
+- 진단 로그 경합: clone만 공유하던 잠금을 경로별 `OnceLock`/`Weak` registry로 바꿨다. 독립적으로 만든
+  8개 logger가 같은 파일을 동시에 기록·회전하는 회귀 테스트는 활성/백업 로그의 완전한 줄과 1 MiB 상한을
+  확인한다. 약한 참조는 마지막 logger가 사라지면 다음 registry 접근에서 정리된다.
+- 설정 읽기/저장 경합: 설정 저장소도 정규화한 root별 gate를 공유하고 `load`가 읽기·검증·손상 백업 rename
+  전체를 잠근다. 두 독립 store가 큰 손상 파일의 load와 유효 저장을 200회 경합하는 테스트는 새 설정이
+  손상 백업으로 이동하지 않음을 확인한다. 백업 이름에는 초 단위, PID, nonce를 포함한다.
+- 입력 하드닝: 공백 전용 monitor name, `.`/`..` GitHub owner/repo, `vv` 버전 태그를 RED로 확인한 뒤
+  거부하도록 변경했다. 단일 `v` 접두사는 계속 허용한다.

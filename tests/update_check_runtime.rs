@@ -45,6 +45,32 @@ fn invalid_repository_disables_network_checks() {
     assert!(
         UpdateChecker::new("0.1.0", Some("https://user@github.com/owner/repo"), 1024).is_none()
     );
+    for repository_url in [
+        "https://github.com/./repo",
+        "https://github.com/owner/.",
+        "https://github.com/../repo",
+        "https://github.com/owner/..",
+    ] {
+        assert!(UpdateChecker::new("0.1.0", Some(repository_url), 1024).is_none());
+    }
+}
+
+#[test]
+fn tag_name_may_have_one_v_prefix_but_not_multiple_prefixes() {
+    let checker = UpdateChecker::new("1.0.0", Some("https://github.com/owner/repo"), 1024).unwrap();
+    let client = FakeClient::new(HttpResponse {
+        status: 200,
+        body: br#"{"tag_name":"vv2.0.0","html_url":"https://github.com/owner/repo/releases/tag/vv2.0.0"}"#.to_vec(),
+    });
+
+    assert!(checker
+        .check_if_due(
+            &client,
+            None,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(100_000)
+        )
+        .unwrap()
+        .is_none());
 }
 
 #[test]

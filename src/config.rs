@@ -1,9 +1,10 @@
 use std::{
+    collections::HashMap,
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 const SCHEMA_VERSION: u32 = 1;
 const MAX_LOGICAL_COORDINATE: i32 = 2_000_000;
 static FILE_NONCE: AtomicU64 = AtomicU64::new(0);
+static SETTINGS_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 
 /// 위젯 표시 위치 방식을 나타냅니다.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -111,7 +113,7 @@ impl Settings {
             || !matches!(self.refresh_interval_minutes, 1 | 5 | 10 | 15 | 30)
             || self.taskbar_offset.unsigned_abs() > MAX_LOGICAL_COORDINATE as u32
             || self.monitor_device.as_ref().is_some_and(|value| {
-                value.is_empty() || value.len() > 512 || value.contains(['\r', '\n', '\0'])
+                value.trim().is_empty() || value.len() > 512 || value.contains(['\r', '\n', '\0'])
             })
             || self.floating_position.is_some_and(|value| {
                 value.x.unsigned_abs() > MAX_LOGICAL_COORDINATE as u32
@@ -140,19 +142,17 @@ impl SettingsStore {
         let root = dirs::config_dir()
             .unwrap_or_else(std::env::temp_dir)
             .join("CodexUsageMonitor");
-        Self {
-            root,
-            gate: Arc::new(Mutex::new(())),
-        }
+        Self::for_root(root)
     }
 
     /// 테스트 또는 이식 가능한 실행을 위해 지정 경로를 사용하는 저장소를 만듭니다.
     ///
     /// `root` 아래에 `settings.json`을 사용합니다. 생성 시에는 디렉터리나 파일을 만들지 않습니다.
     pub fn for_root(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
-            gate: Arc::new(Mutex::new(())),
+            gate: shared_gate(&root),
+            root,
         }
     }
 
@@ -166,6 +166,7 @@ impl SettingsStore {
     /// 파일이 없으면 디렉터리를 만들지 않고 기본값을 반환합니다. JSON·스키마·필드가 유효하지 않으면 원본을
     /// `settings.corrupt-<unix>-<nonce>.json`으로 보관한 뒤 기본값을 반환하며, 읽기 또는 보관 실패는 전달합니다.
     pub fn load(&self) -> io::Result<Settings> {
+        let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         let path = self.path();
         let contents = match fs::read(&path) {
             Ok(contents) => contents,
@@ -216,12 +217,31 @@ impl SettingsStore {
 
     fn back_up_corrupt(&self, path: &Path) -> io::Result<()> {
         let backup = self.root.join(format!(
-            "settings.corrupt-{}-{}.json",
+            "settings.corrupt-{}-{}-{}.json",
             unix_now(),
+            std::process::id(),
             FILE_NONCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::rename(path, backup)
     }
+}
+
+fn shared_gate(root: &Path) -> Arc<Mutex<()>> {
+    let root = normalized_path(root);
+    let gates = SETTINGS_GATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut gates = gates.lock().unwrap_or_else(|error| error.into_inner());
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = gates.get(&root).and_then(Weak::upgrade) {
+        return gate;
+    }
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(root, Arc::downgrade(&gate));
+    gate
+}
+
+fn normalized_path(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    fs::canonicalize(&absolute).unwrap_or(absolute)
 }
 
 impl Default for SettingsStore {
