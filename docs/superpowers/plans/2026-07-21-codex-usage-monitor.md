@@ -27,7 +27,37 @@
 
 ### Task 1: Project foundation and domain behavior
 
-Create Cargo/build configuration and the library/module skeleton. Test-first implement `WindowKind`, `UsageWindow`, `CodexUsage`, usage severity, percentage validation, actual-period labels, reset countdown formatting, Korean/English localization, and typed `UsageError` user/diagnostic messages. Cover 0, 100, >100, negative/non-finite, missing/past timestamps, and language completeness.
+**Files:** create `Cargo.toml`, `src/lib.rs`, `src/domain.rs`, `src/errors.rs`, `src/localization.rs`; add unit tests beside the modules. Do not create UI/RPC/runtime stubs yet.
+
+Create package `codex-usage-monitor` with Rust edition 2021 and `rust-version = "1.85"`. Declare the plan's runtime dependencies and optimized release profile (`opt-level = "z"`, LTO, strip, one codegen unit, panic abort), but keep task code platform-neutral.
+
+Test-first implement these public interfaces:
+
+```rust
+pub enum WindowKind { Primary, Secondary }
+pub enum UsageLevel { Stable, Normal, Caution, Danger, Limited }
+pub struct UsageWindow {
+    pub kind: WindowKind,
+    pub used_percent: f64,
+    pub window_duration_mins: Option<u64>,
+    pub resets_at: Option<SystemTime>,
+}
+pub struct CodexUsage {
+    pub primary: Option<UsageWindow>,
+    pub secondary: Option<UsageWindow>,
+    pub fetched_at: SystemTime,
+}
+pub enum Language { Korean, English }
+pub enum UsageError {
+    CliNotFound, UnsupportedCli, AppServerStartFailed, RpcTimeout,
+    RpcOverloaded, NotLoggedIn, AuthenticationExpired, InvalidResponse,
+    RateLimitUnavailable, RequestFailed,
+}
+```
+
+`UsageWindow::new` rejects negative or non-finite percentages with `InvalidResponse`, accepts values above 100, `bar_percent` clamps only rendering to 0..100, and `level` implements the exact global thresholds. Period labels use actual positive durations (`N일/Nd`, `N시간/Nh`, otherwise `N분/Nm`); missing/zero duration falls back to `단기/Short` for primary and `주간/Weekly` for secondary. Remaining labels round up to minutes and format days+hours, hours+minutes, or minutes; missing timestamp is `초기화 시각 없음/Reset unavailable`, and elapsed timestamps are `곧 초기화/Reset soon`.
+
+Each `UsageError` exposes a stable snake-case diagnostic code and a Korean/English user message without embedding source errors or sensitive values. Public Rust documentation comments must be Korean. Cover 0, 49, 50, 74, 75, 89, 90, 99, 100, >100, negative/non-finite, missing/zero duration, missing/past timestamps, and language completeness. Run focused RED/GREEN tests, then `cargo test --all-targets` and `cargo fmt --check` before committing `feat: add usage domain foundation`.
 
 ### Task 2: Safe Codex CLI and app-server client
 
@@ -48,4 +78,3 @@ Add an original meter icon and Windows version resources, optimized release prof
 ### Task 6: Integration and release verification
 
 Run formatting, clippy with warnings denied, all tests, release build, unauthenticated/available Codex `--diagnose` paths, and inspect the final diff against every global constraint. Record manual Windows 10/11, DPI, multi-monitor, Explorer restart, autohide, logout, and proxy checks in a release checklist without claiming unperformed checks.
-
