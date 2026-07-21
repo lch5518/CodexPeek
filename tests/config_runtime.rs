@@ -54,6 +54,61 @@ fn settings_defaults_match_product_policy() {
 }
 
 #[test]
+fn diagnostic_inspection_treats_missing_settings_as_valid_defaults() {
+    let root = test_root("inspect-missing");
+    let store = SettingsStore::for_root(&root);
+
+    assert!(store.inspect_validity().unwrap());
+    assert!(!root.exists());
+}
+
+#[test]
+fn diagnostic_inspection_reports_valid_and_invalid_settings_without_mutation() {
+    let root = test_root("inspect-validity");
+    let store = SettingsStore::for_root(&root);
+    store.save(&Settings::default()).unwrap();
+    assert!(store.inspect_validity().unwrap());
+
+    let cases = [
+        b"not json".to_vec(),
+        serde_json::to_vec(&Settings {
+            schema_version: 2,
+            ..Settings::default()
+        })
+        .unwrap(),
+        serde_json::to_vec(&Settings {
+            refresh_interval_minutes: 2,
+            ..Settings::default()
+        })
+        .unwrap(),
+    ];
+    for bytes in cases {
+        fs::write(store.path(), &bytes).unwrap();
+
+        assert!(!store.inspect_validity().unwrap());
+        assert_eq!(fs::read(store.path()).unwrap(), bytes);
+        assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("settings.corrupt-")));
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn diagnostic_inspection_propagates_settings_read_errors() {
+    let root = test_root("inspect-read-error");
+    let store = SettingsStore::for_root(&root);
+    fs::create_dir_all(store.path()).unwrap();
+
+    assert!(store.inspect_validity().is_err());
+    assert!(store.path().is_dir());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn negative_taskbar_offset_is_rejected() {
     let root = test_root("negative-taskbar-offset");
     let store = SettingsStore::for_root(&root);

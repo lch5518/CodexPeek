@@ -6,6 +6,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::SettingsStore;
+
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
 static LOGGER_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 
@@ -172,6 +174,19 @@ impl Default for DiagnosticLogger {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// 설정 파일을 변경하지 않고 유효성을 검사해 안전한 진단 로그를 남깁니다.
+///
+/// `store`의 설정 파일이 없으면 기본 설정으로 유효하다고 판단합니다. 유효 여부는 `logger`에
+/// 가능한 범위에서 기록하고 파일 읽기 오류를 반환합니다. 손상 파일을 복구하거나 이동하지 않습니다.
+pub fn inspect_settings_for_diagnostics(
+    store: &SettingsStore,
+    logger: &DiagnosticLogger,
+) -> io::Result<bool> {
+    let valid = store.inspect_validity()?;
+    let _ = logger.record_safe(SafeDiagnostic::Settings { valid });
+    Ok(valid)
 }
 
 fn unix_now() -> u64 {

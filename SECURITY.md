@@ -25,8 +25,10 @@ vulnerability-reporting procedure.
 
 ## Data handling / 데이터 처리
 
-- The monitor does not parse, copy, persist, or log authentication tokens, account IDs,
-  email addresses, RPC payloads, or proxy values.
+- Raw RPC payloads are handled only transiently for bounded parsing. They are not retained,
+  copied to durable storage, persisted, or logged; only the required typed fields are
+  deserialized. Authentication tokens, account IDs, email addresses, authentication-file
+  contents, and proxy values are not deserialized into application data, persisted, or logged.
 - Diagnostics inspect only whether `%USERPROFILE%\.codex\auth.json` and proxy-related
   environment variables exist; their contents and values are not read into diagnostics.
 - The UI consumes only the login kind and the primary/secondary rate-limit window fields
@@ -48,5 +50,6 @@ is added to Cargo package metadata. If enabled later, the monitor requests only
 `https://api.github.com/repos/<owner>/<repo>/releases/latest`, enforces HTTPS and response
 size/time limits, and can open only the exact validated
 `https://github.com/<owner>/<repo>/releases/tag/<tag>` page in the default browser. It
-does not download, replace, or execute an update. Proxy diagnostics report presence only;
+does so only after an explicit user menu action and never from an automatic update worker.
+It does not download, replace, or execute an update. Proxy diagnostics report presence only;
 they never log proxy URLs, credentials, or environment-variable values.

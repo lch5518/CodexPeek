@@ -264,6 +264,8 @@ unsafe extern "system" fn owner_proc(
 
     match message {
         WM_TIMER if wparam.0 == TIMER_ID => {
+            let settings = (*pointer).backend.settings();
+            (*pointer).settings = settings;
             let _ = refresh_tray(pointer, false);
             let widget = (*pointer).widget;
             if widget != HWND::default() {
@@ -278,6 +280,8 @@ unsafe extern "system" fn owner_proc(
                 event,
                 WM_CONTEXTMENU | WM_RBUTTONUP | WM_LBUTTONUP | NIN_SELECT
             ) {
+                let current_settings = (*pointer).backend.settings();
+                (*pointer).settings = current_settings;
                 let (owner, settings) = {
                     let state = &*pointer;
                     (state.owner, state.settings.clone())

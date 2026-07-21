@@ -222,7 +222,13 @@ impl TrayIcon {
             add(
                 menu,
                 MENU_UPDATE_CHECK,
-                if ko {
+                if settings.update_available {
+                    if ko {
+                        "새 업데이트를 사용할 수 있습니다"
+                    } else {
+                        "An update is available"
+                    }
+                } else if ko {
                     "업데이트 확인"
                 } else {
                     "Check for updates"

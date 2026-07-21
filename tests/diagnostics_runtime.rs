@@ -4,7 +4,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use codex_usage_monitor::{DiagnosticLogger, SafeDiagnostic};
+use codex_usage_monitor::{
+    inspect_settings_for_diagnostics, DiagnosticLogger, SafeDiagnostic, SettingsStore,
+};
 
 fn temp_log() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -26,6 +28,37 @@ fn diagnostics_mask_secrets_and_keep_one_line_records() {
     let line = fs::read_to_string(&path).unwrap();
     assert_eq!(line.lines().count(), 1);
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn settings_diagnostics_report_invalid_without_repairing_the_file() {
+    let root = std::env::temp_dir().join(format!(
+        "diagnostic-settings-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let store = SettingsStore::for_root(&root);
+    let bytes = b"{broken-json";
+    fs::write(store.path(), bytes).unwrap();
+    let log_path = temp_log();
+    let logger = DiagnosticLogger::for_path(&log_path);
+
+    assert!(!inspect_settings_for_diagnostics(&store, &logger).unwrap());
+    assert_eq!(fs::read(store.path()).unwrap(), bytes);
+    assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("settings.corrupt-")));
+    assert!(fs::read_to_string(&log_path)
+        .unwrap()
+        .contains("settings_invalid valid=false"));
+
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

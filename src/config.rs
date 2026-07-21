@@ -164,6 +164,21 @@ impl SettingsStore {
         self.root.join("settings.json")
     }
 
+    /// 설정 파일을 변경하지 않고 현재 내용의 유효성을 확인합니다.
+    ///
+    /// 파일이 없으면 기본 설정을 사용할 수 있으므로 `true`를 반환합니다. 파일 읽기 오류는
+    /// 호출자에게 전달하며, JSON 형식이나 스키마 및 필드 검증이 실패하면 `false`를 반환합니다.
+    pub fn inspect_validity(&self) -> io::Result<bool> {
+        let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
+        let contents = match fs::read(self.path()) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error),
+        };
+        Ok(serde_json::from_slice::<Settings>(&contents)
+            .is_ok_and(|settings| settings.validate().is_ok()))
+    }
+
     /// 설정을 읽고 손상되었으면 원본을 보관한 뒤 기본값을 반환합니다.
     ///
     /// 파일이 없으면 디렉터리를 만들지 않고 기본값을 반환합니다. JSON·스키마·필드가 유효하지 않으면 원본을

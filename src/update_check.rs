@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
+};
 
 use semver::Version;
 use serde::Deserialize;
@@ -85,6 +88,77 @@ pub struct AvailableUpdate {
     pub version: Version,
     /// GitHub의 HTTPS 릴리스 페이지입니다.
     pub release_url: String,
+}
+
+/// 업데이트 검사가 시작된 사용자 의도를 구분합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateCheckIntent {
+    /// 시작 또는 일일 주기에 따른 자동 검사입니다.
+    Automatic,
+    /// 사용자가 메뉴에서 직접 요청한 검사입니다.
+    UserInitiated,
+}
+
+/// 사용자의 업데이트 메뉴 동작을 안전한 저장 상태로 해석한 결과입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateUserAction {
+    /// 저장된 업데이트가 없으므로 새 검사가 필요합니다.
+    Check,
+    /// 검사기가 검증해 저장한 업데이트 페이지를 엽니다.
+    Open(AvailableUpdate),
+}
+
+#[derive(Default)]
+struct UpdatePresentationInner {
+    available: Option<AvailableUpdate>,
+    open_requested: bool,
+}
+
+/// 업데이트 결과와 UI 스레드가 처리할 열기 요청을 공유하는 상태입니다.
+///
+/// 복제본은 같은 내부 상태를 공유합니다. 검사 작업자는 결과만 기록하고, 브라우저 열기는
+/// `take_open_request`로 요청을 소비한 UI 스레드가 담당해야 합니다.
+#[derive(Clone, Default)]
+pub struct UpdatePresentation {
+    inner: Arc<Mutex<UpdatePresentationInner>>,
+}
+
+impl UpdatePresentation {
+    /// 검증이 끝난 업데이트 검사 결과를 표시 상태에 기록합니다.
+    ///
+    /// `intent`가 자동 검사이면 브라우저 열기 요청을 만들지 않습니다. `update`가 없으면
+    /// 현재 표시 중인 업데이트를 제거합니다.
+    pub fn record_result(&self, intent: UpdateCheckIntent, update: Option<AvailableUpdate>) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        inner.open_requested = intent == UpdateCheckIntent::UserInitiated && update.is_some();
+        inner.available = update;
+    }
+
+    /// 현재 표시할 검증된 업데이트를 복사해 반환합니다.
+    pub fn available_update(&self) -> Option<AvailableUpdate> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .available
+            .clone()
+    }
+
+    /// 사용자 메뉴 동작을 저장된 검증 결과 또는 새 검사 요청으로 변환합니다.
+    pub fn user_action(&self) -> UpdateUserAction {
+        self.available_update()
+            .map(UpdateUserAction::Open)
+            .unwrap_or(UpdateUserAction::Check)
+    }
+
+    /// UI 스레드가 처리할 일회성 브라우저 열기 요청을 소비합니다.
+    pub fn take_open_request(&self) -> Option<AvailableUpdate> {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if !inner.open_requested {
+            return None;
+        }
+        inner.open_requested = false;
+        inner.available.clone()
+    }
 }
 
 /// GitHub 릴리스만 조회하는 업데이트 검사기입니다.

@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
     codex::{locate_supported_cli, AppServerUsageProvider, UsageProvider},
-    localized_text,
+    inspect_settings_for_diagnostics, localized_text,
     windows::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, resolve_windows_language, taskbar, LaunchMode, UiAction,
@@ -22,7 +22,8 @@ use crate::{
     },
     AsyncSettingsWriter, DiagnosticCode, DiagnosticLogger, Language, LanguagePreference,
     LocalizationKey, PollSnapshot, PollingService, SafeDiagnostic, Settings, SettingsStore,
-    UpdateChecker, UreqHttpClient, UsageError, UsageWindow,
+    UpdateCheckIntent, UpdateChecker, UpdatePresentation, UpdateUserAction, UreqHttpClient,
+    UsageError, UsageWindow,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -56,6 +57,7 @@ struct AppRuntime {
     poller: PollingService,
     startup_hidden: bool,
     update_check_in_flight: Arc<AtomicBool>,
+    update_presentation: UpdatePresentation,
 }
 
 impl AppRuntime {
@@ -68,6 +70,7 @@ impl AppRuntime {
             poller,
             startup_hidden,
             update_check_in_flight: Arc::new(AtomicBool::new(false)),
+            update_presentation: UpdatePresentation::default(),
         })
     }
 
@@ -112,9 +115,15 @@ impl AppRuntime {
             .map(|duration| duration.as_secs());
         self.save_settings();
         let in_flight = Arc::clone(&self.update_check_in_flight);
+        let presentation = self.update_presentation.clone();
+        let intent = if forced {
+            UpdateCheckIntent::UserInitiated
+        } else {
+            UpdateCheckIntent::Automatic
+        };
         thread::spawn(move || {
-            if let Ok(Some(update)) = checker.check_if_due(&UreqHttpClient, last_check, now) {
-                let _ = native::open_validated_tag_page(&update.release_url);
+            if let Ok(update) = checker.check_if_due(&UreqHttpClient, last_check, now) {
+                presentation.record_result(intent, update);
             }
             in_flight.store(false, Ordering::Release);
         });
@@ -123,14 +132,21 @@ impl AppRuntime {
     fn snapshot_inner(&self) -> PollSnapshot {
         self.poller.snapshot()
     }
+
+    fn consume_update_open_request(&self) {
+        if let Some(update) = self.update_presentation.take_open_request() {
+            let _ = native::open_validated_tag_page(&update.release_url);
+        }
+    }
 }
 
 impl UiBackend for AppRuntime {
     fn snapshot(&self) -> WidgetViewModel {
+        self.consume_update_open_request();
         let snapshot = self.snapshot_inner();
         let language = effective_language(self.settings.language);
         let now = SystemTime::now();
-        let status = if snapshot.is_fetching {
+        let mut status = if snapshot.is_fetching {
             localized_text(LocalizationKey::Refreshing, language).to_owned()
         } else if let Some(error) = snapshot.last_error {
             error.user_message(language).to_owned()
@@ -139,6 +155,10 @@ impl UiBackend for AppRuntime {
         } else {
             localized_text(LocalizationKey::Polling, language).to_owned()
         };
+        if self.update_presentation.available_update().is_some() {
+            status.push_str(" · ");
+            status.push_str(localized_text(LocalizationKey::UpdateAvailable, language));
+        }
         let last_success = snapshot
             .last_success_at
             .and_then(|time| now.duration_since(time).ok())
@@ -165,7 +185,12 @@ impl UiBackend for AppRuntime {
     }
 
     fn settings(&self) -> UiSettings {
-        ui_settings(&self.settings, self.startup_hidden)
+        self.consume_update_open_request();
+        ui_settings(
+            &self.settings,
+            self.startup_hidden,
+            self.update_presentation.available_update().is_some(),
+        )
     }
 
     fn dispatch(&mut self, action: UiAction) -> UiSettings {
@@ -228,7 +253,12 @@ impl UiBackend for AppRuntime {
                     }
                 });
             }
-            UiAction::CheckForUpdates => self.start_update_check(true),
+            UiAction::CheckForUpdates => match self.update_presentation.user_action() {
+                UpdateUserAction::Open(update) => {
+                    let _ = native::open_validated_tag_page(&update.release_url);
+                }
+                UpdateUserAction::Check => self.start_update_check(true),
+            },
             UiAction::ToggleWidget => {
                 if self.startup_hidden {
                     self.startup_hidden = false;
@@ -239,7 +269,11 @@ impl UiBackend for AppRuntime {
             UiAction::Exit => {}
         }
         self.save_settings();
-        ui_settings(&self.settings, self.startup_hidden)
+        ui_settings(
+            &self.settings,
+            self.startup_hidden,
+            self.update_presentation.available_update().is_some(),
+        )
     }
 }
 
@@ -252,7 +286,7 @@ fn start_poller(settings: &Settings) -> io::Result<PollingService> {
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
-fn ui_settings(settings: &Settings, startup_hidden: bool) -> UiSettings {
+fn ui_settings(settings: &Settings, startup_hidden: bool, update_available: bool) -> UiSettings {
     UiSettings {
         display_mode: settings.display_mode,
         widget_visible: settings.widget_visible && !startup_hidden,
@@ -266,6 +300,7 @@ fn ui_settings(settings: &Settings, startup_hidden: bool) -> UiSettings {
         taskbar_offset: settings.taskbar_offset,
         floating_position: settings.floating_position,
         monitor_device: settings.monitor_device.clone(),
+        update_available,
     }
 }
 
@@ -366,10 +401,7 @@ fn diagnostic_status(value: &'static str, language: Language) -> &'static str {
 fn run_safe_diagnostics(write_console: bool) -> io::Result<DiagnosticSummary> {
     let logger = DiagnosticLogger::new();
     let store = SettingsStore::new();
-    let settings_valid = store.load().is_ok();
-    let _ = logger.record_safe(SafeDiagnostic::Settings {
-        valid: settings_valid,
-    });
+    let settings_valid = inspect_settings_for_diagnostics(&store, &logger)?;
 
     let proxy_present = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]
         .into_iter()

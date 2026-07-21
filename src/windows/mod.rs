@@ -310,6 +310,8 @@ pub struct UiSettings {
     pub floating_position: Option<LogicalPosition>,
     /// 저장된 모니터 장치 이름입니다.
     pub monitor_device: Option<String>,
+    /// 검증된 새 버전을 사용할 수 있는지 나타냅니다.
+    pub update_available: bool,
 }
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.

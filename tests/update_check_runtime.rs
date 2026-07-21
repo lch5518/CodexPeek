@@ -4,12 +4,54 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateChecker, UreqHttpClient,
+    AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,
+    UpdateChecker, UpdatePresentation, UpdateUserAction, UreqHttpClient,
 };
+use semver::Version;
 
 struct FakeClient {
     response: HttpResponse,
     requests: Mutex<Vec<(String, String, Duration, usize)>>,
+}
+
+fn available_update(version: &str) -> AvailableUpdate {
+    AvailableUpdate {
+        version: Version::parse(version).unwrap(),
+        release_url: format!("https://github.com/owner/repo/releases/tag/v{version}"),
+    }
+}
+
+#[test]
+fn automatic_update_results_are_visible_without_requesting_browser_open() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.0.0");
+
+    presentation.record_result(UpdateCheckIntent::Automatic, Some(update.clone()));
+
+    assert_eq!(presentation.available_update(), Some(update));
+    assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn user_initiated_results_create_exactly_one_open_request() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.1.0");
+
+    presentation.record_result(UpdateCheckIntent::UserInitiated, Some(update.clone()));
+
+    assert_eq!(presentation.take_open_request(), Some(update));
+    assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn explicit_open_actions_use_only_the_stored_validated_result() {
+    let presentation = UpdatePresentation::default();
+    assert_eq!(presentation.user_action(), UpdateUserAction::Check);
+
+    let update = available_update("2.2.0");
+    presentation.record_result(UpdateCheckIntent::Automatic, Some(update.clone()));
+
+    assert_eq!(presentation.user_action(), UpdateUserAction::Open(update));
 }
 
 impl FakeClient {
