@@ -55,19 +55,22 @@ pub fn place_taskbar_widget(
     ))
 }
 
-/// 작업 표시줄 높이가 축소되지 않은 위젯 높이를 수용하는지 확인하고 물리 크기를 반환합니다.
+/// 작업 표시줄 높이에 맞춘 축약 위젯의 물리 크기를 반환합니다.
 ///
-/// `taskbar_height`와 반환값은 물리 픽셀이며 `dpi`는 대상 작업 표시줄의 DPI입니다. 필요한 높이보다
-/// 낮은 작업 표시줄은 축소 렌더링하지 않고 `InsufficientSpace`로 거부합니다.
+/// `taskbar_height`와 반환값은 물리 픽셀이며 `dpi`는 대상 작업 표시줄의 DPI입니다. 48 논리 픽셀을
+/// 넘는 높이는 사용하지 않고, 2행 축약 렌더러가 읽기 어렵게 되는 36 논리 픽셀 미만만 거부합니다.
 pub fn taskbar_widget_size(
     taskbar_height: i32,
     dpi: u32,
 ) -> Result<(i32, i32), TaskbarPlacementError> {
-    let size = (logical_to_physical(380, dpi), logical_to_physical(48, dpi));
-    if taskbar_height < size.1 {
+    let minimum_height = logical_to_physical(36, dpi);
+    if taskbar_height < minimum_height {
         Err(TaskbarPlacementError::InsufficientSpace)
     } else {
-        Ok(size)
+        Ok((
+            logical_to_physical(380, dpi),
+            taskbar_height.min(logical_to_physical(48, dpi)),
+        ))
     }
 }
 

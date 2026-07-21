@@ -324,12 +324,15 @@ fn taskbar_placement_handles_offsets_secondary_and_rejections() {
 }
 
 #[test]
-fn taskbar_attachment_requires_full_height() {
+fn taskbar_attachment_adapts_to_compact_taskbar_height() {
     assert_eq!(
-        taskbar_widget_size(40, 96),
+        taskbar_widget_size(35, 96),
         Err(TaskbarPlacementError::InsufficientSpace)
     );
+    assert_eq!(taskbar_widget_size(40, 96), Ok((380, 40)));
     assert_eq!(taskbar_widget_size(48, 96), Ok((380, 48)));
+    assert_eq!(taskbar_widget_size(48, 120), Ok((475, 48)));
+    assert_eq!(taskbar_widget_size(60, 120), Ok((475, 60)));
 }
 
 const ORIGINAL_STYLE: u32 = 0x8001_0000;
