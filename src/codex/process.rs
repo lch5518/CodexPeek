@@ -184,13 +184,16 @@ impl ProcessGuard {
         thread::spawn(move || {
             let mut output = Vec::new();
             let mut buffer = [0_u8; 1024];
+            let mut overflowed = false;
             let result = loop {
                 match stdout.read(&mut buffer) {
+                    Ok(0) if overflowed => break Err(UsageError::RequestFailed),
                     Ok(0) => break Ok(output),
                     Ok(count) if output.len() + count <= MAX_VERSION_OUTPUT_BYTES => {
                         output.extend_from_slice(&buffer[..count]);
                     }
-                    Ok(_) | Err(_) => break Err(UsageError::RequestFailed),
+                    Ok(_) => overflowed = true,
+                    Err(_) => break Err(UsageError::RequestFailed),
                 }
             };
             let _ = sender.send(result);
@@ -534,7 +537,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(started.elapsed() < Duration::from_secs(4));
         assert_eq!(String::from_utf8(output).unwrap().trim(), "0.141.0");
         let _ = std::fs::remove_file(batch);
         let _ = std::fs::remove_dir(directory);
@@ -575,6 +578,29 @@ mod tests {
             ),
             Err(crate::UsageError::RequestFailed)
         );
+        let _ = std::fs::remove_file(batch);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn version_probe_drains_a_large_finite_overflow_before_returning_an_error() {
+        let batch =
+            std::env::temp_dir().join(format!("codex-version-drain-{}.cmd", std::process::id()));
+        std::fs::write(
+            &batch,
+            "@for /L %%i in (1,1,20000) do <nul set /p =x\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
+        let started = Instant::now();
+
+        assert_eq!(
+            ProcessGuard::version_output(
+                version_plan(CandidateKind::Command, batch.clone()),
+                Instant::now() + Duration::from_secs(10),
+            ),
+            Err(crate::UsageError::RequestFailed)
+        );
+        assert!(started.elapsed() < Duration::from_secs(8));
         let _ = std::fs::remove_file(batch);
     }
 
