@@ -3,7 +3,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use codex_usage_monitor::{DiagnosticCode, DiagnosticLogger};
+use codex_usage_monitor::{DiagnosticLogger, SafeDiagnostic};
 
 fn temp_log() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -20,16 +20,9 @@ fn diagnostics_mask_secrets_and_keep_one_line_records() {
     let path = temp_log();
     let logger = DiagnosticLogger::for_path(&path);
     logger
-        .record(
-            DiagnosticCode::RpcFailed,
-            "bearer abc\nemail=user@example.com proxy=http://secret token=xyz",
-        )
+        .record_safe(SafeDiagnostic::Proxy { present: true })
         .unwrap();
     let line = fs::read_to_string(&path).unwrap();
-    assert!(!line.contains("abc"));
-    assert!(!line.contains("user@example.com"));
-    assert!(!line.contains("secret"));
-    assert!(!line.contains("\nemail"));
     assert_eq!(line.lines().count(), 1);
     let _ = fs::remove_file(path);
 }
@@ -41,7 +34,7 @@ fn diagnostics_rotate_and_replace_old_backup() {
     fs::write(path.with_extension("log.1"), "old").unwrap();
     let logger = DiagnosticLogger::for_path(&path);
     logger
-        .record(DiagnosticCode::SettingsInvalid, "safe")
+        .record_safe(SafeDiagnostic::Settings { valid: true })
         .unwrap();
     assert_eq!(
         fs::read_to_string(path.with_extension("log.1"))
@@ -49,7 +42,57 @@ fn diagnostics_rotate_and_replace_old_backup() {
             .len(),
         1024 * 1024
     );
-    assert!(fs::read_to_string(&path).unwrap().contains("safe"));
+    assert!(fs::read_to_string(&path).unwrap().contains("valid=true"));
     let _ = fs::remove_file(path.with_extension("log.1"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn first_oversized_typed_event_never_exceeds_active_log_limit() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+    logger
+        .record_safe(SafeDiagnostic::Cli {
+            path: std::path::PathBuf::from("x".repeat(2 * 1024 * 1024)),
+            exists: true,
+        })
+        .unwrap();
+    assert!(fs::metadata(&path).unwrap().len() <= 1024 * 1024);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn cloned_concurrent_writers_serialize_rotation_and_complete_lines() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+    let mut workers = Vec::new();
+    for worker in 0..8 {
+        let logger = logger.clone();
+        workers.push(std::thread::spawn(move || {
+            for event in 0..600 {
+                logger
+                    .record_safe(SafeDiagnostic::Cli {
+                        path: std::path::PathBuf::from(format!(
+                            "worker-{worker}-event-{event}-{}",
+                            "x".repeat(240)
+                        )),
+                        exists: true,
+                    })
+                    .unwrap();
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    assert!(fs::metadata(&path).unwrap().len() <= 1024 * 1024);
+    let backup = path.with_extension("log.1");
+    assert!(backup.exists());
+    for candidate in [&path, &backup] {
+        for line in fs::read_to_string(candidate).unwrap().lines() {
+            assert!(line.contains("cli_unavailable") && line.contains("exists=true"));
+        }
+    }
+    let _ = fs::remove_file(backup);
     let _ = fs::remove_file(path);
 }

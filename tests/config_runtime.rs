@@ -46,7 +46,7 @@ fn settings_round_trip_and_no_temporary_file_remains() {
     };
 
     store.save(&settings).unwrap();
-    assert_eq!(store.load(), settings);
+    assert_eq!(store.load().unwrap(), settings);
     assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
         .unwrap()
         .file_name()
@@ -66,7 +66,7 @@ fn invalid_settings_are_backed_up_and_reset_to_defaults() {
     .unwrap();
     let store = SettingsStore::for_root(&root);
 
-    assert_eq!(store.load(), Settings::default());
+    assert_eq!(store.load().unwrap(), Settings::default());
     assert!(!store.path().exists());
     let backup = fs::read_dir(&root)
         .unwrap()
@@ -91,7 +91,7 @@ fn unsupported_schema_and_unreasonable_coordinates_are_rejected() {
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("settings.json"), r#"{"schema_version":2}"#).unwrap();
     let store = SettingsStore::for_root(&root);
-    assert_eq!(store.load(), Settings::default());
+    assert_eq!(store.load().unwrap(), Settings::default());
 
     let invalid = Settings {
         floating_position: Some(LogicalPosition { x: 2_000_001, y: 0 }),
@@ -99,4 +99,114 @@ fn unsupported_schema_and_unreasonable_coordinates_are_rejected() {
     };
     assert!(store.save(&invalid).is_err());
     let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn checked_load_preserves_each_corrupt_file_with_unique_backup() {
+    let root = test_root("unique-corrupt");
+    fs::create_dir_all(&root).unwrap();
+    let store = SettingsStore::for_root(&root);
+    fs::write(store.path(), b"first").unwrap();
+    assert_eq!(store.load().unwrap(), Settings::default());
+    fs::write(store.path(), b"second").unwrap();
+    assert_eq!(store.load().unwrap(), Settings::default());
+    let backups: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("settings.corrupt-")
+        })
+        .collect();
+    assert_eq!(backups.len(), 2);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn missing_load_does_not_create_root_and_replacement_keeps_latest_settings() {
+    let root = test_root("missing-replace");
+    let store = SettingsStore::for_root(&root);
+    assert_eq!(store.load().unwrap(), Settings::default());
+    assert!(!root.exists());
+    let first = Settings {
+        taskbar_offset: 1,
+        ..Settings::default()
+    };
+    let second = Settings {
+        taskbar_offset: 2,
+        ..Settings::default()
+    };
+    store.save(&first).unwrap();
+    store.save(&second).unwrap();
+    assert_eq!(store.load().unwrap(), second);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn concurrent_saves_leave_valid_final_json_without_temp_files() {
+    let root = test_root("concurrent");
+    let store = SettingsStore::for_root(&root);
+    let mut joins = Vec::new();
+    for offset in 0..8 {
+        let store = store.clone();
+        joins.push(std::thread::spawn(move || {
+            store.save(&Settings {
+                taskbar_offset: offset,
+                ..Settings::default()
+            })
+        }));
+    }
+    for join in joins {
+        join.join().unwrap().unwrap();
+    }
+    let _: Settings = serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+    assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .contains(".settings.tmp-")));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn complete_json_field_mutations_are_backed_up_exactly() {
+    let cases = vec![
+        ("schema", serde_json::json!(2)),
+        ("interval", serde_json::json!(2)),
+        ("monitor_empty", serde_json::json!("")),
+        ("monitor_long", serde_json::json!("x".repeat(513))),
+        ("monitor_control", serde_json::json!("a\nb")),
+        ("offset", serde_json::json!(2_000_001)),
+        ("position", serde_json::json!({"x": 2_000_001, "y": 0})),
+    ];
+    for (name, value) in cases {
+        let root = test_root(name);
+        fs::create_dir_all(&root).unwrap();
+        let store = SettingsStore::for_root(&root);
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        match name {
+            "schema" => json["schema_version"] = value,
+            "interval" => json["refresh_interval_minutes"] = value,
+            name if name.starts_with("monitor") => json["monitor_device"] = value,
+            "position" => json["floating_position"] = value,
+            _ => json["taskbar_offset"] = value,
+        }
+        let bytes = serde_json::to_vec(&json).unwrap();
+        fs::write(store.path(), &bytes).unwrap();
+        assert_eq!(store.load().unwrap(), Settings::default());
+        let backup = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("settings.corrupt-")
+            })
+            .unwrap();
+        assert_eq!(fs::read(backup).unwrap(), bytes);
+        let _ = fs::remove_dir_all(root);
+    }
 }

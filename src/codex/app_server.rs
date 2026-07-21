@@ -29,8 +29,9 @@ const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
 pub trait UsageProvider: Send + Sync {
     /// 현재 Codex 사용량을 조회합니다.
     ///
-    /// 매개변수는 없으며, 성공하면 수집 시각을 포함한 사용량을 반환합니다.
-    /// 로컬 CLI, app-server, 응답 형식 문제가 생기면 민감한 원인을 포함하지 않는 `UsageError`를 반환합니다.
+    /// `allow_auth_refresh`가 참이면 인증 관련 요청 실패 뒤에만 계정 정보를 한 번 갱신할 수 있습니다.
+    /// 성공하면 수집 시각을 포함한 사용량을 반환하고, CLI·app-server·응답 형식 문제는 민감한 원인을
+    /// 포함하지 않는 `UsageError`로 반환합니다. 구현체는 동시 호출을 안전하게 제한해야 합니다.
     fn fetch(&self, allow_auth_refresh: bool) -> Result<CodexUsage, UsageError>;
 }
 
@@ -43,10 +44,10 @@ pub struct AppServerUsageProvider {
 }
 
 impl AppServerUsageProvider {
-    /// 인증 갱신 허용 여부를 지정하여 제공자를 생성합니다.
+    /// 인증 정책을 보관하지 않는 새 제공자를 생성합니다.
     ///
-    /// `allow_auth_refresh`가 참이면 rate-limit 요청이 인증 관련 요청 오류로 실패할 때만
-    /// 계정 갱신을 한 번 시도합니다. 반환값은 해당 정책을 보관하는 제공자입니다.
+    /// 인증 갱신 여부는 각 `fetch` 호출의 `allow_auth_refresh` 인자로 결정됩니다.
+    /// 반환된 제공자는 clone 간에도 공유되는 single-flight 제한으로 동시 RPC를 하나만 허용합니다.
     pub fn new() -> Self {
         Self {
             in_flight: Arc::new(AtomicBool::new(false)),

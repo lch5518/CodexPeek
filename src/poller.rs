@@ -45,11 +45,15 @@ pub struct PollState {
     last_error: Option<UsageError>,
     failure_count: usize,
     in_flight: bool,
-    observed_elapsed_resets: Vec<SystemTime>,
+    pending_resets: Vec<SystemTime>,
+    handled_resets: Vec<SystemTime>,
 }
 
 impl PollState {
     /// 유효한 분 단위 주기로 상태 기계를 만듭니다.
+    ///
+    /// `refresh_interval_minutes`는 1, 5, 10, 15, 30 중 하나여야 하며, `now`를 첫 자동 요청 시각으로
+    /// 사용합니다. 다른 값은 상태를 만들지 않고 오류를 반환합니다.
     pub fn new(refresh_interval_minutes: u32, now: SystemTime) -> Result<Self, &'static str> {
         if !matches!(refresh_interval_minutes, 1 | 5 | 10 | 15 | 30) {
             return Err("invalid refresh interval");
@@ -63,17 +67,27 @@ impl PollState {
             last_error: None,
             failure_count: 0,
             in_flight: false,
-            observed_elapsed_resets: Vec::new(),
+            pending_resets: Vec::new(),
+            handled_resets: Vec::new(),
         })
     }
 
-    /// 요청을 시작할 수 있으면 인증 갱신 허용 여부를 반환합니다.
+    /// 요청을 시작할 수 있으면 강제 인증 갱신 여부를 반환합니다.
+    ///
+    /// `trigger`와 `now`에 따라 중복 실행 및 10초 이내 수동 요청을 거절하면 `None`을 반환합니다.
+    /// `Some(true)`는 호출자가 자동 정책과 별개로 인증 갱신을 허용해야 함을 뜻합니다.
     pub fn begin(&mut self, trigger: PollTrigger, now: SystemTime) -> Option<bool> {
         if self.in_flight {
             return None;
         }
         let should_start = match trigger {
-            PollTrigger::Automatic => now >= self.next_poll_at,
+            PollTrigger::Automatic => {
+                let due = now >= self.next_poll_at;
+                if due {
+                    self.mark_due_resets_handled(now);
+                }
+                due
+            }
             PollTrigger::Manual => {
                 let permitted = self.last_manual_at.is_none_or(|previous| {
                     elapsed_at_least(now, previous, Duration::from_secs(10))
@@ -84,19 +98,9 @@ impl PollState {
                 permitted
             }
             PollTrigger::ForcedAuth => true,
-            PollTrigger::Reset(reset_at) if reset_at > now => {
-                if reset_at < self.next_poll_at {
-                    self.next_poll_at = reset_at;
-                }
-                false
-            }
             PollTrigger::Reset(reset_at) => {
-                if self.observed_elapsed_resets.contains(&reset_at) {
-                    false
-                } else {
-                    self.observed_elapsed_resets.push(reset_at);
-                    true
-                }
+                self.register_reset(reset_at, now);
+                false
             }
         };
         if !should_start {
@@ -107,24 +111,67 @@ impl PollState {
     }
 
     /// 완료 결과를 반영하고 다음 자동 요청 시각을 계산합니다.
-    pub fn finish(&mut self, result: Result<Option<CodexUsage>, ()>, now: SystemTime) {
+    ///
+    /// 성공한 `result`만 마지막 정상 사용량과 성공 시각을 갱신합니다. 실패는 마지막 정상 값을 보존하고
+    /// 1/2/4/8/15분 백오프를 적용합니다.
+    pub fn finish(&mut self, result: Result<CodexUsage, UsageError>, now: SystemTime) {
         self.in_flight = false;
         match result {
             Ok(usage) => {
+                let reported_resets = [
+                    usage.primary.as_ref().and_then(|window| window.resets_at),
+                    usage.secondary.as_ref().and_then(|window| window.resets_at),
+                ];
                 self.last_success_at = Some(now);
-                if let Some(usage) = usage {
-                    self.last_good = Some(usage);
-                }
+                self.last_good = Some(usage);
                 self.failure_count = 0;
                 self.last_error = None;
                 self.next_poll_at = now + self.interval;
+                self.pending_resets.clear();
+                for reset_at in reported_resets.into_iter().flatten() {
+                    self.register_reset(reset_at, now);
+                }
             }
-            Err(()) => {
+            Err(error) => {
                 self.failure_count = self.failure_count.saturating_add(1);
+                self.last_error = Some(error);
                 let minutes = [1_u64, 2, 4, 8, 15][self.failure_count.saturating_sub(1).min(4)];
                 self.next_poll_at = now + Duration::from_secs(minutes * 60);
+                self.schedule_pending_reset(now);
             }
         }
+    }
+
+    fn register_reset(&mut self, reset_at: SystemTime, now: SystemTime) {
+        if self.handled_resets.contains(&reset_at) || self.pending_resets.contains(&reset_at) {
+            return;
+        }
+        self.pending_resets.push(reset_at);
+        self.schedule_pending_reset(now);
+    }
+
+    fn schedule_pending_reset(&mut self, now: SystemTime) {
+        let Some(earliest) = self.pending_resets.iter().copied().min() else {
+            return;
+        };
+        let reset_due = if earliest <= now { now } else { earliest };
+        if reset_due < self.next_poll_at {
+            self.next_poll_at = reset_due;
+        }
+    }
+
+    fn mark_due_resets_handled(&mut self, now: SystemTime) {
+        let mut still_pending = Vec::with_capacity(self.pending_resets.len());
+        for reset_at in self.pending_resets.drain(..) {
+            if reset_at <= now {
+                if !self.handled_resets.contains(&reset_at) {
+                    self.handled_resets.push(reset_at);
+                }
+            } else {
+                still_pending.push(reset_at);
+            }
+        }
+        self.pending_resets = still_pending;
     }
 
     /// 다음 자동 요청 예정 시각을 반환합니다.
@@ -163,34 +210,32 @@ enum PollCommand {
 /// 별도 스레드에서 공급자를 호출하는 폴링 서비스입니다.
 pub struct PollingService {
     sender: mpsc::Sender<PollCommand>,
-    snapshot: Arc<Mutex<PollSnapshot>>,
+    state: Arc<Mutex<PollState>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl PollingService {
     /// 공급자와 설정으로 폴링 워커를 시작합니다.
+    ///
+    /// `provider` 호출은 상태 잠금 밖에서 실행되며, `auto_auth_refresh`는 자동 요청의 인증 갱신 정책입니다.
+    /// 유효하지 않은 갱신 간격이면 워커를 시작하지 않고 오류를 반환합니다.
     pub fn start(
         provider: Arc<dyn UsageProvider>,
         refresh_interval_minutes: u32,
         auto_auth_refresh: bool,
     ) -> Result<Self, &'static str> {
         let initial = SystemTime::now();
-        let state = PollState::new(refresh_interval_minutes, initial)?;
-        let snapshot = Arc::new(Mutex::new(state.snapshot(initial)));
-        let shared_snapshot = Arc::clone(&snapshot);
+        let state = Arc::new(Mutex::new(PollState::new(
+            refresh_interval_minutes,
+            initial,
+        )?));
+        let worker_state = Arc::clone(&state);
         let (sender, receiver) = mpsc::channel();
-        let worker = thread::spawn(move || {
-            worker_loop(
-                provider,
-                state,
-                auto_auth_refresh,
-                receiver,
-                shared_snapshot,
-            )
-        });
+        let worker =
+            thread::spawn(move || worker_loop(provider, worker_state, auto_auth_refresh, receiver));
         Ok(Self {
             sender,
-            snapshot,
+            state,
             worker: Some(worker),
         })
     }
@@ -209,13 +254,20 @@ impl PollingService {
 
     /// UI가 읽을 수 있는 최신 상태를 반환합니다.
     pub fn snapshot(&self) -> PollSnapshot {
-        self.snapshot
+        self.snapshot_at(SystemTime::now())
+    }
+
+    /// 지정한 현재 시각을 기준으로 최신 폴링 상태를 계산합니다.
+    pub fn snapshot_at(&self, now: SystemTime) -> PollSnapshot {
+        self.state
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .clone()
+            .snapshot(now)
     }
 
     /// 워커를 종료하고 리소스를 정리합니다.
+    ///
+    /// 공급자 호출이 진행 중이면 공급자의 제한된 호출 시간이 끝날 때까지 기다릴 수 있습니다.
     pub fn stop(mut self) {
         let _ = self.sender.send(PollCommand::Stop);
         if let Some(worker) = self.worker.take() {
@@ -235,30 +287,37 @@ impl Drop for PollingService {
 
 fn worker_loop(
     provider: Arc<dyn UsageProvider>,
-    mut state: PollState,
+    state: Arc<Mutex<PollState>>,
     auto_auth_refresh: bool,
     receiver: mpsc::Receiver<PollCommand>,
-    snapshot: Arc<Mutex<PollSnapshot>>,
 ) {
     loop {
         let now = SystemTime::now();
-        let timeout = state.next_poll_at().duration_since(now).unwrap_or_default();
+        let timeout = state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .next_poll_at()
+            .duration_since(now)
+            .unwrap_or_default();
         let trigger = match receiver.recv_timeout(timeout) {
             Ok(PollCommand::Trigger(trigger)) => trigger,
             Ok(PollCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => PollTrigger::Automatic,
         };
         let now = SystemTime::now();
-        let Some(forced_auth) = state.begin(trigger, now) else {
+        let forced_auth = state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .begin(trigger, now);
+        let Some(forced_auth) = forced_auth else {
             continue;
         };
         let allow_auth_refresh = auto_auth_refresh || forced_auth;
-        *snapshot.lock().unwrap_or_else(|error| error.into_inner()) = state.snapshot(now);
         let result = provider.fetch(allow_auth_refresh);
         let now = SystemTime::now();
-        let result_for_state = result.clone().map(Some).map_err(|_| ());
-        state.last_error = result.err();
-        state.finish(result_for_state, now);
-        *snapshot.lock().unwrap_or_else(|error| error.into_inner()) = state.snapshot(now);
+        state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .finish(result, now);
     }
 }

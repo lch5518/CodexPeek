@@ -27,3 +27,24 @@
 - 인증 파일 내용, RPC 원문, 토큰, 계정 식별자, 이메일, 프록시 값을 읽거나 기록하지 않는다.
 - 업데이트 확인은 릴리스 페이지 URL만 반환하며 자산을 내려받거나 실행하지 않는다.
 - 후속 작업에서는 실제 `ureq` 어댑터를 UI/앱 조립 단계에서 주입하고 Windows에서 원자 교체 실패 경로를 수동 점검해야 한다.
+
+## 마무리 보완 RED/GREEN 증거
+
+- 업데이트 HTTP 계약: fake client가 요청 URL, 고정 User-Agent, 10초 timeout, 구성한 최대 본문 크기를 모두
+  기록하도록 확장했다. `release_url_must_be_the_exact_tag_page`는 이전의 접두사 기반 검증으로
+  `.../releases/tag/v2.0.0/assets`를 업데이트로 잘못 보고하여 RED로 실패했다. 태그 이름과 정확히 일치하는
+  HTTPS GitHub 태그 페이지 비교로 바꾼 뒤 GREEN으로 통과했다. 같은 런타임 테스트는 dotted 저장소,
+  동등/이전 버전, malformed·초과 크기·비-2xx 응답 및 다운로드/외부 URL도 다룬다.
+- 지역화 완전성: 요구된 36개 키(상태, 표시 모드, 갱신 간격, 자동 시작/시작 화면, 인증 갱신, 항상 위,
+  언어, 위치 초기화, 진단, 업데이트, 창/주·보조 창 레이블, CLI/RPC/login/settings/proxy/taskbar 진단)를
+  명시적으로 검사하도록 했다. `LocalizationKey::ALL`에서 taskbar 진단 키를 제외한 RED 실행은
+  `left: 35, right: 36`으로 실패했고, 키를 복원한 GREEN 실행은 한글·영문 비어 있지 않은 문구까지 통과했다.
+- 문서: `UsageProvider::fetch(bool)`의 인증 갱신 인자와 오류/동시성 제약, `AppServerUsageProvider::new()`이
+  더 이상 인증 정책을 저장하지 않는다는 점을 수정했다. 새 설정·진단·폴러·업데이트 공개 API 문서에는
+  인자, 반환값, I/O 또는 안전 제약을 보강했다.
+
+## 최종 검증 갱신
+
+- `cargo test --all-targets`: 단위 38건, 런타임 통합 32건, 총 70건 통과.
+- `cargo fmt --check`: 통과.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 통과.

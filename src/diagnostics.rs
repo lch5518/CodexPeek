@@ -1,6 +1,7 @@
 use std::{
     fs, io,
     path::PathBuf,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -57,6 +58,7 @@ pub enum SafeDiagnostic {
 #[derive(Clone, Debug)]
 pub struct DiagnosticLogger {
     path: PathBuf,
+    gate: Arc<Mutex<()>>,
 }
 
 impl DiagnosticLogger {
@@ -66,21 +68,31 @@ impl DiagnosticLogger {
     }
 
     /// 지정 경로를 사용하는 진단 로그 기록기를 만듭니다.
+    ///
+    /// `path`의 부모 디렉터리는 첫 기록 시 생성됩니다. 반환된 기록기는 동일 경로의 기록을 프로세스 내에서
+    /// 직렬화하고, 1 MiB를 넘기기 전에 `.log.1`로 한 번 회전합니다.
     pub fn for_path(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            gate: Arc::new(Mutex::new(())),
+        }
     }
 
     /// 안정적인 코드와 통제된 설명을 한 줄로 기록합니다.
-    pub fn record(&self, code: DiagnosticCode, description: &str) -> io::Result<()> {
+    fn record(&self, code: DiagnosticCode, description: &str) -> io::Result<()> {
+        let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let line = format!(
+        let mut line = format!(
             "{} {} {}\n",
             unix_now(),
             code.as_str(),
             sanitize(description)
         );
+        line.truncate(line.trim_end_matches('\n').len());
+        line.truncate((MAX_LOG_BYTES.saturating_sub(1)) as usize);
+        line.push('\n');
         let existing = fs::metadata(&self.path)
             .map(|metadata| metadata.len())
             .unwrap_or(0);
@@ -98,6 +110,9 @@ impl DiagnosticLogger {
     }
 
     /// 안전 모델을 필요한 최소 정보로 기록합니다.
+    ///
+    /// `event`에서 허용한 경로·불리언·안정 코드만 기록하며 토큰, 계정 식별자, 이메일, 프록시 값과 RPC
+    /// 원문은 기록하지 않습니다. 파일 I/O 실패는 호출자에게 반환합니다.
     pub fn record_safe(&self, event: SafeDiagnostic) -> io::Result<()> {
         match event {
             SafeDiagnostic::Cli { path, exists } => self.record(
@@ -137,6 +152,22 @@ fn unix_now() -> u64 {
 }
 
 fn sanitize(value: &str) -> String {
+    let lower = value.to_ascii_lowercase();
+    if [
+        "bearer",
+        "authorization",
+        "token",
+        "secret",
+        "credential",
+        "account",
+        "email",
+        "proxy",
+    ]
+    .iter()
+    .any(|key| lower.contains(key))
+    {
+        return "[redacted]".to_owned();
+    }
     let one_line = value.replace(['\r', '\n'], " ");
     let mut hide_next = false;
     one_line
@@ -162,4 +193,19 @@ fn sanitize(value: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize;
+
+    #[test]
+    fn sanitizer_removes_json_camel_snake_colon_and_spaced_secrets() {
+        let value = sanitize(
+            r#"{"accessToken":"secret","account_id":"abc","email":"a@b.com","proxy" : "http://proxy"} authorization: Bearer token refresh_token = xyz"#,
+        );
+        for secret in ["secret", "abc", "a@b.com", "http://proxy", "xyz"] {
+            assert!(!value.contains(secret), "{value}");
+        }
+    }
 }

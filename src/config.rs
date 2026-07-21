@@ -2,6 +2,8 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -9,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_LOGICAL_COORDINATE: i32 = 2_000_000;
+static FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 
 /// 위젯 표시 위치 방식을 나타냅니다.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -128,6 +131,7 @@ impl Settings {
 #[derive(Clone, Debug)]
 pub struct SettingsStore {
     root: PathBuf,
+    gate: Arc<Mutex<()>>,
 }
 
 impl SettingsStore {
@@ -136,12 +140,20 @@ impl SettingsStore {
         let root = dirs::config_dir()
             .unwrap_or_else(std::env::temp_dir)
             .join("CodexUsageMonitor");
-        Self { root }
+        Self {
+            root,
+            gate: Arc::new(Mutex::new(())),
+        }
     }
 
     /// 테스트 또는 이식 가능한 실행을 위해 지정 경로를 사용하는 저장소를 만듭니다.
+    ///
+    /// `root` 아래에 `settings.json`을 사용합니다. 생성 시에는 디렉터리나 파일을 만들지 않습니다.
     pub fn for_root(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            gate: Arc::new(Mutex::new(())),
+        }
     }
 
     /// 설정 파일의 전체 경로를 반환합니다.
@@ -150,10 +162,15 @@ impl SettingsStore {
     }
 
     /// 설정을 읽고 손상되었으면 원본을 보관한 뒤 기본값을 반환합니다.
-    pub fn load(&self) -> Settings {
+    ///
+    /// 파일이 없으면 디렉터리를 만들지 않고 기본값을 반환합니다. JSON·스키마·필드가 유효하지 않으면 원본을
+    /// `settings.corrupt-<unix>-<nonce>.json`으로 보관한 뒤 기본값을 반환하며, 읽기 또는 보관 실패는 전달합니다.
+    pub fn load(&self) -> io::Result<Settings> {
         let path = self.path();
-        let Ok(contents) = fs::read(&path) else {
-            return Settings::default();
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
+            Err(error) => return Err(error),
         };
         match serde_json::from_slice::<Settings>(&contents).and_then(|settings| {
             settings
@@ -161,16 +178,20 @@ impl SettingsStore {
                 .map(|()| settings)
                 .map_err(serde_json::Error::io)
         }) {
-            Ok(settings) => settings,
+            Ok(settings) => Ok(settings),
             Err(_) => {
-                let _ = self.back_up_corrupt(&path);
-                Settings::default()
+                self.back_up_corrupt(&path)?;
+                Ok(Settings::default())
             }
         }
     }
 
     /// 설정을 같은 디렉터리의 임시 파일을 거쳐 교체 저장합니다.
+    ///
+    /// `settings`는 저장 전에 검증하며, 유효하지 않으면 대상 파일을 변경하지 않고 오류를 반환합니다.
+    /// 성공 시 임시 파일을 flush·sync한 뒤 원자 교체하고, 실패한 임시 파일은 정리합니다.
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
+        let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         settings.validate()?;
         fs::create_dir_all(&self.root)?;
         let serialized = serde_json::to_vec_pretty(settings)
@@ -178,7 +199,7 @@ impl SettingsStore {
         let temp = self.root.join(format!(
             ".settings.tmp-{}-{}",
             std::process::id(),
-            unix_now()
+            FILE_NONCE.fetch_add(1, Ordering::Relaxed)
         ));
         let write_result = (|| {
             let mut file = File::options().write(true).create_new(true).open(&temp)?;
@@ -194,9 +215,11 @@ impl SettingsStore {
     }
 
     fn back_up_corrupt(&self, path: &Path) -> io::Result<()> {
-        let backup = self
-            .root
-            .join(format!("settings.corrupt-{}.json", unix_now()));
+        let backup = self.root.join(format!(
+            "settings.corrupt-{}-{}.json",
+            unix_now(),
+            FILE_NONCE.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::rename(path, backup)
     }
 }

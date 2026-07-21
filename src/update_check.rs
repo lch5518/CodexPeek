@@ -26,6 +26,9 @@ pub enum UpdateCheckError {
 /// 업데이트 확인에 필요한 최소 HTTP 인터페이스입니다.
 pub trait ReleaseHttpClient: Send + Sync {
     /// 제한된 응답 크기와 시간 제한을 사용하여 GET 요청을 보냅니다.
+    ///
+    /// `url`, `user_agent`, `timeout`, `max_bytes`를 그대로 적용해야 하며, 성공 시 본문 길이는
+    /// `max_bytes` 이하여야 합니다. 전송 또는 제한 위반은 `UpdateCheckError`로 반환합니다.
     fn get(
         &self,
         url: &str,
@@ -95,6 +98,10 @@ pub struct UpdateChecker {
 
 impl UpdateChecker {
     /// 유효한 GitHub 저장소 메타데이터가 있을 때만 검사기를 만듭니다.
+    ///
+    /// `current_version`은 SemVer여야 하고 `repository_url`은 선택적 `.git`을 가진
+    /// `https://github.com/<owner>/<repo>` 형식이어야 합니다. `max_bytes`는 0보다 커야 하며,
+    /// 하나라도 만족하지 않으면 네트워크 작업 없이 `None`을 반환합니다.
     pub fn new(
         current_version: &str,
         repository_url: Option<&str>,
@@ -111,6 +118,10 @@ impl UpdateChecker {
     }
 
     /// 마지막 검사 시각이 지났을 때만 최신 릴리스를 확인합니다.
+    ///
+    /// `last_check` 뒤 24시간이 지나지 않았으면 요청 없이 `Ok(None)`을 반환합니다. 그 외에는
+    /// `client`로 최신 릴리스를 조회해 현재 버전보다 새롭고 정확한 GitHub 태그 페이지를 가진 경우만
+    /// `Ok(Some(...))`으로 반환합니다. 네트워크 실패만 `Err`로 전달하며, 비정상 응답은 안전하게 무시합니다.
     pub fn check_if_due(
         &self,
         client: &dyn ReleaseHttpClient,
@@ -139,7 +150,9 @@ impl UpdateChecker {
             Ok(version) => version,
             Err(_) => return Ok(None),
         };
-        if version <= self.current_version || !self.is_safe_release_url(&release.html_url) {
+        if version <= self.current_version
+            || !self.is_safe_release_url(&release.html_url, &release.tag_name)
+        {
             return Ok(None);
         }
         Ok(Some(AvailableUpdate {
@@ -148,16 +161,14 @@ impl UpdateChecker {
         }))
     }
 
-    fn is_safe_release_url(&self, value: &str) -> bool {
-        let prefix = format!(
-            "https://github.com/{}/{}/releases/",
-            self.owner, self.repository
-        );
-        value.starts_with(&prefix)
-            && !value.contains(['?', '#', '@', '\\'])
-            && value[prefix.len()..]
-                .split('/')
-                .all(|part| !part.is_empty() && part != "." && part != "..")
+    fn is_safe_release_url(&self, value: &str, tag_name: &str) -> bool {
+        !tag_name.is_empty()
+            && !tag_name.contains(['/', '\\', '?', '#', '@'])
+            && value
+                == format!(
+                    "https://github.com/{}/{}/releases/tag/{tag_name}",
+                    self.owner, self.repository
+                )
     }
 }
 
@@ -192,5 +203,5 @@ fn parse_repository(value: &str) -> Option<(String, String)> {
 fn valid_segment(value: &str) -> bool {
     value
         .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.')
 }
