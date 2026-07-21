@@ -11,6 +11,9 @@ use crate::{codex::locator::CliCandidate, UsageError};
 
 use super::locator::CandidateKind;
 
+const MAX_VERSION_OUTPUT_BYTES: usize = 8 * 1024;
+const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LaunchPlan {
     pub(crate) program: PathBuf,
@@ -78,6 +81,7 @@ impl ProcessGuard {
     }
 
     pub(crate) fn start_plan(plan: LaunchPlan, deadline: Instant) -> Result<Self, UsageError> {
+        #[cfg(windows)]
         if Instant::now() >= deadline {
             return Err(UsageError::RpcTimeout);
         }
@@ -116,6 +120,10 @@ impl ProcessGuard {
                 return Err(UsageError::AppServerStartFailed);
             }
         };
+        if Instant::now() >= deadline {
+            job.terminate();
+            return Err(UsageError::RpcTimeout);
+        }
         #[cfg(windows)]
         if resume_suspended_process(child.id()).is_err() {
             let _ = child.kill();
@@ -171,10 +179,16 @@ impl ProcessGuard {
         let (sender, receiver) = mpsc::sync_channel(1);
         thread::spawn(move || {
             let mut output = Vec::new();
-            let result = stdout
-                .read_to_end(&mut output)
-                .map(|_| output)
-                .map_err(|_| UsageError::RequestFailed);
+            let mut buffer = [0_u8; 1024];
+            let result = loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) => break Ok(output),
+                    Ok(count) if output.len() + count <= MAX_VERSION_OUTPUT_BYTES => {
+                        output.extend_from_slice(&buffer[..count]);
+                    }
+                    Ok(_) | Err(_) => break Err(UsageError::RequestFailed),
+                }
+            };
             let _ = sender.send(result);
         });
         let status = guard.wait_until(deadline)?;
@@ -250,6 +264,11 @@ pub(crate) struct ChildTransport {
     stdout: BufReader<ChildStdout>,
 }
 
+pub(crate) enum FrameReadError {
+    Io,
+    Invalid,
+}
+
 impl ChildTransport {
     pub(crate) fn write_line(&mut self, line: &str) -> Result<(), ()> {
         self.stdin.write_all(line.as_bytes()).map_err(|_| ())?;
@@ -257,13 +276,31 @@ impl ChildTransport {
         self.stdin.flush().map_err(|_| ())
     }
 
-    pub(crate) fn read_line(&mut self) -> Result<Option<String>, ()> {
-        let mut line = String::new();
-        let count = self.stdout.read_line(&mut line).map_err(|_| ())?;
-        if count == 0 {
-            Ok(None)
-        } else {
-            Ok(Some(line))
+    pub(crate) fn read_line(&mut self) -> Result<Option<String>, FrameReadError> {
+        let mut line = Vec::new();
+        loop {
+            let buffer = self.stdout.fill_buf().map_err(|_| FrameReadError::Io)?;
+            if buffer.is_empty() {
+                return if line.is_empty() {
+                    Ok(None)
+                } else {
+                    Err(FrameReadError::Invalid)
+                };
+            }
+            let take = buffer
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(buffer.len(), |position| position + 1);
+            if line.len() + take > MAX_JSONL_FRAME_BYTES {
+                return Err(FrameReadError::Invalid);
+            }
+            line.extend_from_slice(&buffer[..take]);
+            self.stdout.consume(take);
+            if line.last() == Some(&b'\n') {
+                return String::from_utf8(line)
+                    .map(Some)
+                    .map_err(|_| FrameReadError::Invalid);
+            }
         }
     }
 }
@@ -464,7 +501,7 @@ mod tests {
         let batch = directory.join("version probe.cmd");
         std::fs::write(
             &batch,
-            "@echo 0.141.0\r\n@start \"\" /b cmd /c \"ping -n 5 127.0.0.1 >nul\"\r\n@exit /b 0\r\n",
+            "@echo 0.141.0\r\n@start \"\" /b cmd /c \"ping -n 5 127.0.0.1\"\r\n@exit /b 0\r\n",
         )
         .unwrap();
 
@@ -487,6 +524,27 @@ mod tests {
         let batch =
             std::env::temp_dir().join(format!("codex-version-fail-{}.cmd", std::process::id()));
         std::fs::write(&batch, "@echo 0.141.0\r\n@exit /b 7\r\n").unwrap();
+
+        assert_eq!(
+            ProcessGuard::version_output(
+                version_plan(CandidateKind::Command, batch.clone()),
+                Instant::now() + Duration::from_secs(5),
+            ),
+            Err(crate::UsageError::RequestFailed)
+        );
+        let _ = std::fs::remove_file(batch);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn version_probe_rejects_oversized_stdout() {
+        let batch =
+            std::env::temp_dir().join(format!("codex-version-large-{}.cmd", std::process::id()));
+        std::fs::write(
+            &batch,
+            "@for /L %%i in (1,1,9000) do <nul set /p =x\r\n@exit /b 0\r\n",
+        )
+        .unwrap();
 
         assert_eq!(
             ProcessGuard::version_output(

@@ -13,12 +13,13 @@ use crate::{CodexUsage, UsageError, UsageWindow, WindowKind};
 
 use super::{
     locator::locate_cli,
-    process::{ChildTransport, ProcessGuard},
+    process::{ChildTransport, FrameReadError, ProcessGuard},
 };
 
 const CLIENT_NAME: &str = "codex_usage_monitor";
 const CLIENT_TITLE: &str = "Codex Usage Monitor";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
 
 /// Codex 사용량을 가져오는 동기식 제공자입니다.
 pub trait UsageProvider: Send + Sync {
@@ -56,6 +57,13 @@ impl Default for AppServerUsageProvider {
 impl UsageProvider for AppServerUsageProvider {
     fn fetch_usage(&self) -> Result<CodexUsage, UsageError> {
         let deadline = Instant::now() + PROVIDER_TIMEOUT;
+        let provider = self.clone();
+        run_bounded_operation(deadline, move || provider.fetch_usage_until(deadline))
+    }
+}
+
+impl AppServerUsageProvider {
+    fn fetch_usage_until(&self, deadline: Instant) -> Result<CodexUsage, UsageError> {
         let candidate = locate_cli(deadline)?;
         let mut guard = ProcessGuard::start(candidate, deadline)?;
         let transport = guard.take_transport()?;
@@ -82,9 +90,22 @@ impl UsageProvider for AppServerUsageProvider {
         if result != Err(UsageError::RpcTimeout) {
             let _ = worker.join();
         }
-        guard.shutdown_until(deadline);
+        guard.shutdown_until(deadline.min(Instant::now() + Duration::from_millis(250)));
         result
     }
+}
+
+fn run_bounded_operation<F>(deadline: Instant, operation: F) -> Result<CodexUsage, UsageError>
+where
+    F: FnOnce() -> Result<CodexUsage, UsageError> + Send + 'static,
+{
+    let (sender, receiver) = mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let _ = sender.send(operation());
+    });
+    receiver
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap_or(Err(UsageError::RpcTimeout))
 }
 
 trait JsonlTransport {
@@ -95,6 +116,7 @@ trait JsonlTransport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransportError {
     Failed,
+    Invalid,
 }
 
 struct ProcessJsonlTransport {
@@ -109,9 +131,10 @@ impl JsonlTransport for ProcessJsonlTransport {
     }
 
     fn read_line(&mut self) -> Result<Option<String>, TransportError> {
-        self.transport
-            .read_line()
-            .map_err(|_| TransportError::Failed)
+        self.transport.read_line().map_err(|error| match error {
+            FrameReadError::Io => TransportError::Failed,
+            FrameReadError::Invalid => TransportError::Invalid,
+        })
     }
 }
 
@@ -345,6 +368,9 @@ fn receive_result<T: JsonlTransport, R: for<'de> Deserialize<'de>>(
         let Some(line) = transport.read_line().map_err(map_transport_error)? else {
             return Err(UsageError::InvalidResponse);
         };
+        if line.len() >= MAX_JSONL_FRAME_BYTES {
+            return Err(UsageError::InvalidResponse);
+        }
         check_deadline(deadline)?;
         let header: ResponseHeader =
             serde_json::from_str(&line).map_err(|_| UsageError::InvalidResponse)?;
@@ -371,6 +397,7 @@ fn check_deadline(deadline: Instant) -> Result<(), UsageError> {
 fn map_transport_error(error: TransportError) -> UsageError {
     match error {
         TransportError::Failed => UsageError::RequestFailed,
+        TransportError::Invalid => UsageError::InvalidResponse,
     }
 }
 
@@ -465,9 +492,15 @@ impl JsonlTransport for DelayedRateLimitTransport {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, UNIX_EPOCH};
+    use std::{
+        thread,
+        time::{Duration, Instant, UNIX_EPOCH},
+    };
 
-    use super::{run_jsonl_session, DelayedRateLimitTransport, ScriptedTransport};
+    use super::{
+        run_bounded_operation, run_jsonl_session, DelayedRateLimitTransport, ScriptedTransport,
+        MAX_JSONL_FRAME_BYTES,
+    };
     use crate::UsageError;
 
     #[test]
@@ -625,6 +658,32 @@ mod tests {
             run_jsonl_session(&mut transport, false, Duration::from_millis(1)),
             Err(UsageError::RpcTimeout)
         );
+    }
+
+    #[test]
+    fn bounded_operation_returns_before_a_blocking_pre_rpc_step_finishes() {
+        let started = Instant::now();
+        let result = run_bounded_operation(Instant::now() + Duration::from_millis(10), || {
+            thread::sleep(Duration::from_millis(100));
+            Err(UsageError::RequestFailed)
+        });
+
+        assert_eq!(result, Err(UsageError::RpcTimeout));
+        assert!(started.elapsed() < Duration::from_millis(60));
+    }
+
+    #[test]
+    fn session_rejects_oversized_and_unterminated_jsonl_frames() {
+        for line in [
+            "x".repeat(MAX_JSONL_FRAME_BYTES + 1),
+            "x".repeat(MAX_JSONL_FRAME_BYTES),
+        ] {
+            let mut transport = ScriptedTransport::new([line.as_str()]);
+            assert_eq!(
+                run_jsonl_session(&mut transport, false, Duration::from_secs(1)),
+                Err(UsageError::InvalidResponse)
+            );
+        }
     }
 
     #[test]
