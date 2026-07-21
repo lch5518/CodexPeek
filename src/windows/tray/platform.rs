@@ -11,8 +11,8 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
-                SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-                TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP,
+                PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_SEPARATOR,
+                MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
             },
         },
     },
@@ -66,7 +66,7 @@ impl TrayIcon {
         }
     }
 
-    pub(crate) unsafe fn show_menu(&self, settings: &UiSettings) -> Option<u16> {
+    pub(crate) unsafe fn show_menu(owner: HWND, settings: &UiSettings) -> Option<u16> {
         let menu = CreatePopupMenu().ok()?;
         let ko = settings.resolved_language == Language::Korean;
         let result = (|| {
@@ -251,18 +251,19 @@ impl TrayIcon {
             add(menu, MENU_EXIT, if ko { "종료" } else { "Exit" }, false)?;
             let mut point = POINT::default();
             GetCursorPos(&mut point).ok()?;
-            let _ = SetForegroundWindow(self.owner);
+            let _ = SetForegroundWindow(owner);
             let command = TrackPopupMenu(
                 menu,
                 TPM_RETURNCMD | TPM_RIGHTBUTTON,
                 point.x,
                 point.y,
                 None,
-                self.owner,
+                owner,
                 None,
             );
             (command.0 > 0).then_some(command.0 as u16)
         })();
+        let _ = PostMessageW(Some(owner), WM_NULL, Default::default(), Default::default());
         let _ = DestroyMenu(menu);
         result
     }

@@ -4,7 +4,8 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore, StartupView,
+    AsyncSettingsWriter, DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore,
+    StartupView,
 };
 
 fn test_root(label: &str) -> std::path::PathBuf {
@@ -13,6 +14,25 @@ fn test_root(label: &str) -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("codex-usage-monitor-{label}-{nonce}"))
+}
+
+#[test]
+fn asynchronous_settings_writer_preserves_submission_order() {
+    let root = test_root("async-ordered");
+    let store = SettingsStore::for_root(&root);
+    let writer = AsyncSettingsWriter::start(store.clone());
+    for offset in [10, 20, 30] {
+        writer
+            .save(Settings {
+                taskbar_offset: offset,
+                ..Settings::default()
+            })
+            .unwrap();
+    }
+    writer.flush().unwrap();
+    assert_eq!(store.load().unwrap().taskbar_offset, 30);
+    writer.stop().unwrap();
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

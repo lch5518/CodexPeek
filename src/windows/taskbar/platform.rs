@@ -10,9 +10,9 @@ use windows::{
         UI::{
             HiDpi::GetDpiForWindow,
             WindowsAndMessaging::{
-                FindWindowExW, FindWindowW, GetParent, GetWindowLongPtrW, GetWindowRect,
-                MoveWindow, SetParent, SetWindowLongPtrW, GWL_STYLE, WS_CHILD, WS_CLIPSIBLINGS,
-                WS_POPUP,
+                FindWindowExW, FindWindowW, GetParent, GetWindowLongPtrW, GetWindowRect, SetParent,
+                SetWindowLongPtrW, SetWindowPos, GWL_STYLE, HWND_TOP, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_CHILD, WS_CLIPSIBLINGS, WS_POPUP,
             },
         },
     },
@@ -25,7 +25,7 @@ pub fn taskbar_available() -> bool {
     unsafe {
         taskbars()
             .into_iter()
-            .any(|bar| notification_area(bar).is_some())
+            .any(|taskbar| taskbar_has_widget_space(taskbar))
     }
 }
 
@@ -65,22 +65,37 @@ pub(crate) unsafe fn attach_to_taskbar(
         };
 
         let previous_style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        if SetParent(hwnd, Some(taskbar)).is_err() || GetParent(hwnd).ok() != Some(taskbar) {
+            continue;
+        }
         let child_style = (previous_style & !WS_POPUP.0) | WS_CHILD.0 | WS_CLIPSIBLINGS.0;
         SetWindowLongPtrW(hwnd, GWL_STYLE, child_style as isize);
-        if SetParent(hwnd, Some(taskbar)).is_err()
-            || GetParent(hwnd).ok() != Some(taskbar)
-            || MoveWindow(
-                hwnd,
-                placement.left - geometry.taskbar.left,
-                placement.top - geometry.taskbar.top,
-                placement.width(),
-                placement.height(),
-                true,
-            )
-            .is_err()
+        if SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            placement.left - geometry.taskbar.left,
+            placement.top - geometry.taskbar.top,
+            placement.width(),
+            placement.height(),
+            SWP_FRAMECHANGED | SWP_NOACTIVATE,
+        )
+        .is_err()
         {
-            let _ = SetParent(hwnd, None);
-            SetWindowLongPtrW(hwnd, GWL_STYLE, previous_style as isize);
+            let detached = SetParent(hwnd, None).is_ok() && GetParent(hwnd).is_err();
+            if detached {
+                SetWindowLongPtrW(hwnd, GWL_STYLE, previous_style as isize);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                );
+            } else {
+                return Err(io::Error::other("taskbar attachment rollback failed"));
+            }
             continue;
         }
         return Ok(taskbar);
@@ -89,6 +104,29 @@ pub(crate) unsafe fn attach_to_taskbar(
         io::ErrorKind::NotFound,
         "no compatible horizontal taskbar",
     ))
+}
+
+unsafe fn taskbar_has_widget_space(taskbar: HWND) -> bool {
+    let Some(notification) = notification_area(taskbar) else {
+        return false;
+    };
+    let mut taskbar_rect = RECT::default();
+    let mut notification_rect = RECT::default();
+    if GetWindowRect(taskbar, &mut taskbar_rect).is_err()
+        || GetWindowRect(notification, &mut notification_rect).is_err()
+    {
+        return false;
+    }
+    let geometry = TaskbarGeometry {
+        taskbar: from_native(taskbar_rect),
+        notification: from_native(notification_rect),
+    };
+    let dpi = GetDpiForWindow(taskbar).max(96);
+    let size = (
+        logical_to_physical(380, dpi),
+        geometry.taskbar.height().min(logical_to_physical(48, dpi)),
+    );
+    place_taskbar_widget(geometry, size, 0).is_ok()
 }
 
 unsafe fn taskbars() -> Vec<HWND> {

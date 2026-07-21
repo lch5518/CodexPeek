@@ -10,7 +10,8 @@ mod update_check;
 pub mod windows;
 
 pub use config::{
-    DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore, StartupView,
+    AsyncSettingsWriter, DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore,
+    StartupView,
 };
 pub use diagnostics::{DiagnosticCode, DiagnosticLogger, SafeDiagnostic};
 pub use domain::{CodexUsage, UsageLevel, UsageWindow, WindowKind};

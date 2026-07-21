@@ -144,6 +144,25 @@ fn forced_auth_requests_refresh_and_reset_trigger_advances_schedule() {
     assert_eq!(state.next_poll_at(), reset);
 }
 
+#[test]
+fn poll_state_reconfigures_interval_without_losing_last_good_data() {
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+    let good = usage(now, None, None);
+    let mut state = PollState::new(5, now).unwrap();
+    assert_eq!(state.begin(PollTrigger::Automatic, now), Some(false));
+    state.finish(Ok(good.clone()), now);
+
+    state
+        .set_refresh_interval(1, now + Duration::from_secs(10))
+        .unwrap();
+    assert_eq!(state.next_poll_at(), now + Duration::from_secs(70));
+    assert_eq!(
+        state.snapshot(now + Duration::from_secs(10)).usage,
+        Some(good)
+    );
+    assert!(state.set_refresh_interval(2, now).is_err());
+}
+
 struct ProviderStep {
     result: Result<CodexUsage, UsageError>,
     waits_for_release: bool,
@@ -278,6 +297,28 @@ fn service_starts_immediately_and_forwards_automatic_or_forced_auth_policy() {
     auto_provider.wait_for_calls(1);
     assert_eq!(auto_provider.calls(), vec![true]);
     auto_service.stop();
+}
+
+#[test]
+fn service_reconfiguration_is_nonblocking_and_changes_auth_policy() {
+    let now = SystemTime::now();
+    let provider = ObservableProvider::with_steps([
+        blocked_success_step(usage(now, None, None)),
+        success_step(usage(now, None, None)),
+    ]);
+    let service = PollingService::start(Arc::new(provider.clone()), 5, false).unwrap();
+    provider.wait_for_calls(1);
+
+    let started = Instant::now();
+    service.set_refresh_interval(1).unwrap();
+    service.set_auto_auth_refresh(true).unwrap();
+    service.refresh();
+    assert!(started.elapsed() < Duration::from_millis(100));
+
+    provider.release_one();
+    provider.wait_for_calls(2);
+    assert_eq!(provider.calls(), vec![false, true]);
+    service.stop();
 }
 
 #[test]

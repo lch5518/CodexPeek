@@ -179,6 +179,23 @@ impl PollState {
         self.next_poll_at
     }
 
+    /// 자동 갱신 간격을 바꾸고 다음 예약 시각을 새 간격 기준으로 다시 계산합니다.
+    ///
+    /// `refresh_interval_minutes`가 1, 5, 10, 15, 30이 아니면 상태를 변경하지 않고 오류를 반환합니다.
+    pub fn set_refresh_interval(
+        &mut self,
+        refresh_interval_minutes: u32,
+        now: SystemTime,
+    ) -> Result<(), &'static str> {
+        if !matches!(refresh_interval_minutes, 1 | 5 | 10 | 15 | 30) {
+            return Err("invalid refresh interval");
+        }
+        self.interval = Duration::from_secs(u64::from(refresh_interval_minutes) * 60);
+        self.next_poll_at = now + self.interval;
+        self.schedule_pending_reset(now);
+        Ok(())
+    }
+
     /// 현재 시각 기준의 표시용 상태를 반환합니다.
     pub fn snapshot(&self, now: SystemTime) -> PollSnapshot {
         let stale_after = self
@@ -204,6 +221,8 @@ fn elapsed_at_least(now: SystemTime, previous: SystemTime, duration: Duration) -
 
 enum PollCommand {
     Trigger(PollTrigger),
+    SetRefreshInterval(u32),
+    SetAutoAuthRefresh(bool),
     Stop,
 }
 
@@ -252,6 +271,23 @@ impl PollingService {
             .send(PollCommand::Trigger(PollTrigger::ForcedAuth));
     }
 
+    /// 작업자를 중단하거나 기다리지 않고 새 자동 갱신 간격을 전달합니다.
+    pub fn set_refresh_interval(&self, minutes: u32) -> Result<(), &'static str> {
+        if !matches!(minutes, 1 | 5 | 10 | 15 | 30) {
+            return Err("invalid refresh interval");
+        }
+        self.sender
+            .send(PollCommand::SetRefreshInterval(minutes))
+            .map_err(|_| "polling worker stopped")
+    }
+
+    /// 작업자를 중단하거나 기다리지 않고 자동 인증 갱신 정책을 전달합니다.
+    pub fn set_auto_auth_refresh(&self, enabled: bool) -> Result<(), &'static str> {
+        self.sender
+            .send(PollCommand::SetAutoAuthRefresh(enabled))
+            .map_err(|_| "polling worker stopped")
+    }
+
     /// UI가 읽을 수 있는 최신 상태를 반환합니다.
     pub fn snapshot(&self) -> PollSnapshot {
         self.snapshot_at(SystemTime::now())
@@ -288,7 +324,7 @@ impl Drop for PollingService {
 fn worker_loop(
     provider: Arc<dyn UsageProvider>,
     state: Arc<Mutex<PollState>>,
-    auto_auth_refresh: bool,
+    mut auto_auth_refresh: bool,
     receiver: mpsc::Receiver<PollCommand>,
 ) {
     loop {
@@ -301,6 +337,17 @@ fn worker_loop(
             .unwrap_or_default();
         let trigger = match receiver.recv_timeout(timeout) {
             Ok(PollCommand::Trigger(trigger)) => trigger,
+            Ok(PollCommand::SetRefreshInterval(minutes)) => {
+                let _ = state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .set_refresh_interval(minutes, SystemTime::now());
+                continue;
+            }
+            Ok(PollCommand::SetAutoAuthRefresh(enabled)) => {
+                auto_auth_refresh = enabled;
+                continue;
+            }
             Ok(PollCommand::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => PollTrigger::Automatic,
         };

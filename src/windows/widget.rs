@@ -93,6 +93,30 @@ pub fn physical_to_logical(value: i32, dpi: u32) -> i32 {
     scale_round(value, 96, dpi.max(1))
 }
 
+/// 화면 물리 좌표를 선택한 모니터 작업 영역 원점 기준 논리 좌표로 저장합니다.
+pub fn save_monitor_relative_position(
+    screen_position: (i32, i32),
+    work_origin: (i32, i32),
+    dpi: u32,
+) -> crate::LogicalPosition {
+    crate::LogicalPosition {
+        x: physical_to_logical(screen_position.0 - work_origin.0, dpi),
+        y: physical_to_logical(screen_position.1 - work_origin.1, dpi),
+    }
+}
+
+/// 저장한 모니터 상대 논리 좌표를 대상 작업 영역의 물리 좌표로 복원합니다.
+pub fn restore_monitor_relative_position(
+    position: crate::LogicalPosition,
+    work_origin: (i32, i32),
+    dpi: u32,
+) -> (i32, i32) {
+    (
+        work_origin.0 + logical_to_physical(position.x, dpi),
+        work_origin.1 + logical_to_physical(position.y, dpi),
+    )
+}
+
 fn scale_round(value: i32, numerator: u32, denominator: u32) -> i32 {
     let product = i64::from(value) * i64::from(numerator);
     let adjustment = i64::from(denominator) / 2;

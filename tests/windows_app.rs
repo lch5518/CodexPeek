@@ -6,12 +6,18 @@ use std::{
 use codex_usage_monitor::{
     windows::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
-        initial_widget_visible, menu_action,
+        initial_widget_visible, is_exact_github_tag_page,
+        lifecycle::{
+            CleanupAction, DetachOutcome, FloatingTransition, NativeLifecycle, RecoveryDecision,
+            RecoveryEvent,
+        },
+        menu_action, resolve_windows_language, startup_plan,
         taskbar::{place_taskbar_widget, TaskbarGeometry, TaskbarPlacementError},
         widget::{
-            clamp_floating_position, logical_to_physical, physical_to_logical, Rect, WidgetLayout,
+            clamp_floating_position, logical_to_physical, physical_to_logical,
+            restore_monitor_relative_position, save_monitor_relative_position, Rect, WidgetLayout,
         },
-        LaunchMode, UiAction, MENU_ALWAYS_ON_TOP, MENU_AUTH_REFRESH, MENU_AUTOSTART,
+        LaunchMode, StartupStep, UiAction, MENU_ALWAYS_ON_TOP, MENU_AUTH_REFRESH, MENU_AUTOSTART,
         MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_DISPLAY_FLOATING, MENU_DISPLAY_TASKBAR,
         MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
         MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN,
@@ -108,6 +114,44 @@ fn startup_tray_only_hides_without_changing_the_saved_visibility_preference() {
 }
 
 #[test]
+fn normal_startup_acquires_instance_before_any_side_effect() {
+    assert_eq!(
+        startup_plan(LaunchMode::Normal),
+        &[
+            StartupStep::AcquireSingleInstance,
+            StartupStep::LoadSettings,
+            StartupStep::StartPoller,
+            StartupStep::StartUpdateCheck,
+            StartupStep::RunUi,
+        ]
+    );
+    assert_eq!(
+        startup_plan(LaunchMode::Diagnose),
+        &[StartupStep::RunDiagnostics]
+    );
+}
+
+#[test]
+fn windows_ui_language_resolves_auto_without_process_environment() {
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Auto, Some(0x0412), Some("en-US")),
+        codex_usage_monitor::Language::Korean
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Auto, None, Some("ko-KR")),
+        codex_usage_monitor::Language::Korean
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Auto, Some(0x0409), Some("en-US")),
+        codex_usage_monitor::Language::English
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Korean, Some(0x0409), Some("en-US")),
+        codex_usage_monitor::Language::Korean
+    );
+}
+
+#[test]
 fn widget_layout_scales_consistently_at_supported_dpis() {
     for (dpi, width, height) in [
         (96, 380, 112),
@@ -146,6 +190,74 @@ fn floating_coordinates_round_trip_between_logical_and_physical_dpi() {
     assert_eq!(logical_to_physical(240, 144), 360);
     assert_eq!(physical_to_logical(360, 144), 240);
     assert_eq!(physical_to_logical(-151, 120), -121);
+}
+
+#[test]
+fn positions_are_saved_relative_to_negative_origin_and_restore_at_mixed_dpi() {
+    let saved = save_monitor_relative_position((-1_800, 150), (-1_920, 0), 144);
+    assert_eq!(
+        saved,
+        codex_usage_monitor::LogicalPosition { x: 80, y: 100 }
+    );
+    assert_eq!(
+        restore_monitor_relative_position(saved, (0, -900), 120),
+        (100, -775)
+    );
+}
+
+#[test]
+fn lifecycle_recreates_destroyed_taskbar_widget_and_cleans_in_safe_order() {
+    let mut lifecycle = NativeLifecycle::default();
+    lifecycle.owner_created();
+    lifecycle.timer_started();
+    lifecycle.tray_created();
+    lifecycle.widget_created();
+    lifecycle.widget_attached_to_taskbar();
+    lifecycle.widget_destroyed();
+
+    assert_eq!(
+        lifecycle.recovery_decision(RecoveryEvent::TaskbarCreated, true),
+        RecoveryDecision::RecreateAndApply
+    );
+    assert_eq!(
+        lifecycle.cleanup_actions(),
+        vec![
+            CleanupAction::StopTimer,
+            CleanupAction::RemoveTray,
+            CleanupAction::DestroyOwner,
+        ]
+    );
+}
+
+#[test]
+fn floating_transition_recreates_when_detach_is_not_verified() {
+    assert_eq!(
+        NativeLifecycle::floating_transition(DetachOutcome::DetachedAndVerified),
+        FloatingTransition::ReuseAndPlace
+    );
+    assert_eq!(
+        NativeLifecycle::floating_transition(DetachOutcome::ParentRemains),
+        FloatingTransition::RecreateAndPlace
+    );
+    assert_eq!(
+        NativeLifecycle::floating_transition(DetachOutcome::ApiFailed),
+        FloatingTransition::RecreateAndPlace
+    );
+}
+
+#[test]
+fn release_page_validation_requires_an_exact_github_tag_path() {
+    assert!(is_exact_github_tag_page(
+        "https://github.com/openai/codex/releases/tag/v1.2.3"
+    ));
+    for unsafe_url in [
+        "https://github.com/openai/codex/releases/tag/v1.2.3/assets",
+        "https://github.com/openai/codex/releases/tag/v1.2.3?download=1",
+        "https://github.com/openai/codex/releases/tag/../settings",
+        "https://github.com@evil.example/openai/codex/releases/tag/v1.2.3",
+    ] {
+        assert!(!is_exact_github_tag_page(unsafe_url), "{unsafe_url}");
+    }
 }
 
 #[test]

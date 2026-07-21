@@ -1,6 +1,7 @@
 //! Windows 애플리케이션의 형식화된 UI 경계와 플랫폼 구현입니다.
 
 pub mod autostart;
+pub mod lifecycle;
 pub mod native;
 pub mod taskbar;
 pub mod tray;
@@ -62,6 +63,90 @@ pub enum LaunchMode {
     Startup,
     /// 진단만 실행하고 UI를 시작하지 않습니다.
     Diagnose,
+}
+
+/// 정상 시작에서 부작용이 일어나는 순서를 나타냅니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartupStep {
+    /// 단일 인스턴스 소유권을 먼저 획득합니다.
+    AcquireSingleInstance,
+    /// 설정을 읽습니다.
+    LoadSettings,
+    /// 폴링 작업자를 시작합니다.
+    StartPoller,
+    /// 백그라운드 업데이트 확인을 예약합니다.
+    StartUpdateCheck,
+    /// 네이티브 UI를 실행합니다.
+    RunUi,
+    /// 부작용 없는 진단 모드를 실행합니다.
+    RunDiagnostics,
+}
+
+const NORMAL_STARTUP: &[StartupStep] = &[
+    StartupStep::AcquireSingleInstance,
+    StartupStep::LoadSettings,
+    StartupStep::StartPoller,
+    StartupStep::StartUpdateCheck,
+    StartupStep::RunUi,
+];
+const DIAGNOSTIC_STARTUP: &[StartupStep] = &[StartupStep::RunDiagnostics];
+
+/// 실행 모드별 부작용 순서를 반환합니다.
+pub const fn startup_plan(mode: LaunchMode) -> &'static [StartupStep] {
+    match mode {
+        LaunchMode::Diagnose => DIAGNOSTIC_STARTUP,
+        LaunchMode::Normal | LaunchMode::Startup => NORMAL_STARTUP,
+    }
+}
+
+/// 저장된 선택과 Windows UI 언어 정보로 실제 표시 언어를 결정합니다.
+pub fn resolve_windows_language(
+    preference: LanguagePreference,
+    ui_language: Option<u16>,
+    locale_name: Option<&str>,
+) -> Language {
+    match preference {
+        LanguagePreference::Korean => Language::Korean,
+        LanguagePreference::English => Language::English,
+        LanguagePreference::Auto => {
+            let korean_language_id = ui_language.is_some_and(|language| language & 0x03ff == 0x12);
+            let korean_locale = locale_name.is_some_and(|locale| {
+                let locale = locale.to_ascii_lowercase();
+                locale == "ko" || locale.starts_with("ko-") || locale.starts_with("ko_")
+            });
+            if korean_language_id || korean_locale {
+                Language::Korean
+            } else {
+                Language::English
+            }
+        }
+    }
+}
+
+/// URL이 추가 경로가 없는 정확한 GitHub 릴리스 태그 페이지인지 확인합니다.
+pub fn is_exact_github_tag_page(url: &str) -> bool {
+    let Some(path) = url.strip_prefix("https://github.com/") else {
+        return false;
+    };
+    if url.contains(['?', '#', '@', '\r', '\n', '\0']) {
+        return false;
+    }
+    let parts = path.split('/').collect::<Vec<_>>();
+    parts.len() == 5
+        && valid_github_segment(parts[0])
+        && valid_github_segment(parts[1])
+        && parts[2] == "releases"
+        && parts[3] == "tag"
+        && valid_github_segment(parts[4])
+}
+
+fn valid_github_segment(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
 impl LaunchMode {

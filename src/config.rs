@@ -4,7 +4,9 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    sync::mpsc,
     sync::{Arc, Mutex, OnceLock, Weak},
+    thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -246,6 +248,101 @@ fn normalized_path(path: &Path) -> PathBuf {
 impl Default for SettingsStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+enum SettingsWriteCommand {
+    Save(Settings),
+    Flush(mpsc::SyncSender<io::Result<()>>),
+    Stop,
+}
+
+/// 설정 저장을 제출 순서대로 별도 스레드에서 수행하는 기록기입니다.
+pub struct AsyncSettingsWriter {
+    sender: mpsc::Sender<SettingsWriteCommand>,
+    worker: Option<JoinHandle<io::Result<()>>>,
+}
+
+impl AsyncSettingsWriter {
+    /// 지정한 저장소를 소유하는 직렬 설정 기록 스레드를 시작합니다.
+    pub fn start(store: SettingsStore) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || settings_writer_loop(store, receiver));
+        Self {
+            sender,
+            worker: Some(worker),
+        }
+    }
+
+    /// 설정 복사본을 대기하지 않고 저장 대기열에 추가합니다.
+    pub fn save(&self, settings: Settings) -> io::Result<()> {
+        self.sender
+            .send(SettingsWriteCommand::Save(settings))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "settings writer stopped"))
+    }
+
+    /// 앞서 제출한 모든 저장이 끝날 때까지 기다리고 첫 I/O 오류를 반환합니다.
+    ///
+    /// 테스트, 진단 또는 애플리케이션 종료에서만 사용해야 하며 UI 동작 처리 중에는 호출하지 않습니다.
+    pub fn flush(&self) -> io::Result<()> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(SettingsWriteCommand::Flush(sender))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "settings writer stopped"))?;
+        receiver.recv().map_err(|_| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "settings writer response lost")
+        })?
+    }
+
+    /// 대기열을 모두 처리하고 기록 스레드를 종료합니다.
+    pub fn stop(mut self) -> io::Result<()> {
+        let _ = self.sender.send(SettingsWriteCommand::Stop);
+        join_settings_writer(self.worker.take())
+    }
+}
+
+impl Drop for AsyncSettingsWriter {
+    fn drop(&mut self) {
+        let _ = self.sender.send(SettingsWriteCommand::Stop);
+        let _ = join_settings_writer(self.worker.take());
+    }
+}
+
+fn settings_writer_loop(
+    store: SettingsStore,
+    receiver: mpsc::Receiver<SettingsWriteCommand>,
+) -> io::Result<()> {
+    let mut first_error: Option<(io::ErrorKind, String)> = None;
+    while let Ok(command) = receiver.recv() {
+        match command {
+            SettingsWriteCommand::Save(settings) => {
+                if let Err(error) = store.save(&settings) {
+                    if first_error.is_none() {
+                        first_error = Some((error.kind(), error.to_string()));
+                    }
+                }
+            }
+            SettingsWriteCommand::Flush(sender) => {
+                let result = first_error
+                    .as_ref()
+                    .map(|(kind, message)| Err(io::Error::new(*kind, message.clone())))
+                    .unwrap_or(Ok(()));
+                let _ = sender.send(result);
+            }
+            SettingsWriteCommand::Stop => break,
+        }
+    }
+    first_error
+        .map(|(kind, message)| Err(io::Error::new(kind, message)))
+        .unwrap_or(Ok(()))
+}
+
+fn join_settings_writer(worker: Option<JoinHandle<io::Result<()>>>) -> io::Result<()> {
+    match worker {
+        Some(worker) => worker
+            .join()
+            .map_err(|_| io::Error::other("settings writer panicked"))?,
+        None => Ok(()),
     }
 }
 
