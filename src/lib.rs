@@ -1,3 +1,4 @@
+pub mod app;
 pub mod codex;
 mod config;
 mod diagnostics;
@@ -6,6 +7,7 @@ mod errors;
 mod localization;
 mod poller;
 mod update_check;
+pub mod windows;
 
 pub use config::{
     DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore, StartupView,
