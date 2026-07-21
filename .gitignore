@@ -1,0 +1,6 @@
+/target/
+/.superpowers/
+/.worktrees/
+*.pdb
+*.log
+
