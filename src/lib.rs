@@ -1,3 +1,4 @@
+pub mod codex;
 mod domain;
 mod errors;
 mod localization;
