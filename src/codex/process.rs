@@ -125,7 +125,11 @@ impl ProcessGuard {
             return Err(UsageError::RpcTimeout);
         }
         #[cfg(windows)]
-        if resume_suspended_process(child.id()).is_err() {
+        if resume_suspended_process(child.id(), deadline).is_err() {
+            if !deadline_allows_resume(deadline) {
+                job.terminate();
+                return Err(UsageError::RpcTimeout);
+            }
             let _ = child.kill();
             return Err(UsageError::AppServerStartFailed);
         }
@@ -254,7 +258,10 @@ impl ProcessGuard {
 impl Drop for ProcessGuard {
     fn drop(&mut self) {
         if !self.terminated {
-            self.shutdown_until(self.deadline);
+            self.shutdown_until(
+                self.deadline
+                    .min(Instant::now() + Duration::from_millis(250)),
+            );
         }
     }
 }
@@ -349,7 +356,7 @@ impl WindowsJob {
 }
 
 #[cfg(windows)]
-fn resume_suspended_process(process_id: u32) -> windows::core::Result<()> {
+fn resume_suspended_process(process_id: u32, deadline: Instant) -> windows::core::Result<()> {
     use std::mem::size_of;
     use windows::Win32::{
         Foundation::CloseHandle,
@@ -379,6 +386,10 @@ fn resume_suspended_process(process_id: u32) -> windows::core::Result<()> {
     })();
     let _ = unsafe { CloseHandle(snapshot) };
     let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, thread_id?) }?;
+    if !deadline_allows_resume(deadline) {
+        let _ = unsafe { CloseHandle(thread) };
+        return Err(windows::core::Error::from_win32());
+    }
     let result = unsafe { ResumeThread(thread) };
     let _ = unsafe { CloseHandle(thread) };
     if result == u32::MAX {
@@ -386,6 +397,10 @@ fn resume_suspended_process(process_id: u32) -> windows::core::Result<()> {
     } else {
         Ok(())
     }
+}
+
+fn deadline_allows_resume(deadline: Instant) -> bool {
+    Instant::now() < deadline
 }
 
 #[cfg(windows)]
@@ -402,7 +417,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::{launch_plan, version_plan, LaunchPlan, ProcessGuard};
+    use super::{deadline_allows_resume, launch_plan, version_plan, LaunchPlan, ProcessGuard};
     use crate::codex::locator::CandidateKind;
 
     #[test]
@@ -490,6 +505,13 @@ mod tests {
                 "--version",
             ]
         );
+    }
+
+    #[test]
+    fn expired_deadline_never_allows_a_suspended_process_to_resume() {
+        assert!(!deadline_allows_resume(
+            Instant::now() - Duration::from_millis(1)
+        ));
     }
 
     #[cfg(windows)]

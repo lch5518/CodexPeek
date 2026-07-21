@@ -1,5 +1,9 @@
 use std::{
     sync::mpsc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -36,6 +40,7 @@ pub trait UsageProvider: Send + Sync {
 #[derive(Clone, Debug)]
 pub struct AppServerUsageProvider {
     allow_auth_refresh: bool,
+    in_flight: Arc<AtomicBool>,
 }
 
 impl AppServerUsageProvider {
@@ -43,8 +48,11 @@ impl AppServerUsageProvider {
     ///
     /// `allow_auth_refresh`가 참이면 rate-limit 요청이 인증 관련 요청 오류로 실패할 때만
     /// 계정 갱신을 한 번 시도합니다. 반환값은 해당 정책을 보관하는 제공자입니다.
-    pub const fn new(allow_auth_refresh: bool) -> Self {
-        Self { allow_auth_refresh }
+    pub fn new(allow_auth_refresh: bool) -> Self {
+        Self {
+            allow_auth_refresh,
+            in_flight: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -58,7 +66,9 @@ impl UsageProvider for AppServerUsageProvider {
     fn fetch_usage(&self) -> Result<CodexUsage, UsageError> {
         let deadline = Instant::now() + PROVIDER_TIMEOUT;
         let provider = self.clone();
-        run_bounded_operation(deadline, move || provider.fetch_usage_until(deadline))
+        run_serialized_operation(self.in_flight.clone(), deadline, move || {
+            provider.fetch_usage_until(deadline)
+        })
     }
 }
 
@@ -103,9 +113,34 @@ where
     thread::spawn(move || {
         let _ = sender.send(operation());
     });
-    receiver
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .unwrap_or(Err(UsageError::RpcTimeout))
+    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(UsageError::RpcTimeout),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(UsageError::RequestFailed),
+    }
+}
+
+fn run_serialized_operation<F>(
+    in_flight: Arc<AtomicBool>,
+    deadline: Instant,
+    operation: F,
+) -> Result<CodexUsage, UsageError>
+where
+    F: FnOnce() -> Result<CodexUsage, UsageError> + Send + 'static,
+{
+    if in_flight.swap(true, Ordering::AcqRel) {
+        return Err(UsageError::RpcOverloaded);
+    }
+    run_bounded_operation(deadline, move || {
+        struct Reset(Arc<AtomicBool>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let _reset = Reset(in_flight);
+        operation()
+    })
 }
 
 trait JsonlTransport {
@@ -493,15 +528,16 @@ impl JsonlTransport for DelayedRateLimitTransport {
 #[cfg(test)]
 mod tests {
     use std::{
+        sync::{atomic::AtomicBool, Arc},
         thread,
-        time::{Duration, Instant, UNIX_EPOCH},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use super::{
-        run_bounded_operation, run_jsonl_session, DelayedRateLimitTransport, ScriptedTransport,
-        MAX_JSONL_FRAME_BYTES,
+        run_bounded_operation, run_jsonl_session, run_serialized_operation,
+        DelayedRateLimitTransport, ScriptedTransport, MAX_JSONL_FRAME_BYTES,
     };
-    use crate::UsageError;
+    use crate::{CodexUsage, UsageError};
 
     #[test]
     fn session_ignores_sensitive_extra_fields_and_interleaved_notifications() {
@@ -670,6 +706,40 @@ mod tests {
 
         assert_eq!(result, Err(UsageError::RpcTimeout));
         assert!(started.elapsed() < Duration::from_millis(60));
+    }
+
+    #[test]
+    fn serialized_bounded_operation_rejects_in_flight_work_and_resets_after_completion() {
+        let in_flight = Arc::new(AtomicBool::new(false));
+        let first = run_serialized_operation(
+            in_flight.clone(),
+            Instant::now() + Duration::from_millis(10),
+            || {
+                thread::sleep(Duration::from_millis(30));
+                Err(UsageError::RequestFailed)
+            },
+        );
+        assert_eq!(first, Err(UsageError::RpcTimeout));
+        assert_eq!(
+            run_serialized_operation(
+                in_flight.clone(),
+                Instant::now() + Duration::from_millis(10),
+                || unreachable!()
+            ),
+            Err(UsageError::RpcOverloaded)
+        );
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(
+            run_serialized_operation(in_flight, Instant::now() + Duration::from_secs(1), || {
+                Ok(CodexUsage {
+                    primary: None,
+                    secondary: None,
+                    fetched_at: SystemTime::now(),
+                })
+            })
+            .map(|_| ()),
+            Ok(())
+        );
     }
 
     #[test]
