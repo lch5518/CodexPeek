@@ -13,7 +13,8 @@ use codex_usage_monitor::{
         },
         menu_action, resolve_windows_language, startup_plan,
         taskbar::{
-            place_taskbar_widget, taskbar_child_style, taskbar_widget_size, TaskbarGeometry,
+            place_taskbar_widget, run_taskbar_attachment, taskbar_child_style, taskbar_widget_size,
+            TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
             TaskbarPlacementError,
         },
         widget::{
@@ -320,6 +321,179 @@ fn taskbar_attachment_requires_full_height_and_child_style() {
         style & (WS_CHILD | WS_CLIPSIBLINGS),
         WS_CHILD | WS_CLIPSIBLINGS
     );
+}
+
+const ORIGINAL_STYLE: u32 = 0x8001_0000;
+const ORIGINAL_PARENT: u8 = 1;
+const TARGET_PARENT: u8 = 2;
+
+struct FakeAttachmentBackend {
+    style: u32,
+    parent: Option<u8>,
+    calls: Vec<&'static str>,
+    failures: Vec<&'static str>,
+    style_reads: usize,
+    parent_reads: usize,
+    frame_refreshes: usize,
+}
+
+impl FakeAttachmentBackend {
+    fn new(failures: &[&'static str]) -> Self {
+        Self {
+            style: ORIGINAL_STYLE,
+            parent: Some(ORIGINAL_PARENT),
+            calls: Vec::new(),
+            failures: failures.to_vec(),
+            style_reads: 0,
+            parent_reads: 0,
+            frame_refreshes: 0,
+        }
+    }
+
+    fn fails(&self, operation: &str) -> bool {
+        self.failures.contains(&operation)
+    }
+}
+
+impl TaskbarAttachmentBackend for FakeAttachmentBackend {
+    type Parent = u8;
+    type Error = &'static str;
+
+    fn read_style(&mut self) -> Result<u32, Self::Error> {
+        self.style_reads += 1;
+        let operation = match self.style_reads {
+            1 => "read_original_style",
+            2 => "verify_child_style",
+            _ => "verify_rollback_style",
+        };
+        self.calls.push(operation);
+        if operation == "verify_child_style" && self.fails(operation) {
+            Ok(ORIGINAL_STYLE)
+        } else {
+            Ok(self.style)
+        }
+    }
+
+    fn read_parent(&mut self) -> Result<Option<Self::Parent>, Self::Error> {
+        self.parent_reads += 1;
+        let operation = match self.parent_reads {
+            1 => "read_original_parent",
+            2 => "verify_target_parent",
+            _ => "verify_rollback_parent",
+        };
+        self.calls.push(operation);
+        if operation == "verify_target_parent" && self.fails(operation) {
+            Ok(Some(ORIGINAL_PARENT))
+        } else {
+            Ok(self.parent)
+        }
+    }
+
+    fn set_style(&mut self, style: u32) -> Result<(), Self::Error> {
+        let operation = if style == ORIGINAL_STYLE {
+            "rollback_style"
+        } else {
+            "set_child_style"
+        };
+        self.calls.push(operation);
+        if self.fails(operation) {
+            Err(operation)
+        } else {
+            self.style = style;
+            Ok(())
+        }
+    }
+
+    fn set_parent(&mut self, parent: Option<Self::Parent>) -> Result<(), Self::Error> {
+        let operation = if parent == Some(TARGET_PARENT) {
+            "set_target_parent"
+        } else {
+            "rollback_parent"
+        };
+        self.calls.push(operation);
+        if self.fails(operation) {
+            Err(operation)
+        } else {
+            self.parent = parent;
+            Ok(())
+        }
+    }
+
+    fn set_position(&mut self) -> Result<(), Self::Error> {
+        self.calls.push("set_position");
+        if self.fails("set_position") {
+            Err("set_position")
+        } else {
+            Ok(())
+        }
+    }
+
+    fn refresh_frame(&mut self) -> Result<(), Self::Error> {
+        self.calls.push("refresh_frame");
+        self.frame_refreshes += 1;
+        if self.fails("refresh_frame") {
+            Err("refresh_frame")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn taskbar_attachment_transaction_uses_the_verified_production_order() {
+    let mut backend = FakeAttachmentBackend::new(&[]);
+    run_taskbar_attachment(&mut backend, TARGET_PARENT).unwrap();
+
+    assert_eq!(
+        backend.calls,
+        vec![
+            "read_original_style",
+            "read_original_parent",
+            "set_child_style",
+            "verify_child_style",
+            "set_target_parent",
+            "verify_target_parent",
+            "set_position",
+        ]
+    );
+    assert_eq!(backend.style, taskbar_child_style(ORIGINAL_STYLE));
+    assert_eq!(backend.parent, Some(TARGET_PARENT));
+}
+
+#[test]
+fn taskbar_attachment_transaction_rolls_back_every_failed_stage() {
+    let cases = [
+        ("set_child_style", TaskbarAttachmentStage::ApplyChildStyle),
+        (
+            "verify_child_style",
+            TaskbarAttachmentStage::VerifyChildStyle,
+        ),
+        ("set_target_parent", TaskbarAttachmentStage::SetParent),
+        ("verify_target_parent", TaskbarAttachmentStage::VerifyParent),
+        ("set_position", TaskbarAttachmentStage::SetPosition),
+    ];
+    for (failure, expected_stage) in cases {
+        let mut backend = FakeAttachmentBackend::new(&[failure]);
+        let error = run_taskbar_attachment(&mut backend, TARGET_PARENT).unwrap_err();
+
+        assert_eq!(error.failed_stage(), expected_stage, "{failure}");
+        assert!(!error.rollback_failed(), "{failure}: {error}");
+        assert_eq!(backend.parent, Some(ORIGINAL_PARENT), "{failure}");
+        assert_eq!(backend.style, ORIGINAL_STYLE, "{failure}");
+        assert_eq!(backend.frame_refreshes, 1, "{failure}");
+    }
+}
+
+#[test]
+fn taskbar_attachment_transaction_reports_rollback_failure_and_keeps_cleaning() {
+    let mut backend = FakeAttachmentBackend::new(&["set_position", "rollback_parent"]);
+    let error = run_taskbar_attachment(&mut backend, TARGET_PARENT).unwrap_err();
+
+    assert_eq!(error.failed_stage(), TaskbarAttachmentStage::SetPosition);
+    assert!(error.rollback_failed());
+    assert!(error.to_string().contains("rollback_parent"));
+    assert_eq!(backend.style, ORIGINAL_STYLE);
+    assert_eq!(backend.frame_refreshes, 1);
 }
 
 #[derive(Default)]

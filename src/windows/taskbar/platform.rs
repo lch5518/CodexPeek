@@ -19,7 +19,8 @@ use windows::{
 };
 
 use super::{
-    place_taskbar_widget, taskbar_child_style, taskbar_widget_size, Rect, TaskbarGeometry,
+    place_taskbar_widget, run_taskbar_attachment, taskbar_widget_size, Rect,
+    TaskbarAttachmentBackend, TaskbarGeometry,
 };
 
 pub fn taskbar_available() -> bool {
@@ -65,33 +66,18 @@ pub(crate) unsafe fn attach_to_taskbar(
             continue;
         };
 
-        let previous_style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-        let previous_parent = GetParent(hwnd).ok();
-        let child_style = taskbar_child_style(previous_style);
-        SetWindowLongPtrW(hwnd, GWL_STYLE, child_style as isize);
-        if GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 != child_style {
-            rollback_attachment(hwnd, previous_parent, previous_style)?;
-            continue;
-        }
-        if SetParent(hwnd, Some(taskbar)).is_err() || GetParent(hwnd).ok() != Some(taskbar) {
-            rollback_attachment(hwnd, previous_parent, previous_style)?;
-            continue;
-        }
-        if SetWindowPos(
+        let mut backend = WindowsAttachmentBackend {
             hwnd,
-            Some(HWND_TOP),
-            placement.left - geometry.taskbar.left,
-            placement.top - geometry.taskbar.top,
-            placement.width(),
-            placement.height(),
-            SWP_FRAMECHANGED | SWP_NOACTIVATE,
-        )
-        .is_err()
-        {
-            rollback_attachment(hwnd, previous_parent, previous_style)?;
-            continue;
+            placement,
+            taskbar_origin: (geometry.taskbar.left, geometry.taskbar.top),
+        };
+        match run_taskbar_attachment(&mut backend, taskbar) {
+            Ok(()) => return Ok(taskbar),
+            Err(error) if error.rollback_failed() => {
+                return Err(io::Error::other(error.to_string()));
+            }
+            Err(_) => continue,
         }
-        return Ok(taskbar);
     }
     Err(io::Error::new(
         io::ErrorKind::NotFound,
@@ -99,37 +85,68 @@ pub(crate) unsafe fn attach_to_taskbar(
     ))
 }
 
-unsafe fn rollback_attachment(
+struct WindowsAttachmentBackend {
     hwnd: HWND,
-    previous_parent: Option<HWND>,
-    previous_style: u32,
-) -> io::Result<()> {
-    if GetParent(hwnd).ok() != previous_parent {
-        SetParent(hwnd, previous_parent).map_err(|error| {
-            io::Error::other(format!("taskbar parent rollback failed: {error}"))
-        })?;
-        if GetParent(hwnd).ok() != previous_parent {
-            return Err(io::Error::other(
-                "taskbar parent rollback verification failed",
-            ));
+    placement: Rect,
+    taskbar_origin: (i32, i32),
+}
+
+impl TaskbarAttachmentBackend for WindowsAttachmentBackend {
+    type Parent = HWND;
+    type Error = io::Error;
+
+    fn read_style(&mut self) -> io::Result<u32> {
+        unsafe { Ok(GetWindowLongPtrW(self.hwnd, GWL_STYLE) as u32) }
+    }
+
+    fn read_parent(&mut self) -> io::Result<Option<HWND>> {
+        unsafe { Ok(GetParent(self.hwnd).ok()) }
+    }
+
+    fn set_style(&mut self, style: u32) -> io::Result<()> {
+        unsafe {
+            SetWindowLongPtrW(self.hwnd, GWL_STYLE, style as isize);
+        }
+        Ok(())
+    }
+
+    fn set_parent(&mut self, parent: Option<HWND>) -> io::Result<()> {
+        unsafe { SetParent(self.hwnd, parent).map(|_| ()).map_err(win_error) }
+    }
+
+    fn set_position(&mut self) -> io::Result<()> {
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOP),
+                self.placement.left - self.taskbar_origin.0,
+                self.placement.top - self.taskbar_origin.1,
+                self.placement.width(),
+                self.placement.height(),
+                SWP_FRAMECHANGED | SWP_NOACTIVATE,
+            )
+            .map_err(win_error)
         }
     }
-    SetWindowLongPtrW(hwnd, GWL_STYLE, previous_style as isize);
-    if GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 != previous_style {
-        return Err(io::Error::other(
-            "taskbar style rollback verification failed",
-        ));
+
+    fn refresh_frame(&mut self) -> io::Result<()> {
+        unsafe {
+            SetWindowPos(
+                self.hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+            )
+            .map_err(win_error)
+        }
     }
-    SetWindowPos(
-        hwnd,
-        None,
-        0,
-        0,
-        0,
-        0,
-        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
-    )
-    .map_err(|error| io::Error::other(format!("taskbar frame rollback failed: {error}")))
+}
+
+fn win_error(_: windows::core::Error) -> io::Error {
+    io::Error::last_os_error()
 }
 
 unsafe fn taskbar_has_widget_space(taskbar: HWND) -> bool {
