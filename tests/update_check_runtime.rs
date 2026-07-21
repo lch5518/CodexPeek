@@ -5,7 +5,8 @@ use std::{
 
 use codex_usage_monitor::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,
-    UpdateChecker, UpdatePresentation, UpdateUserAction, UreqHttpClient,
+    UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
+    UpdateUserAction, UreqHttpClient,
 };
 use semver::Version;
 
@@ -22,11 +23,110 @@ fn available_update(version: &str) -> AvailableUpdate {
 }
 
 #[test]
+fn user_check_without_an_update_reports_current() {
+    let presentation = UpdatePresentation::default();
+
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::Started
+    );
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Checking);
+    presentation.record_result(Ok(None));
+
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Current);
+    assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn user_check_network_error_reports_failed() {
+    let presentation = UpdatePresentation::default();
+
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::Started
+    );
+    presentation.record_result(Err(UpdateCheckError::Network));
+
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
+    assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn user_intent_during_automatic_check_opens_available_result_once_without_duplicate_start() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("3.0.0");
+
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::Started
+    );
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::AlreadyRunning
+    );
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::AlreadyRunning
+    );
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::AlreadyRunning
+    );
+    presentation.record_result(Ok(Some(update.clone())));
+
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Available);
+    assert_eq!(presentation.take_open_request(), Some(update.clone()));
+    assert!(presentation.take_open_request().is_none());
+    presentation.record_result(Ok(Some(available_update("4.0.0"))));
+    assert_eq!(presentation.available_update(), Some(update));
+}
+
+#[test]
+fn user_intent_during_automatic_check_reports_current_without_opening() {
+    let presentation = UpdatePresentation::default();
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::Started
+    );
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::AlreadyRunning
+    );
+
+    presentation.record_result(Ok(None));
+
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Current);
+    assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn user_intent_during_automatic_check_reports_failure_without_opening() {
+    let presentation = UpdatePresentation::default();
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::Started
+    );
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::AlreadyRunning
+    );
+
+    presentation.record_result(Err(UpdateCheckError::Network));
+
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
+    assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
 fn automatic_update_results_are_visible_without_requesting_browser_open() {
     let presentation = UpdatePresentation::default();
     let update = available_update("2.0.0");
 
-    presentation.record_result(UpdateCheckIntent::Automatic, Some(update.clone()));
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::Started
+    );
+    presentation.record_result(Ok(Some(update.clone())));
 
     assert_eq!(presentation.available_update(), Some(update));
     assert!(presentation.take_open_request().is_none());
@@ -37,7 +137,11 @@ fn user_initiated_results_create_exactly_one_open_request() {
     let presentation = UpdatePresentation::default();
     let update = available_update("2.1.0");
 
-    presentation.record_result(UpdateCheckIntent::UserInitiated, Some(update.clone()));
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::UserInitiated),
+        UpdateCheckStart::Started
+    );
+    presentation.record_result(Ok(Some(update.clone())));
 
     assert_eq!(presentation.take_open_request(), Some(update));
     assert!(presentation.take_open_request().is_none());
@@ -46,12 +150,39 @@ fn user_initiated_results_create_exactly_one_open_request() {
 #[test]
 fn explicit_open_actions_use_only_the_stored_validated_result() {
     let presentation = UpdatePresentation::default();
-    assert_eq!(presentation.user_action(), UpdateUserAction::Check);
+    assert_eq!(
+        presentation.begin_user_action(),
+        UpdateUserAction::StartCheck
+    );
+    presentation.record_result(Ok(None));
 
     let update = available_update("2.2.0");
-    presentation.record_result(UpdateCheckIntent::Automatic, Some(update.clone()));
+    presentation.begin_check(UpdateCheckIntent::Automatic);
+    presentation.record_result(Ok(Some(update.clone())));
 
-    assert_eq!(presentation.user_action(), UpdateUserAction::Open(update));
+    assert_eq!(
+        presentation.begin_user_action(),
+        UpdateUserAction::Open(update)
+    );
+}
+
+#[test]
+fn explicit_action_atomically_joins_a_running_automatic_check() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.3.0");
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::Started
+    );
+
+    assert_eq!(
+        presentation.begin_user_action(),
+        UpdateUserAction::WaitForRunning
+    );
+    presentation.record_result(Ok(Some(update.clone())));
+
+    assert_eq!(presentation.take_open_request(), Some(update));
+    assert!(presentation.take_open_request().is_none());
 }
 
 impl FakeClient {

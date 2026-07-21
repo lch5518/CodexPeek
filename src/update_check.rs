@@ -99,19 +99,49 @@ pub enum UpdateCheckIntent {
     UserInitiated,
 }
 
+/// 업데이트 검사를 실제로 시작해야 하는지 나타냅니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateCheckStart {
+    /// 호출자가 새 검사 작업자를 시작해야 합니다.
+    Started,
+    /// 검사가 이미 실행 중이므로 새 작업자를 만들지 않습니다.
+    AlreadyRunning,
+}
+
+/// 사용자에게 표시할 업데이트 검사 상태입니다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UpdatePresentationStatus {
+    /// 아직 검사 결과가 없습니다.
+    #[default]
+    Idle,
+    /// 업데이트를 확인하고 있습니다.
+    Checking,
+    /// 새 버전을 사용할 수 있습니다.
+    Available,
+    /// 현재 버전이 최신입니다.
+    Current,
+    /// 업데이트 검사에 실패했습니다.
+    Failed,
+}
+
 /// 사용자의 업데이트 메뉴 동작을 안전한 저장 상태로 해석한 결과입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdateUserAction {
-    /// 저장된 업데이트가 없으므로 새 검사가 필요합니다.
-    Check,
     /// 검사기가 검증해 저장한 업데이트 페이지를 엽니다.
     Open(AvailableUpdate),
+    /// 호출자가 새 검사 작업자를 시작해야 합니다.
+    StartCheck,
+    /// 실행 중인 검사에 사용자 의도가 합쳐졌으므로 완료를 기다립니다.
+    WaitForRunning,
 }
 
 #[derive(Default)]
 struct UpdatePresentationInner {
+    status: UpdatePresentationStatus,
     available: Option<AvailableUpdate>,
     open_requested: bool,
+    running_intent: Option<UpdateCheckIntent>,
+    pending_user_intent: bool,
 }
 
 /// 업데이트 결과와 UI 스레드가 처리할 열기 요청을 공유하는 상태입니다.
@@ -124,14 +154,52 @@ pub struct UpdatePresentation {
 }
 
 impl UpdatePresentation {
-    /// 검증이 끝난 업데이트 검사 결과를 표시 상태에 기록합니다.
+    /// 검사 시작 권한을 원자적으로 획득하거나 실행 중인 검사에 사용자 의도를 합칩니다.
     ///
-    /// `intent`가 자동 검사이면 브라우저 열기 요청을 만들지 않습니다. `update`가 없으면
-    /// 현재 표시 중인 업데이트를 제거합니다.
-    pub fn record_result(&self, intent: UpdateCheckIntent, update: Option<AvailableUpdate>) {
+    /// 이미 자동 검사가 실행 중일 때 `UserInitiated`가 들어오면 새 작업자를 만들지 않고
+    /// 완료 결과를 사용자 요청으로 처리하도록 승격합니다.
+    pub fn begin_check(&self, intent: UpdateCheckIntent) -> UpdateCheckStart {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        inner.open_requested = intent == UpdateCheckIntent::UserInitiated && update.is_some();
-        inner.available = update;
+        begin_check_locked(&mut inner, intent)
+    }
+
+    /// 실행 중인 검사를 완료하고 결과와 일회성 사용자 열기 요청을 원자적으로 기록합니다.
+    ///
+    /// 새 버전이 있고 유효한 사용자 의도가 있었던 경우에만 열기 요청을 한 번 만듭니다.
+    /// 최신 상태와 네트워크 실패도 각각 `Current`, `Failed`로 보존합니다.
+    pub fn record_result(&self, result: Result<Option<AvailableUpdate>, UpdateCheckError>) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if inner.running_intent.is_none() {
+            return;
+        }
+        let user_initiated = inner.running_intent == Some(UpdateCheckIntent::UserInitiated)
+            || inner.pending_user_intent;
+        inner.running_intent = None;
+        inner.pending_user_intent = false;
+        inner.open_requested = false;
+        match result {
+            Ok(Some(update)) => {
+                inner.status = UpdatePresentationStatus::Available;
+                inner.available = Some(update);
+                inner.open_requested = user_initiated;
+            }
+            Ok(None) => {
+                inner.status = UpdatePresentationStatus::Current;
+                inner.available = None;
+            }
+            Err(_) => {
+                inner.status = UpdatePresentationStatus::Failed;
+                inner.available = None;
+            }
+        }
+    }
+
+    /// 현재 사용자에게 표시할 업데이트 검사 상태를 반환합니다.
+    pub fn status(&self) -> UpdatePresentationStatus {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .status
     }
 
     /// 현재 표시할 검증된 업데이트를 복사해 반환합니다.
@@ -143,11 +211,19 @@ impl UpdatePresentation {
             .clone()
     }
 
-    /// 사용자 메뉴 동작을 저장된 검증 결과 또는 새 검사 요청으로 변환합니다.
-    pub fn user_action(&self) -> UpdateUserAction {
-        self.available_update()
-            .map(UpdateUserAction::Open)
-            .unwrap_or(UpdateUserAction::Check)
+    /// 사용자 메뉴 동작을 저장된 결과 열기 또는 원자적인 검사 시작 결정으로 변환합니다.
+    ///
+    /// 결과 확인과 검사 시작을 같은 잠금에서 처리하므로 자동 검사 완료와 경합해 사용자 의도가
+    /// 사라지지 않습니다. `StartCheck`인 경우에만 호출자가 새 작업자를 만들어야 합니다.
+    pub fn begin_user_action(&self) -> UpdateUserAction {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(update) = inner.available.clone() {
+            return UpdateUserAction::Open(update);
+        }
+        match begin_check_locked(&mut inner, UpdateCheckIntent::UserInitiated) {
+            UpdateCheckStart::Started => UpdateUserAction::StartCheck,
+            UpdateCheckStart::AlreadyRunning => UpdateUserAction::WaitForRunning,
+        }
     }
 
     /// UI 스레드가 처리할 일회성 브라우저 열기 요청을 소비합니다.
@@ -159,6 +235,24 @@ impl UpdatePresentation {
         inner.open_requested = false;
         inner.available.clone()
     }
+}
+
+fn begin_check_locked(
+    inner: &mut UpdatePresentationInner,
+    intent: UpdateCheckIntent,
+) -> UpdateCheckStart {
+    if inner.running_intent.is_some() {
+        if intent == UpdateCheckIntent::UserInitiated {
+            inner.pending_user_intent = true;
+        }
+        return UpdateCheckStart::AlreadyRunning;
+    }
+    inner.status = UpdatePresentationStatus::Checking;
+    inner.available = None;
+    inner.open_requested = false;
+    inner.running_intent = Some(intent);
+    inner.pending_user_intent = false;
+    UpdateCheckStart::Started
 }
 
 /// GitHub 릴리스만 조회하는 업데이트 검사기입니다.

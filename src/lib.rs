@@ -22,5 +22,6 @@ pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
 pub use update_check::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,
-    UpdateChecker, UpdatePresentation, UpdateUserAction, UreqHttpClient,
+    UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
+    UpdateUserAction, UreqHttpClient,
 };

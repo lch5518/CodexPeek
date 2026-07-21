@@ -28,6 +28,8 @@ fn every_required_localization_key_has_nonempty_korean_and_english_text() {
         LocalizationKey::MenuHideWidget,
         LocalizationKey::UpdateAvailable,
         LocalizationKey::UpdateCurrent,
+        LocalizationKey::UpdateChecking,
+        LocalizationKey::UpdateFailed,
         LocalizationKey::WindowTitle,
         LocalizationKey::SettingsTitle,
         LocalizationKey::DiagnosticsTitle,

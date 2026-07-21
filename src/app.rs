@@ -4,10 +4,7 @@ use std::{
     ffi::OsString,
     io,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -22,8 +19,8 @@ use crate::{
     },
     AsyncSettingsWriter, DiagnosticCode, DiagnosticLogger, Language, LanguagePreference,
     LocalizationKey, PollSnapshot, PollingService, SafeDiagnostic, Settings, SettingsStore,
-    UpdateCheckIntent, UpdateChecker, UpdatePresentation, UpdateUserAction, UreqHttpClient,
-    UsageError, UsageWindow,
+    UpdateCheckIntent, UpdateCheckStart, UpdateChecker, UpdatePresentation,
+    UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError, UsageWindow,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -46,7 +43,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
         !initial_widget_visible(mode, settings.startup_view, settings.widget_visible)
             && settings.widget_visible;
     let mut runtime = AppRuntime::new(store, settings, startup_hidden)?;
-    runtime.start_update_check(false);
+    runtime.start_automatic_update_check();
     native::run(&mut runtime)
 }
 
@@ -56,7 +53,6 @@ struct AppRuntime {
     settings: Settings,
     poller: PollingService,
     startup_hidden: bool,
-    update_check_in_flight: Arc<AtomicBool>,
     update_presentation: UpdatePresentation,
 }
 
@@ -69,7 +65,6 @@ impl AppRuntime {
             settings,
             poller,
             startup_hidden,
-            update_check_in_flight: Arc::new(AtomicBool::new(false)),
             update_presentation: UpdatePresentation::default(),
         })
     }
@@ -82,50 +77,61 @@ impl AppRuntime {
         }
     }
 
-    fn start_update_check(&mut self, forced: bool) {
+    fn start_automatic_update_check(&mut self) {
         let Some(checker) = update_checker() else {
             return;
         };
         let now = SystemTime::now();
-        let last_check = if forced {
-            None
-        } else {
-            self.settings
-                .last_update_check_unix
-                .map(|seconds| UNIX_EPOCH + std::time::Duration::from_secs(seconds))
-        };
-        if !forced
-            && last_check.is_some_and(|checked| {
-                now.duration_since(checked)
-                    .is_ok_and(|elapsed| elapsed < std::time::Duration::from_secs(24 * 60 * 60))
-            })
-        {
+        let last_check = self
+            .settings
+            .last_update_check_unix
+            .map(|seconds| UNIX_EPOCH + std::time::Duration::from_secs(seconds));
+        if last_check.is_some_and(|checked| {
+            now.duration_since(checked)
+                .is_ok_and(|elapsed| elapsed < std::time::Duration::from_secs(24 * 60 * 60))
+        }) {
             return;
         }
         if self
-            .update_check_in_flight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
+            .update_presentation
+            .begin_check(UpdateCheckIntent::Automatic)
+            == UpdateCheckStart::AlreadyRunning
         {
             return;
         }
+        self.spawn_update_worker(checker, last_check, now);
+    }
+
+    fn handle_user_update_action(&mut self) {
+        let Some(checker) = update_checker() else {
+            return;
+        };
+        match self.update_presentation.begin_user_action() {
+            UpdateUserAction::Open(update) => {
+                let _ = native::open_validated_tag_page(&update.release_url);
+            }
+            UpdateUserAction::StartCheck => {
+                self.spawn_update_worker(checker, None, SystemTime::now());
+            }
+            UpdateUserAction::WaitForRunning => {}
+        }
+    }
+
+    fn spawn_update_worker(
+        &mut self,
+        checker: UpdateChecker,
+        last_check: Option<SystemTime>,
+        now: SystemTime,
+    ) {
         self.settings.last_update_check_unix = now
             .duration_since(UNIX_EPOCH)
             .ok()
             .map(|duration| duration.as_secs());
         self.save_settings();
-        let in_flight = Arc::clone(&self.update_check_in_flight);
         let presentation = self.update_presentation.clone();
-        let intent = if forced {
-            UpdateCheckIntent::UserInitiated
-        } else {
-            UpdateCheckIntent::Automatic
-        };
         thread::spawn(move || {
-            if let Ok(update) = checker.check_if_due(&UreqHttpClient, last_check, now) {
-                presentation.record_result(intent, update);
-            }
-            in_flight.store(false, Ordering::Release);
+            let result = checker.check_if_due(&UreqHttpClient, last_check, now);
+            presentation.record_result(result);
         });
     }
 
@@ -146,7 +152,7 @@ impl UiBackend for AppRuntime {
         let snapshot = self.snapshot_inner();
         let language = effective_language(self.settings.language);
         let now = SystemTime::now();
-        let mut status = if snapshot.is_fetching {
+        let status = if snapshot.is_fetching {
             localized_text(LocalizationKey::Refreshing, language).to_owned()
         } else if let Some(error) = snapshot.last_error {
             error.user_message(language).to_owned()
@@ -155,10 +161,7 @@ impl UiBackend for AppRuntime {
         } else {
             localized_text(LocalizationKey::Polling, language).to_owned()
         };
-        if self.update_presentation.available_update().is_some() {
-            status.push_str(" · ");
-            status.push_str(localized_text(LocalizationKey::UpdateAvailable, language));
-        }
+        let status = status_with_update(status, self.update_presentation.status(), language);
         let last_success = snapshot
             .last_success_at
             .and_then(|time| now.duration_since(time).ok())
@@ -189,7 +192,7 @@ impl UiBackend for AppRuntime {
         ui_settings(
             &self.settings,
             self.startup_hidden,
-            self.update_presentation.available_update().is_some(),
+            self.update_presentation.status(),
         )
     }
 
@@ -253,12 +256,7 @@ impl UiBackend for AppRuntime {
                     }
                 });
             }
-            UiAction::CheckForUpdates => match self.update_presentation.user_action() {
-                UpdateUserAction::Open(update) => {
-                    let _ = native::open_validated_tag_page(&update.release_url);
-                }
-                UpdateUserAction::Check => self.start_update_check(true),
-            },
+            UiAction::CheckForUpdates => self.handle_user_update_action(),
             UiAction::ToggleWidget => {
                 if self.startup_hidden {
                     self.startup_hidden = false;
@@ -272,7 +270,7 @@ impl UiBackend for AppRuntime {
         ui_settings(
             &self.settings,
             self.startup_hidden,
-            self.update_presentation.available_update().is_some(),
+            self.update_presentation.status(),
         )
     }
 }
@@ -286,7 +284,11 @@ fn start_poller(settings: &Settings) -> io::Result<PollingService> {
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
 }
 
-fn ui_settings(settings: &Settings, startup_hidden: bool, update_available: bool) -> UiSettings {
+fn ui_settings(
+    settings: &Settings,
+    startup_hidden: bool,
+    update_status: UpdatePresentationStatus,
+) -> UiSettings {
     UiSettings {
         display_mode: settings.display_mode,
         widget_visible: settings.widget_visible && !startup_hidden,
@@ -300,8 +302,30 @@ fn ui_settings(settings: &Settings, startup_hidden: bool, update_available: bool
         taskbar_offset: settings.taskbar_offset,
         floating_position: settings.floating_position,
         monitor_device: settings.monitor_device.clone(),
-        update_available,
+        update_status,
     }
+}
+
+fn update_status_key(status: UpdatePresentationStatus) -> Option<LocalizationKey> {
+    match status {
+        UpdatePresentationStatus::Idle => None,
+        UpdatePresentationStatus::Checking => Some(LocalizationKey::UpdateChecking),
+        UpdatePresentationStatus::Available => Some(LocalizationKey::UpdateAvailable),
+        UpdatePresentationStatus::Current => Some(LocalizationKey::UpdateCurrent),
+        UpdatePresentationStatus::Failed => Some(LocalizationKey::UpdateFailed),
+    }
+}
+
+fn status_with_update(
+    mut usage_status: String,
+    update_status: UpdatePresentationStatus,
+    language: Language,
+) -> String {
+    if let Some(key) = update_status_key(update_status) {
+        usage_status.push_str(" · ");
+        usage_status.push_str(localized_text(key, language));
+    }
+    usage_status
 }
 
 fn row_view(window: &UsageWindow, language: Language, now: SystemTime) -> UsageRowView {
@@ -515,4 +539,22 @@ fn auth_path() -> PathBuf {
 
 fn safe_path_text(path: &std::path::Path) -> String {
     path.to_string_lossy().replace(['\r', '\n', '\0'], "?")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::status_with_update;
+    use crate::{Language, UpdatePresentationStatus};
+
+    #[test]
+    fn update_status_is_appended_without_hiding_usage_error() {
+        assert_eq!(
+            status_with_update(
+                "Usage request failed".to_owned(),
+                UpdatePresentationStatus::Failed,
+                Language::English,
+            ),
+            "Usage request failed · Update check failed"
+        );
+    }
 }

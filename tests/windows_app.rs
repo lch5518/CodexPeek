@@ -17,6 +17,7 @@ use codex_usage_monitor::{
             TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
             TaskbarPlacementError,
         },
+        tray::update_menu_text,
         widget::{
             clamp_floating_position, logical_to_physical, physical_to_logical,
             restore_monitor_relative_position, save_monitor_relative_position, Rect, WidgetLayout,
@@ -28,8 +29,26 @@ use codex_usage_monitor::{
         MENU_POSITION_RESET, MENU_REFRESH, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
         MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
-    DisplayMode, LanguagePreference, StartupView,
+    DisplayMode, Language, LanguagePreference, StartupView, UpdatePresentationStatus,
 };
+
+#[test]
+fn update_menu_labels_surface_every_presentation_status() {
+    let cases = [
+        (UpdatePresentationStatus::Idle, "Check for updates"),
+        (UpdatePresentationStatus::Checking, "Checking for updates"),
+        (
+            UpdatePresentationStatus::Available,
+            "An update is available",
+        ),
+        (UpdatePresentationStatus::Current, "You are up to date"),
+        (UpdatePresentationStatus::Failed, "Update check failed"),
+    ];
+    for (status, expected) in cases {
+        assert_eq!(update_menu_text(status, Language::English), expected);
+        assert!(!update_menu_text(status, Language::Korean).is_empty());
+    }
+}
 
 #[test]
 fn every_menu_command_maps_to_a_typed_action() {

@@ -60,6 +60,10 @@ pub enum LocalizationKey {
     UpdateAvailable,
     /// 최신 상태 알림입니다.
     UpdateCurrent,
+    /// 업데이트 확인 진행 상태 알림입니다.
+    UpdateChecking,
+    /// 업데이트 확인 실패 상태 알림입니다.
+    UpdateFailed,
     /// 기본 창 제목입니다.
     WindowTitle,
     /// 설정 창 제목입니다.
@@ -112,6 +116,8 @@ impl LocalizationKey {
         Self::MenuHideWidget,
         Self::UpdateAvailable,
         Self::UpdateCurrent,
+        Self::UpdateChecking,
+        Self::UpdateFailed,
         Self::WindowTitle,
         Self::SettingsTitle,
         Self::DiagnosticsTitle,
@@ -182,6 +188,10 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
         (LocalizationKey::UpdateAvailable, Language::English) => "An update is available",
         (LocalizationKey::UpdateCurrent, Language::Korean) => "최신 버전입니다",
         (LocalizationKey::UpdateCurrent, Language::English) => "You are up to date",
+        (LocalizationKey::UpdateChecking, Language::Korean) => "업데이트를 확인하는 중입니다",
+        (LocalizationKey::UpdateChecking, Language::English) => "Checking for updates",
+        (LocalizationKey::UpdateFailed, Language::Korean) => "업데이트 확인에 실패했습니다",
+        (LocalizationKey::UpdateFailed, Language::English) => "Update check failed",
         (LocalizationKey::WindowTitle, Language::Korean) => "Codex 사용량 모니터",
         (LocalizationKey::WindowTitle, Language::English) => "Codex Usage Monitor",
         (LocalizationKey::SettingsTitle, Language::Korean) => "Codex 사용량 모니터 설정",
