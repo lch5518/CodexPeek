@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     thread,
@@ -35,19 +35,15 @@ fn fixed_plan(kind: CandidateKind, path: PathBuf, suffix: &[&str]) -> LaunchPlan
                 .map(|argument| (*argument).to_owned())
                 .collect(),
         },
-        CandidateKind::Command => {
-            let mut arguments = vec![
+        CandidateKind::Command => LaunchPlan {
+            program: PathBuf::from("cmd.exe"),
+            arguments: vec![
                 "/D".into(),
                 "/S".into(),
                 "/C".into(),
-                path.to_string_lossy().into_owned(),
-            ];
-            arguments.extend(suffix.iter().map(|argument| (*argument).to_owned()));
-            LaunchPlan {
-                program: PathBuf::from("cmd.exe"),
-                arguments,
-            }
-        }
+                format!("\"\"{}\" {}\"", path.to_string_lossy(), suffix.join(" ")),
+            ],
+        },
         CandidateKind::PowerShell => {
             let mut arguments = vec![
                 "-NoProfile".into(),
@@ -73,8 +69,15 @@ pub(crate) struct ProcessGuard {
 }
 
 impl ProcessGuard {
-    pub(crate) fn start(candidate: CliCandidate) -> Result<Self, UsageError> {
+    pub(crate) fn start(candidate: CliCandidate, deadline: Instant) -> Result<Self, UsageError> {
         let plan = launch_plan(candidate.kind, candidate.path);
+        Self::start_plan(plan, deadline)
+    }
+
+    pub(crate) fn start_plan(plan: LaunchPlan, deadline: Instant) -> Result<Self, UsageError> {
+        if Instant::now() >= deadline {
+            return Err(UsageError::RpcTimeout);
+        }
         let mut command = Command::new(plan.program);
         command
             .args(plan.arguments)
@@ -85,7 +88,8 @@ impl ProcessGuard {
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+            const CREATE_SUSPENDED: u32 = 0x0000_0004;
+            command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
         }
         let mut child = command
             .spawn()
@@ -95,10 +99,23 @@ impl ProcessGuard {
             Ok(job) => job,
             Err(_) => {
                 let _ = child.kill();
-                let _ = child.wait();
                 return Err(UsageError::AppServerStartFailed);
             }
         };
+        #[cfg(windows)]
+        if resume_suspended_process(child.id()).is_err() {
+            let _ = child.kill();
+            return Err(UsageError::AppServerStartFailed);
+        }
+        if Instant::now() >= deadline {
+            #[cfg(windows)]
+            job.terminate();
+            #[cfg(not(windows))]
+            {
+                let _ = child.kill();
+            }
+            return Err(UsageError::RpcTimeout);
+        }
         Ok(Self {
             child,
             #[cfg(windows)]
@@ -123,8 +140,43 @@ impl ProcessGuard {
         })
     }
 
+    pub(crate) fn version_output(
+        plan: LaunchPlan,
+        deadline: Instant,
+    ) -> Result<Vec<u8>, UsageError> {
+        let mut guard = Self::start_plan(plan, deadline)?;
+        let mut stdout = guard
+            .child
+            .stdout
+            .take()
+            .ok_or(UsageError::AppServerStartFailed)?;
+        guard.wait_until(deadline)?;
+        let mut output = Vec::new();
+        stdout
+            .read_to_end(&mut output)
+            .map_err(|_| UsageError::RequestFailed)?;
+        Ok(output)
+    }
+
+    pub(crate) fn wait_until(&mut self, deadline: Instant) -> Result<(), UsageError> {
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return Ok(()),
+                Ok(None) if Instant::now() >= deadline => {
+                    self.terminate_tree();
+                    return Err(UsageError::RpcTimeout);
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(_) => return Err(UsageError::RequestFailed),
+            }
+        }
+    }
+
     pub(crate) fn shutdown(&mut self) {
-        let deadline = Instant::now() + GRACEFUL_EXIT_TIMEOUT;
+        self.shutdown_until(Instant::now() + GRACEFUL_EXIT_TIMEOUT);
+    }
+
+    pub(crate) fn shutdown_until(&mut self, deadline: Instant) {
         while Instant::now() < deadline {
             if self.child.try_wait().ok().flatten().is_some() {
                 return;
@@ -141,7 +193,6 @@ impl ProcessGuard {
         {
             let _ = self.child.kill();
         }
-        let _ = self.child.wait();
     }
 }
 
@@ -195,23 +246,65 @@ impl WindowsJob {
             },
         };
 
-        let handle = unsafe { CreateJobObjectW(None, PCWSTR::null()) }?;
+        let job = Self {
+            handle: unsafe { CreateJobObjectW(None, PCWSTR::null()) }?,
+        };
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         unsafe {
             SetInformationJobObject(
-                handle,
+                job.handle,
                 JobObjectExtendedLimitInformation,
                 &limits as *const _ as _,
                 size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             )?;
-            AssignProcessToJobObject(handle, HANDLE(child.as_raw_handle() as _))?;
+            AssignProcessToJobObject(job.handle, HANDLE(child.as_raw_handle() as _))?;
         }
-        Ok(Self { handle })
+        Ok(job)
     }
 
     fn terminate(&self) {
         let _ = unsafe { windows::Win32::System::JobObjects::TerminateJobObject(self.handle, 1) };
+    }
+}
+
+#[cfg(windows)]
+fn resume_suspended_process(process_id: u32) -> windows::core::Result<()> {
+    use std::mem::size_of;
+    use windows::Win32::{
+        Foundation::CloseHandle,
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
+                THREADENTRY32,
+            },
+            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
+        },
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }?;
+    let mut entry = THREADENTRY32 {
+        dwSize: size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let thread_id: windows::core::Result<u32> = (|| {
+        unsafe { Thread32First(snapshot, &mut entry)? };
+        loop {
+            if entry.th32OwnerProcessID == process_id {
+                return Ok(entry.th32ThreadID);
+            }
+            entry.dwSize = size_of::<THREADENTRY32>() as u32;
+            unsafe { Thread32Next(snapshot, &mut entry)? };
+        }
+    })();
+    let _ = unsafe { CloseHandle(snapshot) };
+    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, thread_id?) }?;
+    let result = unsafe { ResumeThread(thread) };
+    let _ = unsafe { CloseHandle(thread) };
+    if result == u32::MAX {
+        Err(windows::core::Error::from_win32())
+    } else {
+        Ok(())
     }
 }
 
@@ -244,11 +337,27 @@ mod tests {
                     "/D".into(),
                     "/S".into(),
                     "/C".into(),
-                    "C:/Program Files/Codex/codex.cmd".into(),
-                    "app-server".into(),
-                    "--stdio".into(),
+                    r#"""C:/Program Files/Codex/codex.cmd" app-server --stdio""#.into(),
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn command_wrapper_quotes_a_space_containing_script_as_one_command() {
+        let plan = launch_plan(
+            CandidateKind::Command,
+            PathBuf::from("C:/Program Files/Codex/codex.cmd"),
+        );
+
+        assert_eq!(
+            plan.arguments,
+            vec![
+                "/D",
+                "/S",
+                "/C",
+                r#"""C:/Program Files/Codex/codex.cmd" app-server --stdio""#,
+            ]
         );
     }
 
@@ -276,7 +385,7 @@ mod tests {
     fn wrapper_version_checks_use_the_same_fixed_wrapper_arguments() {
         assert_eq!(
             version_plan(CandidateKind::Command, PathBuf::from("C:/bin/codex.cmd")).arguments,
-            vec!["/D", "/S", "/C", "C:/bin/codex.cmd", "--version"]
+            vec!["/D", "/S", "/C", r#"""C:/bin/codex.cmd" --version""#]
         );
         assert_eq!(
             version_plan(CandidateKind::PowerShell, PathBuf::from("C:/bin/codex.ps1")).arguments,

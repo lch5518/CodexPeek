@@ -7,7 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{codex::process::version_plan, UsageError};
+use crate::{
+    codex::process::{version_plan, ProcessGuard},
+    UsageError,
+};
 
 const MINIMUM_VERSION: (u64, u64, u64) = (0, 141, 0);
 const VERSION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -39,13 +42,13 @@ pub(crate) struct CliCandidate {
     pub(crate) kind: CandidateKind,
 }
 
-pub(crate) fn locate_cli() -> Result<CliCandidate, UsageError> {
-    let mut candidates = gather_candidates();
+pub(crate) fn locate_cli(deadline: Instant) -> Result<CliCandidate, UsageError> {
+    let mut candidates = gather_candidates(deadline)?;
     candidates.sort_by_key(|candidate| candidate_priority(candidate.kind));
 
     let mut saw_unsupported_version = false;
     for candidate in candidates {
-        match verify_version(&candidate) {
+        match verify_version(&candidate, deadline)? {
             Some(version) if version >= MINIMUM_VERSION => return Ok(candidate),
             Some(_) => saw_unsupported_version = true,
             None => {}
@@ -85,10 +88,14 @@ pub(crate) fn parse_version(output: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
-fn gather_candidates() -> Vec<CliCandidate> {
+fn gather_candidates(deadline: Instant) -> Result<Vec<CliCandidate>, UsageError> {
     let mut paths = HashSet::new();
     let mut candidates = Vec::new();
-    for path in where_candidates().into_iter().chain(path_candidates()) {
+    for path in where_candidates(deadline)?
+        .into_iter()
+        .chain(path_candidates())
+    {
+        ensure_deadline(deadline)?;
         let Some(kind) = CandidateKind::from_path(&path) else {
             continue;
         };
@@ -97,18 +104,30 @@ fn gather_candidates() -> Vec<CliCandidate> {
             candidates.push(CliCandidate { path, kind });
         }
     }
-    candidates
+    Ok(candidates)
 }
 
-fn where_candidates() -> Vec<PathBuf> {
+fn where_candidates(deadline: Instant) -> Result<Vec<PathBuf>, UsageError> {
     let mut paths = Vec::new();
     for name in ["codex.exe", "codex", "codex.cmd", "codex.ps1"] {
-        let Ok(output) = Command::new("where.exe")
+        ensure_deadline(deadline)?;
+        let Ok(mut child) = Command::new("where.exe")
             .arg(name)
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .output()
+            .spawn()
         else {
+            continue;
+        };
+        while child.try_wait().ok().flatten().is_none() {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                return Err(UsageError::RpcTimeout);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        let Ok(output) = child.wait_with_output() else {
             continue;
         };
         if !output.status.success() {
@@ -122,7 +141,7 @@ fn where_candidates() -> Vec<PathBuf> {
                 .map(PathBuf::from),
         );
     }
-    paths
+    Ok(paths)
 }
 
 fn path_candidates() -> Vec<PathBuf> {
@@ -133,30 +152,32 @@ fn path_candidates() -> Vec<PathBuf> {
                 .into_iter()
                 .map(move |name| directory.join(name))
         })
-        .filter(|path| path.is_file())
         .collect()
 }
 
-fn verify_version(candidate: &CliCandidate) -> Option<(u64, u64, u64)> {
+fn verify_version(
+    candidate: &CliCandidate,
+    deadline: Instant,
+) -> Result<Option<(u64, u64, u64)>, UsageError> {
+    ensure_deadline(deadline)?;
+    let probe_deadline = deadline.min(Instant::now() + VERSION_TIMEOUT);
     let plan = version_plan(candidate.kind, candidate.path.clone());
-    let mut command = Command::new(plan.program);
-    command
-        .args(plan.arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = command.spawn().ok()?;
-    let deadline = Instant::now() + VERSION_TIMEOUT;
-    while child.try_wait().ok()?.is_none() {
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        thread::sleep(Duration::from_millis(20));
+    match ProcessGuard::version_output(plan, probe_deadline) {
+        Ok(output) => Ok(String::from_utf8(output)
+            .ok()
+            .and_then(|output| parse_version(&output))),
+        Err(UsageError::RpcTimeout) if Instant::now() < deadline => Ok(None),
+        Err(UsageError::RpcTimeout) => Err(UsageError::RpcTimeout),
+        Err(_) => Ok(None),
     }
-    let output = child.wait_with_output().ok()?;
-    parse_version(&String::from_utf8(output.stdout).ok()?)
+}
+
+fn ensure_deadline(deadline: Instant) -> Result<(), UsageError> {
+    if Instant::now() >= deadline {
+        Err(UsageError::RpcTimeout)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

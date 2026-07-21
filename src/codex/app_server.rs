@@ -22,11 +22,16 @@ const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Codex 사용량을 가져오는 동기식 제공자입니다.
 pub trait UsageProvider: Send + Sync {
-    /// 현재 Codex 사용량을 조회하고, 실패하면 안전한 오류 종류만 반환합니다.
+    /// 현재 Codex 사용량을 조회합니다.
+    ///
+    /// 매개변수는 없으며, 성공하면 수집 시각을 포함한 사용량을 반환합니다.
+    /// 로컬 CLI, app-server, 응답 형식 문제가 생기면 민감한 원인을 포함하지 않는 `UsageError`를 반환합니다.
     fn fetch_usage(&self) -> Result<CodexUsage, UsageError>;
 }
 
 /// 로컬 Codex app-server RPC를 이용하는 사용량 제공자입니다.
+///
+/// 제공자는 호출마다 단명 프로세스를 사용하며, 전체 호출은 30초 안에 끝나야 합니다.
 #[derive(Clone, Debug)]
 pub struct AppServerUsageProvider {
     allow_auth_refresh: bool,
@@ -34,6 +39,9 @@ pub struct AppServerUsageProvider {
 
 impl AppServerUsageProvider {
     /// 인증 갱신 허용 여부를 지정하여 제공자를 생성합니다.
+    ///
+    /// `allow_auth_refresh`가 참이면 rate-limit 요청이 인증 관련 요청 오류로 실패할 때만
+    /// 계정 갱신을 한 번 시도합니다. 반환값은 해당 정책을 보관하는 제공자입니다.
     pub const fn new(allow_auth_refresh: bool) -> Self {
         Self { allow_auth_refresh }
     }
@@ -47,21 +55,23 @@ impl Default for AppServerUsageProvider {
 
 impl UsageProvider for AppServerUsageProvider {
     fn fetch_usage(&self) -> Result<CodexUsage, UsageError> {
-        let candidate = locate_cli()?;
-        let mut guard = ProcessGuard::start(candidate)?;
+        let deadline = Instant::now() + PROVIDER_TIMEOUT;
+        let candidate = locate_cli(deadline)?;
+        let mut guard = ProcessGuard::start(candidate, deadline)?;
         let transport = guard.take_transport()?;
         let allow_auth_refresh = self.allow_auth_refresh;
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
             let mut transport = ProcessJsonlTransport { transport };
-            let _ = sender.send(run_jsonl_session(
+            let _ = sender.send(run_jsonl_session_until(
                 &mut transport,
                 allow_auth_refresh,
-                PROVIDER_TIMEOUT,
+                deadline,
             ));
         });
 
-        let result = match receiver.recv_timeout(PROVIDER_TIMEOUT) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let result = match receiver.recv_timeout(remaining) {
             Ok(result) => result,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 guard.terminate_tree();
@@ -69,8 +79,10 @@ impl UsageProvider for AppServerUsageProvider {
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(UsageError::RequestFailed),
         };
-        let _ = worker.join();
-        guard.shutdown();
+        if result != Err(UsageError::RpcTimeout) {
+            let _ = worker.join();
+        }
+        guard.shutdown_until(deadline);
         result
     }
 }
@@ -83,8 +95,6 @@ trait JsonlTransport {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransportError {
     Failed,
-    #[cfg(test)]
-    Timeout,
 }
 
 struct ProcessJsonlTransport {
@@ -131,7 +141,13 @@ struct ResultEnvelope<T> {
 
 #[derive(Deserialize)]
 struct AccountResult {
-    account: Option<serde::de::IgnoredAny>,
+    account: Option<AccountDto>,
+}
+
+#[derive(Deserialize)]
+struct AccountDto {
+    #[serde(rename = "type")]
+    account_type: String,
 }
 
 #[derive(Deserialize)]
@@ -156,12 +172,20 @@ struct UsageWindowDto {
     resets_at: Option<i64>,
 }
 
+#[cfg(test)]
 fn run_jsonl_session<T: JsonlTransport>(
     transport: &mut T,
     allow_auth_refresh: bool,
     timeout: Duration,
 ) -> Result<CodexUsage, UsageError> {
-    let deadline = Instant::now() + timeout;
+    run_jsonl_session_until(transport, allow_auth_refresh, Instant::now() + timeout)
+}
+
+fn run_jsonl_session_until<T: JsonlTransport>(
+    transport: &mut T,
+    allow_auth_refresh: bool,
+    deadline: Instant,
+) -> Result<CodexUsage, UsageError> {
     let mut next_id = 1;
     let initialize = Request {
         id: Some(next_id),
@@ -235,9 +259,8 @@ fn read_account<T: JsonlTransport>(
         },
         deadline,
     )?;
-    Ok(receive_result::<_, AccountResult>(transport, id, deadline)?
-        .account
-        .is_some())
+    let account = receive_result::<_, AccountResult>(transport, id, deadline)?.account;
+    Ok(account.is_some_and(|account| !account.account_type.is_empty()))
 }
 
 fn read_rate_limits<T: JsonlTransport>(
@@ -318,6 +341,7 @@ fn receive_result<T: JsonlTransport, R: for<'de> Deserialize<'de>>(
         let Some(line) = transport.read_line().map_err(map_transport_error)? else {
             return Err(UsageError::InvalidResponse);
         };
+        check_deadline(deadline)?;
         let header: ResponseHeader =
             serde_json::from_str(&line).map_err(|_| UsageError::InvalidResponse)?;
         if header.id != Some(expected_id) {
@@ -343,8 +367,6 @@ fn check_deadline(deadline: Instant) -> Result<(), UsageError> {
 fn map_transport_error(error: TransportError) -> UsageError {
     match error {
         TransportError::Failed => UsageError::RequestFailed,
-        #[cfg(test)]
-        TransportError::Timeout => UsageError::RpcTimeout,
     }
 }
 
@@ -382,13 +404,6 @@ impl ScriptedTransport {
         ])
     }
 
-    fn timeout() -> Self {
-        Self {
-            responses: [Err(TransportError::Timeout)].into_iter().collect(),
-            requests: Vec::new(),
-        }
-    }
-
     fn requests(&self) -> &[String] {
         &self.requests
     }
@@ -407,10 +422,48 @@ impl JsonlTransport for ScriptedTransport {
 }
 
 #[cfg(test)]
+struct DelayedRateLimitTransport {
+    responses: VecDeque<String>,
+    reads: usize,
+}
+
+#[cfg(test)]
+impl DelayedRateLimitTransport {
+    fn new() -> Self {
+        Self {
+            responses: [
+                r#"{"id":1,"result":{}}"#,
+                r#"{"id":2,"result":{"account":{"type":"chatgpt"}}}"#,
+                r#"{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null}}}"#,
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            reads: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+impl JsonlTransport for DelayedRateLimitTransport {
+    fn write_line(&mut self, _line: &str) -> Result<(), TransportError> {
+        Ok(())
+    }
+
+    fn read_line(&mut self) -> Result<Option<String>, TransportError> {
+        self.reads += 1;
+        if self.reads == 3 {
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(self.responses.pop_front())
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
-    use super::{run_jsonl_session, ScriptedTransport};
+    use super::{run_jsonl_session, DelayedRateLimitTransport, ScriptedTransport};
     use crate::UsageError;
 
     #[test]
@@ -526,11 +579,32 @@ mod tests {
     }
 
     #[test]
-    fn session_maps_transport_deadline_to_timeout() {
-        let mut transport = ScriptedTransport::timeout();
+    fn session_rejects_an_account_without_a_string_type_before_rate_limit_call() {
+        let mut transport = ScriptedTransport::new([
+            r#"{"id":1,"result":{}}"#,
+            r#"{"id":2,"result":{"account":{"type":42}}}"#,
+        ]);
 
         assert_eq!(
             run_jsonl_session(&mut transport, false, Duration::from_secs(1)),
+            Err(UsageError::InvalidResponse)
+        );
+        assert_eq!(
+            transport.requests(),
+            [
+                r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":"0.1.0"}}}"#,
+                r#"{"method":"initialized","params":{}}"#,
+                r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn session_times_out_when_a_real_transport_read_crosses_the_deadline() {
+        let mut transport = DelayedRateLimitTransport::new();
+
+        assert_eq!(
+            run_jsonl_session(&mut transport, false, Duration::from_millis(1)),
             Err(UsageError::RpcTimeout)
         );
     }
@@ -595,6 +669,20 @@ mod tests {
                 r#"{"id":5,"method":"account/rateLimits/read","params":{}}"#,
             ]
         );
+    }
+
+    #[test]
+    fn session_ignores_a_response_with_an_unexpected_numeric_id() {
+        let mut transport = ScriptedTransport::new([
+            r#"{"id":99,"result":{"account":{"type":"other"}}}"#,
+            r#"{"id":1,"result":{}}"#,
+            r#"{"id":2,"result":{"account":{"type":"chatgpt"}}}"#,
+            r#"{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null}}}"#,
+        ]);
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(usage.primary.unwrap().used_percent, 1.0);
     }
 
     #[test]
