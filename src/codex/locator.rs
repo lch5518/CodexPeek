@@ -26,14 +26,25 @@ pub(crate) enum CandidateKind {
 impl CandidateKind {
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
         let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-        match name.as_str() {
+        let kind = match name.as_str() {
             "codex.exe" => Some(Self::NativeExe),
             "codex" => Some(Self::Direct),
             "codex.cmd" => Some(Self::Command),
             "codex.ps1" => Some(Self::PowerShell),
             _ => None,
+        }?;
+        if kind == Self::Command && !is_safe_command_path(path) {
+            return None;
         }
+        Some(kind)
     }
+}
+
+fn is_safe_command_path(path: &Path) -> bool {
+    !path
+        .to_string_lossy()
+        .chars()
+        .any(|character| matches!(character, '"' | '%' | '!' | '&' | '^' | '(' | ')'))
 }
 
 #[derive(Clone, Debug)]
@@ -111,13 +122,19 @@ fn where_candidates(deadline: Instant) -> Result<Vec<PathBuf>, UsageError> {
     let mut paths = Vec::new();
     for name in ["codex.exe", "codex", "codex.cmd", "codex.ps1"] {
         ensure_deadline(deadline)?;
-        let Ok(mut child) = Command::new("where.exe")
+        let mut command = Command::new("where.exe");
+        command
             .arg(name)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        let Ok(mut child) = command.spawn() else {
             continue;
         };
         while child.try_wait().ok().flatten().is_none() {
@@ -152,6 +169,7 @@ fn path_candidates() -> Vec<PathBuf> {
                 .into_iter()
                 .map(move |name| directory.join(name))
         })
+        .filter(|path| path.is_file())
         .collect()
 }
 
@@ -221,6 +239,10 @@ mod tests {
         assert_eq!(
             CandidateKind::from_path(&PathBuf::from("C:/bin/codex.ps1")),
             Some(CandidateKind::PowerShell)
+        );
+        assert_eq!(
+            CandidateKind::from_path(&PathBuf::from("C:/bin&unsafe/codex.cmd")),
+            None
         );
     }
 }

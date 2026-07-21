@@ -260,7 +260,11 @@ fn read_account<T: JsonlTransport>(
         deadline,
     )?;
     let account = receive_result::<_, AccountResult>(transport, id, deadline)?.account;
-    Ok(account.is_some_and(|account| !account.account_type.is_empty()))
+    match account {
+        None => Ok(false),
+        Some(account) if account.account_type.is_empty() => Err(UsageError::InvalidResponse),
+        Some(_) => Ok(true),
+    }
 }
 
 fn read_rate_limits<T: JsonlTransport>(
@@ -597,6 +601,20 @@ mod tests {
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
             ]
         );
+    }
+
+    #[test]
+    fn session_rejects_an_account_with_an_empty_or_missing_type() {
+        for response in [
+            r#"{"id":2,"result":{"account":{"type":""}}}"#,
+            r#"{"id":2,"result":{"account":{}}}"#,
+        ] {
+            let mut transport = ScriptedTransport::new([r#"{"id":1,"result":{}}"#, response]);
+            assert_eq!(
+                run_jsonl_session(&mut transport, false, Duration::from_secs(1)),
+                Err(UsageError::InvalidResponse)
+            );
+        }
     }
 
     #[test]
