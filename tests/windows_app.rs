@@ -13,7 +13,7 @@ use codex_usage_monitor::{
         },
         menu_action, resolve_windows_language, startup_plan,
         taskbar::{
-            place_taskbar_widget, run_taskbar_attachment, taskbar_child_style, taskbar_widget_size,
+            place_taskbar_widget, run_taskbar_attachment, taskbar_widget_size,
             TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
             TaskbarPlacementError,
         },
@@ -305,25 +305,16 @@ fn taskbar_placement_handles_offsets_secondary_and_rejections() {
 }
 
 #[test]
-fn taskbar_attachment_requires_full_height_and_child_style() {
+fn taskbar_attachment_requires_full_height() {
     assert_eq!(
         taskbar_widget_size(40, 96),
         Err(TaskbarPlacementError::InsufficientSpace)
     );
     assert_eq!(taskbar_widget_size(48, 96), Ok((380, 48)));
-
-    const WS_POPUP: u32 = 0x8000_0000;
-    const WS_CHILD: u32 = 0x4000_0000;
-    const WS_CLIPSIBLINGS: u32 = 0x0400_0000;
-    let style = taskbar_child_style(WS_POPUP | 0x0001_0000);
-    assert_eq!(style & WS_POPUP, 0);
-    assert_eq!(
-        style & (WS_CHILD | WS_CLIPSIBLINGS),
-        WS_CHILD | WS_CLIPSIBLINGS
-    );
 }
 
 const ORIGINAL_STYLE: u32 = 0x8001_0000;
+const CHILD_STYLE: u32 = 0x4401_0000;
 const ORIGINAL_PARENT: u8 = 1;
 const TARGET_PARENT: u8 = 2;
 
@@ -456,7 +447,7 @@ fn taskbar_attachment_transaction_uses_the_verified_production_order() {
             "set_position",
         ]
     );
-    assert_eq!(backend.style, taskbar_child_style(ORIGINAL_STYLE));
+    assert_eq!(backend.style, CHILD_STYLE);
     assert_eq!(backend.parent, Some(TARGET_PARENT));
 }
 

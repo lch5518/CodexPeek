@@ -74,12 +74,13 @@ pub fn taskbar_widget_size(
 /// 기존 최상위 창 스타일을 작업 표시줄 자식 창 스타일로 변환합니다.
 ///
 /// `previous_style`에서 팝업 플래그를 제거하고 자식 창 및 형제 클리핑 플래그를 설정한 값을 반환합니다.
-pub const fn taskbar_child_style(previous_style: u32) -> u32 {
+const fn taskbar_child_style(previous_style: u32) -> u32 {
     (previous_style & !WS_POPUP_VALUE) | WS_CHILD_VALUE | WS_CLIPSIBLINGS_VALUE
 }
 
 /// 작업 표시줄 연결 트랜잭션에서 실패한 단계입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub enum TaskbarAttachmentStage {
     /// 기존 창 스타일을 읽는 단계입니다.
     ReadOriginalStyle,
@@ -100,6 +101,7 @@ pub enum TaskbarAttachmentStage {
 /// 작업 표시줄 연결 트랜잭션이 사용하는 최소 창 조작 인터페이스입니다.
 ///
 /// 실제 Windows 구현과 상태를 기록하는 테스트 구현이 동일한 순서 및 롤백 로직을 실행하도록 합니다.
+#[doc(hidden)]
 pub trait TaskbarAttachmentBackend {
     /// 부모 창을 식별하는 복사 가능한 값입니다.
     type Parent: Copy + Eq;
@@ -122,6 +124,7 @@ pub trait TaskbarAttachmentBackend {
 
 /// 작업 표시줄 연결 실패와 롤백 실패 여부를 함께 보존하는 오류입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[doc(hidden)]
 pub struct TaskbarAttachmentError {
     failed_stage: TaskbarAttachmentStage,
     operation_error: String,
@@ -160,6 +163,7 @@ impl std::error::Error for TaskbarAttachmentError {}
 ///
 /// `backend`는 실제 또는 테스트 창 조작기이며 `target_parent`는 연결할 작업 표시줄입니다. 성공하면 모든
 /// 단계가 읽기 검증을 통과한 것이며, 실패하면 최초 실패 단계와 롤백 오류를 함께 반환합니다.
+#[doc(hidden)]
 pub fn run_taskbar_attachment<B: TaskbarAttachmentBackend>(
     backend: &mut B,
     target_parent: B::Parent,
@@ -179,77 +183,51 @@ pub fn run_taskbar_attachment<B: TaskbarAttachmentBackend>(
             rollback_error: None,
         })?;
     let child_style = taskbar_child_style(original_style);
-
-    if let Err(error) = backend.set_style(child_style) {
-        return Err(attachment_failure(
-            backend,
-            TaskbarAttachmentStage::ApplyChildStyle,
-            error.to_string(),
-            original_parent,
-            original_style,
-        ));
-    }
-    match backend.read_style() {
-        Ok(style) if style == child_style => {}
-        Ok(style) => {
-            return Err(attachment_failure(
-                backend,
+    let operation = (|| -> Result<(), (TaskbarAttachmentStage, String)> {
+        backend
+            .set_style(child_style)
+            .map_err(|error| stage_error(TaskbarAttachmentStage::ApplyChildStyle, error))?;
+        let style = backend
+            .read_style()
+            .map_err(|error| stage_error(TaskbarAttachmentStage::VerifyChildStyle, error))?;
+        if style != child_style {
+            return Err((
                 TaskbarAttachmentStage::VerifyChildStyle,
                 format!("style mismatch: expected {child_style:#x}, got {style:#x}"),
-                original_parent,
-                original_style,
             ));
         }
-        Err(error) => {
-            return Err(attachment_failure(
-                backend,
-                TaskbarAttachmentStage::VerifyChildStyle,
-                error.to_string(),
-                original_parent,
-                original_style,
-            ));
-        }
-    }
-    if let Err(error) = backend.set_parent(Some(target_parent)) {
-        return Err(attachment_failure(
-            backend,
-            TaskbarAttachmentStage::SetParent,
-            error.to_string(),
-            original_parent,
-            original_style,
-        ));
-    }
-    match backend.read_parent() {
-        Ok(parent) if parent == Some(target_parent) => {}
-        Ok(_) => {
-            return Err(attachment_failure(
-                backend,
+        backend
+            .set_parent(Some(target_parent))
+            .map_err(|error| stage_error(TaskbarAttachmentStage::SetParent, error))?;
+        let parent = backend
+            .read_parent()
+            .map_err(|error| stage_error(TaskbarAttachmentStage::VerifyParent, error))?;
+        if parent != Some(target_parent) {
+            return Err((
                 TaskbarAttachmentStage::VerifyParent,
                 "parent verification mismatch".to_owned(),
-                original_parent,
-                original_style,
             ));
         }
-        Err(error) => {
-            return Err(attachment_failure(
-                backend,
-                TaskbarAttachmentStage::VerifyParent,
-                error.to_string(),
-                original_parent,
-                original_style,
-            ));
-        }
-    }
-    if let Err(error) = backend.set_position() {
-        return Err(attachment_failure(
+        backend
+            .set_position()
+            .map_err(|error| stage_error(TaskbarAttachmentStage::SetPosition, error))
+    })();
+    operation.map_err(|(failed_stage, operation_error)| {
+        attachment_failure(
             backend,
-            TaskbarAttachmentStage::SetPosition,
-            error.to_string(),
+            failed_stage,
+            operation_error,
             original_parent,
             original_style,
-        ));
-    }
-    Ok(())
+        )
+    })
+}
+
+fn stage_error(
+    stage: TaskbarAttachmentStage,
+    error: impl fmt::Display,
+) -> (TaskbarAttachmentStage, String) {
+    (stage, error.to_string())
 }
 
 fn attachment_failure<B: TaskbarAttachmentBackend>(
