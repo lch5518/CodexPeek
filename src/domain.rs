@@ -49,7 +49,7 @@ impl UsageWindow {
         window_duration_mins: Option<u64>,
         resets_at: Option<SystemTime>,
     ) -> Result<Self, UsageError> {
-        if !used_percent.is_finite() || used_percent.is_sign_negative() {
+        if !used_percent.is_finite() || used_percent < 0.0 {
             return Err(UsageError::InvalidResponse);
         }
 
@@ -206,6 +206,13 @@ mod tests {
                 Err(UsageError::InvalidResponse)
             );
         }
+    }
+
+    #[test]
+    fn usage_window_accepts_negative_zero_as_stable() {
+        let usage = UsageWindow::new(WindowKind::Primary, -0.0, None, None).unwrap();
+
+        assert_eq!(usage.level(), UsageLevel::Stable);
     }
 
     #[test]
