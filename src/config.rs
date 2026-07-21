@@ -113,7 +113,8 @@ impl Settings {
     fn validate(&self) -> io::Result<()> {
         if self.schema_version != SCHEMA_VERSION
             || !matches!(self.refresh_interval_minutes, 1 | 5 | 10 | 15 | 30)
-            || self.taskbar_offset.unsigned_abs() > MAX_LOGICAL_COORDINATE as u32
+            || self.taskbar_offset < 0
+            || self.taskbar_offset > MAX_LOGICAL_COORDINATE
             || self.monitor_device.as_ref().is_some_and(|value| {
                 value.trim().is_empty() || value.len() > 512 || value.contains(['\r', '\n', '\0'])
             })

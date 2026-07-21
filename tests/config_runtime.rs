@@ -54,6 +54,19 @@ fn settings_defaults_match_product_policy() {
 }
 
 #[test]
+fn negative_taskbar_offset_is_rejected() {
+    let root = test_root("negative-taskbar-offset");
+    let store = SettingsStore::for_root(&root);
+    let result = store.save(&Settings {
+        taskbar_offset: -1,
+        ..Settings::default()
+    });
+
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn settings_round_trip_and_no_temporary_file_remains() {
     let root = test_root("round-trip");
     let store = SettingsStore::for_root(&root);

@@ -315,9 +315,9 @@ impl PollingService {
 impl Drop for PollingService {
     fn drop(&mut self) {
         let _ = self.sender.send(PollCommand::Stop);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        // 공급자 호출은 자체 제한 시간과 자식 프로세스 정리를 소유합니다. UI 종료에서는 작업자를
+        // 분리해 즉시 반환하고, 작업자는 진행 중 호출이 끝난 뒤 대기 중인 Stop을 처리해 종료합니다.
+        drop(self.worker.take());
     }
 }
 

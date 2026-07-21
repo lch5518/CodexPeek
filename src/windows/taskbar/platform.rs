@@ -12,14 +12,15 @@ use windows::{
             WindowsAndMessaging::{
                 FindWindowExW, FindWindowW, GetParent, GetWindowLongPtrW, GetWindowRect, SetParent,
                 SetWindowLongPtrW, SetWindowPos, GWL_STYLE, HWND_TOP, SWP_FRAMECHANGED,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_CHILD, WS_CLIPSIBLINGS, WS_POPUP,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
             },
         },
     },
 };
 
-use super::{place_taskbar_widget, Rect, TaskbarGeometry};
-use crate::windows::widget::logical_to_physical;
+use super::{
+    place_taskbar_widget, taskbar_child_style, taskbar_widget_size, Rect, TaskbarGeometry,
+};
 
 pub fn taskbar_available() -> bool {
     unsafe {
@@ -56,20 +57,26 @@ pub(crate) unsafe fn attach_to_taskbar(
             notification: from_native(notification_rect),
         };
         let dpi = GetDpiForWindow(taskbar).max(96);
-        let widget_height = geometry.taskbar.height().min(logical_to_physical(48, dpi));
-        let widget_width = logical_to_physical(380, dpi);
-        let offset = logical_to_physical(offset, dpi);
-        let Ok(placement) = place_taskbar_widget(geometry, (widget_width, widget_height), offset)
-        else {
+        let Ok(widget_size) = taskbar_widget_size(geometry.taskbar.height(), dpi) else {
+            continue;
+        };
+        let offset = crate::windows::widget::logical_to_physical(offset, dpi);
+        let Ok(placement) = place_taskbar_widget(geometry, widget_size, offset) else {
             continue;
         };
 
         let previous_style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-        if SetParent(hwnd, Some(taskbar)).is_err() || GetParent(hwnd).ok() != Some(taskbar) {
+        let previous_parent = GetParent(hwnd).ok();
+        let child_style = taskbar_child_style(previous_style);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, child_style as isize);
+        if GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 != child_style {
+            rollback_attachment(hwnd, previous_parent, previous_style)?;
             continue;
         }
-        let child_style = (previous_style & !WS_POPUP.0) | WS_CHILD.0 | WS_CLIPSIBLINGS.0;
-        SetWindowLongPtrW(hwnd, GWL_STYLE, child_style as isize);
+        if SetParent(hwnd, Some(taskbar)).is_err() || GetParent(hwnd).ok() != Some(taskbar) {
+            rollback_attachment(hwnd, previous_parent, previous_style)?;
+            continue;
+        }
         if SetWindowPos(
             hwnd,
             Some(HWND_TOP),
@@ -81,21 +88,7 @@ pub(crate) unsafe fn attach_to_taskbar(
         )
         .is_err()
         {
-            let detached = SetParent(hwnd, None).is_ok() && GetParent(hwnd).is_err();
-            if detached {
-                SetWindowLongPtrW(hwnd, GWL_STYLE, previous_style as isize);
-                let _ = SetWindowPos(
-                    hwnd,
-                    None,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
-                );
-            } else {
-                return Err(io::Error::other("taskbar attachment rollback failed"));
-            }
+            rollback_attachment(hwnd, previous_parent, previous_style)?;
             continue;
         }
         return Ok(taskbar);
@@ -104,6 +97,39 @@ pub(crate) unsafe fn attach_to_taskbar(
         io::ErrorKind::NotFound,
         "no compatible horizontal taskbar",
     ))
+}
+
+unsafe fn rollback_attachment(
+    hwnd: HWND,
+    previous_parent: Option<HWND>,
+    previous_style: u32,
+) -> io::Result<()> {
+    if GetParent(hwnd).ok() != previous_parent {
+        SetParent(hwnd, previous_parent).map_err(|error| {
+            io::Error::other(format!("taskbar parent rollback failed: {error}"))
+        })?;
+        if GetParent(hwnd).ok() != previous_parent {
+            return Err(io::Error::other(
+                "taskbar parent rollback verification failed",
+            ));
+        }
+    }
+    SetWindowLongPtrW(hwnd, GWL_STYLE, previous_style as isize);
+    if GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 != previous_style {
+        return Err(io::Error::other(
+            "taskbar style rollback verification failed",
+        ));
+    }
+    SetWindowPos(
+        hwnd,
+        None,
+        0,
+        0,
+        0,
+        0,
+        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+    )
+    .map_err(|error| io::Error::other(format!("taskbar frame rollback failed: {error}")))
 }
 
 unsafe fn taskbar_has_widget_space(taskbar: HWND) -> bool {
@@ -122,10 +148,9 @@ unsafe fn taskbar_has_widget_space(taskbar: HWND) -> bool {
         notification: from_native(notification_rect),
     };
     let dpi = GetDpiForWindow(taskbar).max(96);
-    let size = (
-        logical_to_physical(380, dpi),
-        geometry.taskbar.height().min(logical_to_physical(48, dpi)),
-    );
+    let Ok(size) = taskbar_widget_size(geometry.taskbar.height(), dpi) else {
+        return false;
+    };
     place_taskbar_widget(geometry, size, 0).is_ok()
 }
 

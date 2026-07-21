@@ -322,6 +322,30 @@ fn service_reconfiguration_is_nonblocking_and_changes_auth_policy() {
 }
 
 #[test]
+fn dropping_service_does_not_wait_for_an_in_flight_provider() {
+    let now = SystemTime::now();
+    let provider = ObservableProvider::with_steps([blocked_success_step(usage(now, None, None))]);
+    let service = PollingService::start(Arc::new(provider.clone()), 5, false).unwrap();
+    provider.wait_for_calls(1);
+
+    let release_provider = provider.clone();
+    let releaser = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        release_provider.release_one();
+    });
+    let started = Instant::now();
+    drop(service);
+    let elapsed = started.elapsed();
+
+    releaser.join().unwrap();
+    provider.wait_for_completed(1);
+    assert!(
+        elapsed < Duration::from_millis(100),
+        "drop took {elapsed:?}"
+    );
+}
+
+#[test]
 fn snapshot_lock_is_available_while_provider_is_blocked() {
     let now = SystemTime::now();
     let provider = ObservableProvider::with_steps([blocked_success_step(usage(now, None, None))]);

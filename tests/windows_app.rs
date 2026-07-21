@@ -12,7 +12,10 @@ use codex_usage_monitor::{
             RecoveryEvent,
         },
         menu_action, resolve_windows_language, startup_plan,
-        taskbar::{place_taskbar_widget, TaskbarGeometry, TaskbarPlacementError},
+        taskbar::{
+            place_taskbar_widget, taskbar_child_style, taskbar_widget_size, TaskbarGeometry,
+            TaskbarPlacementError,
+        },
         widget::{
             clamp_floating_position, logical_to_physical, physical_to_logical,
             restore_monitor_relative_position, save_monitor_relative_position, Rect, WidgetLayout,
@@ -270,6 +273,10 @@ fn taskbar_placement_handles_offsets_secondary_and_rejections() {
         place_taskbar_widget(primary, (380, 40), 0),
         Ok(Rect::new(1320, 1040, 1700, 1080))
     );
+    assert_eq!(
+        place_taskbar_widget(primary, (380, 40), -1),
+        Err(TaskbarPlacementError::InsufficientSpace)
+    );
     let secondary = TaskbarGeometry {
         taskbar: Rect::new(-1280, 984, 0, 1024),
         notification: Rect::new(-180, 984, 0, 1024),
@@ -293,6 +300,25 @@ fn taskbar_placement_handles_offsets_secondary_and_rejections() {
     assert_eq!(
         place_taskbar_widget(narrow, (380, 40), 0),
         Err(TaskbarPlacementError::InsufficientSpace)
+    );
+}
+
+#[test]
+fn taskbar_attachment_requires_full_height_and_child_style() {
+    assert_eq!(
+        taskbar_widget_size(40, 96),
+        Err(TaskbarPlacementError::InsufficientSpace)
+    );
+    assert_eq!(taskbar_widget_size(48, 96), Ok((380, 48)));
+
+    const WS_POPUP: u32 = 0x8000_0000;
+    const WS_CHILD: u32 = 0x4000_0000;
+    const WS_CLIPSIBLINGS: u32 = 0x0400_0000;
+    let style = taskbar_child_style(WS_POPUP | 0x0001_0000);
+    assert_eq!(style & WS_POPUP, 0);
+    assert_eq!(
+        style & (WS_CHILD | WS_CLIPSIBLINGS),
+        WS_CHILD | WS_CLIPSIBLINGS
     );
 }
 
