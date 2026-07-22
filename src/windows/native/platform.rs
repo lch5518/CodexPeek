@@ -8,16 +8,17 @@ use windows::{
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND,
-            LPARAM, LRESULT, RECT, WPARAM,
+            LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
         },
         Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage},
         Graphics::Gdi::{
-            BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint,
-            EnumDisplayMonitors, FillRect, GetMonitorInfoW, InvalidateRect, MonitorFromWindow,
-            SelectObject, SetBkMode, SetTextColor, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET,
-            DEFAULT_PITCH, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, FF_SWISS,
-            FW_NORMAL, HDC, HGDIOBJ, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
-            OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
+            BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
+            DeleteDC, DeleteObject, DrawTextW, EndPaint, EnumDisplayMonitors, FillRect, GetDC,
+            GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ReleaseDC, SelectObject, SetBkMode,
+            SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS,
+            DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT,
+            DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_NORMAL, HDC, HGDIOBJ, HMONITOR, MONITORINFOEXW,
+            MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
@@ -35,19 +36,23 @@ use windows::{
                 GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect, IsWindow, KillTimer,
                 LoadCursorW, MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW,
                 RegisterWindowMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos,
-                ShowWindow, TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-                GWLP_USERDATA, GWL_STYLE, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW,
-                MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-                SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU,
+                ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
+                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HTCAPTION,
+                HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG,
+                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+                SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU,
                 WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONUP, WM_NCCREATE,
                 WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_CHILD,
-                WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_POPUP,
+                WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
 };
 
-use crate::{DisplayMode, UsageLevel};
+use crate::{
+    diagnostics::{DiagnosticLogger, SafeDiagnostic},
+    DisplayMode, UsageLevel,
+};
 
 use super::super::{
     is_exact_github_tag_page,
@@ -339,7 +344,12 @@ unsafe extern "system" fn widget_proc(
         WM_NCHITTEST if (*pointer).taskbar_parent.is_none() => LRESULT(HTCAPTION as isize),
         WM_PAINT => {
             let snapshot = (*pointer).backend.snapshot();
-            paint_widget(hwnd, &snapshot);
+            if (*pointer).taskbar_parent.is_some() {
+                validate_paint(hwnd);
+                let _ = paint_taskbar_widget(hwnd, &snapshot);
+            } else {
+                paint_widget(hwnd, &snapshot);
+            }
             LRESULT(0)
         }
         WM_DPICHANGED => {
@@ -489,16 +499,25 @@ unsafe fn apply_window_policy(
         if !parent_is_valid {
             (*state_pointer).taskbar_parent = None;
         }
-        if let Ok(parent) = attach_to_taskbar(
-            widget,
-            settings.taskbar_offset,
-            settings.monitor_device.as_deref(),
-        ) {
-            let state = &mut *state_pointer;
-            state.taskbar_parent = Some(parent);
-            state.lifecycle.widget_attached_to_taskbar();
-            let _ = ShowWindow(widget, SW_SHOWNA);
-            return Ok(());
+        match set_layered_mode(widget, true) {
+            Ok(()) => {
+                if let Ok(parent) = attach_to_taskbar(
+                    widget,
+                    settings.taskbar_offset,
+                    settings.monitor_device.as_deref(),
+                ) {
+                    let state = &mut *state_pointer;
+                    state.taskbar_parent = Some(parent);
+                    state.lifecycle.widget_attached_to_taskbar();
+                    let _ = ShowWindow(widget, SW_SHOWNA);
+                    let snapshot = state.backend.snapshot();
+                    match paint_taskbar_widget(widget, &snapshot) {
+                        Ok(()) => return Ok(()),
+                        Err(error) => log_taskbar_render_error("compose", &error),
+                    }
+                }
+            }
+            Err(error) => log_taskbar_render_error("style", &error),
         }
     }
     transition_to_floating(
@@ -546,6 +565,13 @@ unsafe fn transition_to_floating(
         GWL_STYLE,
         ((style & !WS_CHILD.0) | WS_POPUP.0 | WS_CLIPSIBLINGS.0) as isize,
     );
+    if set_layered_mode(widget, false).is_err() {
+        if IsWindow(Some(widget)).as_bool() {
+            let _ = DestroyWindow(widget);
+        }
+        create_widget(state_pointer)?;
+        return transition_to_floating(state_pointer, true);
+    }
     (*state_pointer).taskbar_parent = None;
     let layout = WidgetLayout::for_dpi(GetDpiForWindow(widget).max(96));
     let _ = SetWindowPos(
@@ -576,6 +602,29 @@ unsafe fn detach_widget(widget: HWND) -> DetachOutcome {
     } else {
         DetachOutcome::DetachedAndVerified
     }
+}
+
+unsafe fn set_layered_mode(widget: HWND, enabled: bool) -> io::Result<()> {
+    let extended_style = GetWindowLongPtrW(widget, GWL_EXSTYLE) as u32;
+    let desired_style = if enabled {
+        extended_style | WS_EX_LAYERED.0
+    } else {
+        extended_style & !WS_EX_LAYERED.0
+    };
+    SetWindowLongPtrW(widget, GWL_EXSTYLE, desired_style as isize);
+    if GetWindowLongPtrW(widget, GWL_EXSTYLE) as u32 != desired_style {
+        return Err(io::Error::other("layered window style verification failed"));
+    }
+    SetWindowPos(
+        widget,
+        None,
+        0,
+        0,
+        0,
+        0,
+        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+    )
+    .map_err(win_error)
 }
 
 unsafe fn place_floating(settings: &UiSettings, hwnd: HWND) -> io::Result<()> {
@@ -727,12 +776,144 @@ unsafe fn paint_widget(hwnd: HWND, view: &WidgetViewModel) {
     let mut paint = PAINTSTRUCT::default();
     let dc = BeginPaint(hwnd, &mut paint);
     let dpi = GetDpiForWindow(hwnd).max(96);
-    let layout = WidgetLayout::for_dpi(dpi);
     let mut client = RECT::default();
     if GetClientRect(hwnd, &mut client).is_err() {
         let _ = EndPaint(hwnd, &paint);
         return;
     }
+    paint_widget_content(dc, client, dpi, view);
+    let _ = EndPaint(hwnd, &paint);
+}
+
+unsafe fn validate_paint(hwnd: HWND) {
+    let mut paint = PAINTSTRUCT::default();
+    let _ = BeginPaint(hwnd, &mut paint);
+    let _ = EndPaint(hwnd, &paint);
+}
+
+unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel) -> io::Result<()> {
+    let mut client = RECT::default();
+    GetClientRect(hwnd, &mut client).map_err(win_error)?;
+    let width = client.right - client.left;
+    let height = client.bottom - client.top;
+    if width <= 0 || height <= 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "taskbar widget has an empty client area",
+        ));
+    }
+    let pixel_count = usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid layered bitmap size"))?;
+
+    let window_dc = GetDC(Some(hwnd));
+    let memory_dc = CreateCompatibleDC(Some(window_dc));
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits = std::ptr::null_mut();
+    let bitmap = match CreateDIBSection(
+        Some(memory_dc),
+        &bitmap_info,
+        DIB_RGB_COLORS,
+        &mut bits,
+        None,
+        0,
+    ) {
+        Ok(bitmap) => bitmap,
+        Err(error) => {
+            let error = win_error(error);
+            let _ = DeleteDC(memory_dc);
+            let _ = ReleaseDC(Some(hwnd), window_dc);
+            return Err(error);
+        }
+    };
+    if bitmap.is_invalid() || bits.is_null() {
+        if !bitmap.is_invalid() {
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+        }
+        let _ = DeleteDC(memory_dc);
+        let _ = ReleaseDC(Some(hwnd), window_dc);
+        return Err(io::Error::last_os_error());
+    }
+
+    let old_bitmap = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
+    let dpi = GetDpiForWindow(hwnd).max(96);
+    paint_widget_content(
+        memory_dc,
+        RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        },
+        dpi,
+        view,
+    );
+    make_pixels_opaque(std::slice::from_raw_parts_mut(
+        bits.cast::<u32>(),
+        pixel_count,
+    ));
+
+    let source = POINT { x: 0, y: 0 };
+    let size = SIZE {
+        cx: width,
+        cy: height,
+    };
+    let blend = BLENDFUNCTION {
+        BlendOp: 0,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255,
+        AlphaFormat: 1,
+    };
+    let result = UpdateLayeredWindow(
+        hwnd,
+        Some(window_dc),
+        None,
+        Some(&size),
+        Some(memory_dc),
+        Some(&source),
+        COLORREF(0),
+        Some(&blend),
+        ULW_ALPHA,
+    )
+    .map_err(win_error);
+    SelectObject(memory_dc, old_bitmap);
+    let _ = DeleteObject(HGDIOBJ(bitmap.0));
+    let _ = DeleteDC(memory_dc);
+    let _ = ReleaseDC(Some(hwnd), window_dc);
+    result
+}
+
+fn make_pixels_opaque(pixels: &mut [u32]) {
+    for pixel in pixels {
+        *pixel |= 0xff00_0000;
+    }
+}
+
+fn log_taskbar_render_error(stage: &'static str, error: &io::Error) {
+    let _ = DiagnosticLogger::new().record_safe(SafeDiagnostic::TaskbarRender {
+        stage,
+        error_code: error.raw_os_error(),
+    });
+}
+
+unsafe fn paint_widget_content(dc: HDC, client: RECT, dpi: u32, view: &WidgetViewModel) {
+    let layout = WidgetLayout::for_dpi(dpi);
     let background = CreateSolidBrush(COLORREF(0x0023_211f));
     FillRect(dc, &client, background);
     let _ = DeleteObject(HGDIOBJ(background.0));
@@ -804,7 +985,6 @@ unsafe fn paint_widget(hwnd: HWND, view: &WidgetViewModel) {
     }
     SelectObject(dc, previous);
     let _ = DeleteObject(HGDIOBJ(font.0));
-    let _ = EndPaint(hwnd, &paint);
 }
 
 unsafe fn draw_compact_row(
@@ -1032,5 +1212,19 @@ pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::
         Err(io::Error::last_os_error())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_pixels_opaque;
+
+    #[test]
+    fn layered_bitmap_pixels_are_made_fully_opaque() {
+        let mut pixels = [0x0012_3456, 0x8012_3456, 0xffab_cdef];
+
+        make_pixels_opaque(&mut pixels);
+
+        assert_eq!(pixels, [0xff12_3456, 0xff12_3456, 0xffab_cdef]);
     }
 }

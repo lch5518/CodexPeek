@@ -26,6 +26,8 @@ pub enum DiagnosticCode {
     ProxyPresence,
     /// 작업 표시줄 호환성 확인 결과입니다.
     TaskbarCheck,
+    /// 작업 표시줄 창 합성 단계의 결과입니다.
+    TaskbarRender,
 }
 
 impl DiagnosticCode {
@@ -37,6 +39,7 @@ impl DiagnosticCode {
             Self::SettingsInvalid => "settings_invalid",
             Self::ProxyPresence => "proxy_presence",
             Self::TaskbarCheck => "taskbar_check",
+            Self::TaskbarRender => "taskbar_render",
         }
     }
 }
@@ -56,6 +59,11 @@ pub enum SafeDiagnostic {
     Proxy { present: bool },
     /// 작업 표시줄 점검의 성공 여부입니다.
     Taskbar { available: bool },
+    /// 작업 표시줄 합성 단계와 민감정보가 없는 운영체제 오류 코드입니다.
+    TaskbarRender {
+        stage: &'static str,
+        error_code: Option<i32>,
+    },
 }
 
 /// 민감 정보를 제거한 로컬 진단 로그 기록기입니다.
@@ -138,6 +146,10 @@ impl DiagnosticLogger {
             SafeDiagnostic::Taskbar { available } => self.record(
                 DiagnosticCode::TaskbarCheck,
                 &format!("available={available}"),
+            ),
+            SafeDiagnostic::TaskbarRender { stage, error_code } => self.record(
+                DiagnosticCode::TaskbarRender,
+                &format!("stage={stage} error_code={error_code:?}"),
             ),
         }
     }
