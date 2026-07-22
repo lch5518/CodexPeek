@@ -1,6 +1,9 @@
 //! 작업 표시줄 위젯 배치와 네이티브 연결 지원입니다.
 
-use super::widget::{logical_to_physical, Rect};
+use super::{
+    taskbar_widget::TASKBAR_WIDTH_LOGICAL,
+    widget::{logical_to_physical, Rect},
+};
 use std::fmt;
 
 const WS_CHILD_VALUE: u32 = 0x4000_0000;
@@ -68,7 +71,7 @@ pub fn taskbar_widget_size(
         Err(TaskbarPlacementError::InsufficientSpace)
     } else {
         Ok((
-            logical_to_physical(380, dpi),
+            logical_to_physical(TASKBAR_WIDTH_LOGICAL, dpi),
             taskbar_height.min(logical_to_physical(48, dpi)),
         ))
     }

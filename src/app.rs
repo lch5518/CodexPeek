@@ -15,7 +15,7 @@ use crate::{
     windows::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, resolve_windows_language, taskbar, LaunchMode, UiAction,
-        UiBackend, UiSettings, UsageRowView, WidgetViewModel,
+        UiBackend, UiSettings, UsageRowView, WidgetDataState, WidgetViewModel,
     },
     AsyncSettingsWriter, DiagnosticCode, DiagnosticLogger, Language, LanguagePreference,
     LocalizationKey, PollSnapshot, PollingService, SafeDiagnostic, Settings, SettingsStore,
@@ -170,20 +170,34 @@ impl UiBackend for AppRuntime {
                 Language::English => format!("Last success {}s ago", duration.as_secs()),
             })
             .unwrap_or_default();
+        let primary = snapshot
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.primary.as_ref())
+            .map(|window| row_view(window, language, now));
+        let secondary = snapshot
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.secondary.as_ref())
+            .map(|window| row_view(window, language, now));
+        let weekly = secondary.as_ref().or(primary.as_ref());
+        let taskbar = taskbar_copy(weekly, language, &status);
+        let data_state = if snapshot.last_error.is_some() {
+            WidgetDataState::Error
+        } else if weekly.is_none() && snapshot.is_fetching {
+            WidgetDataState::Loading
+        } else {
+            WidgetDataState::Ready
+        };
         WidgetViewModel {
-            primary: snapshot
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.primary.as_ref())
-                .map(|window| row_view(window, language, now)),
-            secondary: snapshot
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.secondary.as_ref())
-                .map(|window| row_view(window, language, now)),
+            primary,
+            secondary,
             status,
             last_success,
             is_stale: snapshot.is_stale,
+            taskbar_label: taskbar.label,
+            taskbar_tooltip: taskbar.tooltip,
+            data_state,
         }
     }
 
@@ -335,6 +349,51 @@ fn row_view(window: &UsageWindow, language: Language, now: SystemTime) -> UsageR
         percent_text: format!("{:.0}%", window.used_percent),
         reset_text: window.remaining_label(language, now),
         level: window.level(),
+    }
+}
+
+struct TaskbarCopy {
+    label: String,
+    tooltip: String,
+}
+
+fn taskbar_copy(row: Option<&UsageRowView>, language: Language, status: &str) -> TaskbarCopy {
+    let label = match language {
+        Language::Korean => "주간 사용량",
+        Language::English => "Weekly usage",
+    }
+    .to_owned();
+    let tooltip = match (row, language) {
+        (Some(row), Language::Korean) => format!(
+            "{} 기준\n현재 사용량: {}\n남은 사용량: {:.0}%\n초기화: {}\n상태: {} · {status}",
+            row.label,
+            row.percent_text,
+            (100.0 - row.used_percent).max(0.0),
+            row.reset_text,
+            taskbar_risk_text(row.used_percent, language),
+        ),
+        (Some(row), Language::English) => format!(
+            "{} window\nCurrent usage: {}\nRemaining: {:.0}%\nReset: {}\nStatus: {} · {status}",
+            row.label,
+            row.percent_text,
+            (100.0 - row.used_percent).max(0.0),
+            row.reset_text,
+            taskbar_risk_text(row.used_percent, language),
+        ),
+        (None, Language::Korean) => format!("주간 사용량\n상태: {status}"),
+        (None, Language::English) => format!("Weekly usage\nStatus: {status}"),
+    };
+    TaskbarCopy { label, tooltip }
+}
+
+fn taskbar_risk_text(percent: f64, language: Language) -> &'static str {
+    match (percent, language) {
+        (value, Language::Korean) if value >= 90.0 => "위험",
+        (value, Language::English) if value >= 90.0 => "Critical",
+        (value, Language::Korean) if value >= 70.0 => "주의",
+        (value, Language::English) if value >= 70.0 => "Warning",
+        (_, Language::Korean) => "안정",
+        (_, Language::English) => "Healthy",
     }
 }
 
@@ -543,8 +602,8 @@ fn safe_path_text(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::status_with_update;
-    use crate::{Language, UpdatePresentationStatus};
+    use super::{status_with_update, taskbar_copy};
+    use crate::{windows::UsageRowView, Language, UpdatePresentationStatus, UsageLevel};
 
     #[test]
     fn update_status_is_appended_without_hiding_usage_error() {
@@ -556,5 +615,46 @@ mod tests {
             ),
             "Usage request failed · Update check failed"
         );
+    }
+
+    #[test]
+    fn taskbar_copy_is_explicit_and_keeps_reset_details_in_the_tooltip() {
+        let row = UsageRowView {
+            label: "7일".to_owned(),
+            used_percent: 8.0,
+            percent_text: "8%".to_owned(),
+            reset_text: "6일 22시간".to_owned(),
+            level: UsageLevel::Stable,
+        };
+
+        let korean = taskbar_copy(Some(&row), Language::Korean, "자동 갱신 중");
+        assert_eq!(korean.label, "주간 사용량");
+        assert!(korean.tooltip.contains("7일 기준"));
+        assert!(korean.tooltip.contains("현재 사용량: 8%"));
+        assert!(korean.tooltip.contains("남은 사용량: 92%"));
+        assert!(korean.tooltip.contains("초기화: 6일 22시간"));
+        assert!(korean.tooltip.contains("상태: 안정"));
+
+        let english = taskbar_copy(Some(&row), Language::English, "Polling");
+        assert_eq!(english.label, "Weekly usage");
+        assert!(english.tooltip.contains("Current usage: 8%"));
+        assert!(english.tooltip.contains("Remaining: 92%"));
+        assert!(english.tooltip.contains("Status: Healthy"));
+    }
+
+    #[test]
+    fn taskbar_remaining_percent_never_becomes_negative() {
+        let row = UsageRowView {
+            label: "7d".to_owned(),
+            used_percent: 125.0,
+            percent_text: "125%".to_owned(),
+            reset_text: "1d".to_owned(),
+            level: UsageLevel::Limited,
+        };
+
+        let copy = taskbar_copy(Some(&row), Language::English, "Critical");
+
+        assert!(copy.tooltip.contains("Remaining: 0%"));
+        assert_eq!(row.used_percent, 125.0);
     }
 }

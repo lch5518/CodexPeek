@@ -4,6 +4,7 @@ pub mod autostart;
 pub mod lifecycle;
 pub mod native;
 pub mod taskbar;
+pub mod taskbar_widget;
 pub mod tray;
 pub mod widget;
 
@@ -268,6 +269,17 @@ pub struct UsageRowView {
     pub level: crate::UsageLevel,
 }
 
+/// 작업 표시줄이 표현하는 조회 상태입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WidgetDataState {
+    /// 첫 사용량을 불러오는 중입니다.
+    Loading,
+    /// 표시 가능한 최신 또는 보존 데이터가 있습니다.
+    Ready,
+    /// 최근 사용량 조회가 실패했습니다.
+    Error,
+}
+
 /// Windows UI가 렌더링하는 불변 상태 복사본입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WidgetViewModel {
@@ -281,6 +293,12 @@ pub struct WidgetViewModel {
     pub last_success: String,
     /// 오래된 정보인지 나타냅니다.
     pub is_stale: bool,
+    /// 작업 표시줄의 고정 주간 레이블입니다.
+    pub taskbar_label: String,
+    /// 작업 표시줄에 연결할 상세 툴팁 문구입니다.
+    pub taskbar_tooltip: String,
+    /// 작업 표시줄의 로딩·정상·오류 표현 상태입니다.
+    pub data_state: WidgetDataState,
 }
 
 /// 메뉴 체크 상태와 창 정책에 필요한 비민감 설정 복사본입니다.

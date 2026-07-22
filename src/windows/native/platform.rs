@@ -4,7 +4,7 @@ use std::{
 };
 
 use windows::{
-    core::{w, BOOL, PCWSTR},
+    core::{w, BOOL, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND,
@@ -13,12 +13,13 @@ use windows::{
         Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage},
         Graphics::Gdi::{
             BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
-            DeleteDC, DeleteObject, DrawTextW, EndPaint, EnumDisplayMonitors, FillRect, GetDC,
-            GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ReleaseDC, SelectObject, SetBkMode,
-            SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS,
-            DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT,
-            DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_NORMAL, HDC, HGDIOBJ, HMONITOR, MONITORINFOEXW,
-            MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
+            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, EnumDisplayMonitors, FillRect,
+            GetDC, GetMonitorInfoW, GetStockObject, InvalidateRect, MonitorFromWindow, ReleaseDC,
+            SelectObject, SetBkMode, SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
+            CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_END_ELLIPSIS,
+            DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC,
+            HGDIOBJ, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST, NULL_PEN,
+            OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
@@ -26,24 +27,30 @@ use windows::{
             Threading::CreateMutexW,
         },
         UI::{
+            Controls::{
+                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW,
+                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+            },
             HiDpi::{
                 GetDpiForMonitor, GetDpiForWindow, SetProcessDpiAwarenessContext,
                 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
             },
+            Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
             Shell::{ShellExecuteW, NIN_SELECT},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
                 GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect, IsWindow, KillTimer,
                 LoadCursorW, MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW,
-                RegisterWindowMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos,
-                ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
-                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HTCAPTION,
-                HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG,
+                RegisterWindowMessageW, SendMessageW, SetParent, SetTimer, SetWindowLongPtrW,
+                SetWindowPos, ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW,
+                CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
+                HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG,
                 SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-                SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU,
-                WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONUP, WM_NCCREATE,
-                WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_CHILD,
-                WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
+                WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONUP,
+                WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP,
+                WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+                WS_POPUP,
             },
         },
     },
@@ -61,15 +68,17 @@ use super::super::{
         RecoveryEvent,
     },
     taskbar::attach_to_taskbar,
+    taskbar_widget::{select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk},
     tray::{TrayIcon, TRAY_CALLBACK},
     widget::{
         clamp_floating_position, logical_to_physical, restore_monitor_relative_position,
         save_monitor_relative_position, Rect, WidgetLayout,
     },
-    UiAction, UiBackend, UiSettings, UsageRowView, WidgetViewModel,
+    UiAction, UiBackend, UiSettings, UsageRowView, WidgetDataState, WidgetViewModel,
 };
 
 const TIMER_ID: usize = 1;
+const HOVER_TIMER_ID: usize = 2;
 const OWNER_CLASS: PCWSTR = w!("CodexUsageMonitor.Hidden.v1");
 const WIDGET_CLASS: PCWSTR = w!("CodexUsageMonitor.Widget.v1");
 static TASKBAR_CREATED_MESSAGE: AtomicU32 = AtomicU32::new(0);
@@ -93,6 +102,10 @@ struct NativeState<'a> {
     taskbar_parent: Option<HWND>,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
+    hover: HoverTransition,
+    mouse_tracking: bool,
+    tooltip: HWND,
+    tooltip_text: Vec<u16>,
 }
 
 pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
@@ -113,6 +126,10 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             taskbar_parent: None,
             settings,
             lifecycle: NativeLifecycle::default(),
+            hover: HoverTransition::default(),
+            mouse_tracking: false,
+            tooltip: HWND::default(),
+            tooltip_text: Vec::new(),
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
@@ -146,6 +163,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             }
             state.lifecycle.timer_started();
             apply_window_policy((&mut *state) as *mut NativeState<'_>, true)?;
+            let _ = create_tooltip((&mut *state) as *mut NativeState<'_>);
 
             let mut message = MSG::default();
             loop {
@@ -209,6 +227,10 @@ unsafe fn register_classes(instance: HINSTANCE) -> io::Result<()> {
 }
 
 unsafe fn cleanup_native_state(state_pointer: *mut NativeState<'_>) {
+    let tooltip = (*state_pointer).tooltip;
+    if tooltip != HWND::default() && IsWindow(Some(tooltip)).as_bool() {
+        let _ = DestroyWindow(tooltip);
+    }
     let actions = (*state_pointer).lifecycle.cleanup_actions();
     for action in actions {
         match action {
@@ -272,6 +294,7 @@ unsafe extern "system" fn owner_proc(
             let settings = (*pointer).backend.settings();
             (*pointer).settings = settings;
             let _ = refresh_tray(pointer, false);
+            update_tooltip(pointer);
             let widget = (*pointer).widget;
             if widget != HWND::default() {
                 let _ = InvalidateRect(Some(widget), None, false);
@@ -333,7 +356,14 @@ unsafe extern "system" fn widget_proc(
     }
     if !matches!(
         message,
-        WM_NCHITTEST | WM_PAINT | WM_DPICHANGED | WM_EXITSIZEMOVE | WM_CLOSE
+        WM_NCHITTEST
+            | WM_PAINT
+            | WM_DPICHANGED
+            | WM_EXITSIZEMOVE
+            | WM_CLOSE
+            | WM_MOUSEMOVE
+            | WM_MOUSELEAVE
+            | WM_TIMER
     ) {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
@@ -342,11 +372,44 @@ unsafe extern "system" fn widget_proc(
     }
     match message {
         WM_NCHITTEST if (*pointer).taskbar_parent.is_none() => LRESULT(HTCAPTION as isize),
+        WM_MOUSEMOVE if (*pointer).taskbar_parent.is_some() => {
+            let state = &mut *pointer;
+            state.hover.set_hovered(true);
+            if !state.mouse_tracking {
+                let mut tracking = TRACKMOUSEEVENT {
+                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
+                if TrackMouseEvent(&mut tracking).is_ok() {
+                    state.mouse_tracking = true;
+                }
+            }
+            let _ = SetTimer(Some(hwnd), HOVER_TIMER_ID, 15, None);
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            let state = &mut *pointer;
+            state.mouse_tracking = false;
+            state.hover.set_hovered(false);
+            let _ = SetTimer(Some(hwnd), HOVER_TIMER_ID, 15, None);
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == HOVER_TIMER_ID => {
+            let state = &mut *pointer;
+            let needs_more = state.hover.tick();
+            let _ = InvalidateRect(Some(hwnd), None, false);
+            if !needs_more {
+                let _ = KillTimer(Some(hwnd), HOVER_TIMER_ID);
+            }
+            LRESULT(0)
+        }
         WM_PAINT => {
             let snapshot = (*pointer).backend.snapshot();
             if (*pointer).taskbar_parent.is_some() {
                 validate_paint(hwnd);
-                let _ = paint_taskbar_widget(hwnd, &snapshot);
+                let _ = paint_taskbar_widget(hwnd, &snapshot, (*pointer).hover.value());
             } else {
                 paint_widget(hwnd, &snapshot);
             }
@@ -431,6 +494,81 @@ unsafe fn create_widget(state_pointer: *mut NativeState<'_>) -> io::Result<HWND>
     Ok(widget)
 }
 
+unsafe fn create_tooltip(state_pointer: *mut NativeState<'_>) -> io::Result<()> {
+    let existing = (*state_pointer).tooltip;
+    if existing != HWND::default() && IsWindow(Some(existing)).as_bool() {
+        let _ = DestroyWindow(existing);
+    }
+    (*state_pointer).tooltip = HWND::default();
+    let (owner, widget, instance) = {
+        let state = &*state_pointer;
+        (state.owner, state.widget, state.instance)
+    };
+    let tooltip = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        TOOLTIPS_CLASSW,
+        PCWSTR::null(),
+        WS_POPUP | WINDOW_STYLE(TTS_ALWAYSTIP | TTS_NOPREFIX),
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        Some(owner),
+        None,
+        Some(instance),
+        None,
+    )
+    .map_err(win_error)?;
+    (*state_pointer).tooltip = tooltip;
+    update_tooltip(state_pointer);
+    let state = &mut *state_pointer;
+    let tool = TTTOOLINFOW {
+        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+        hwnd: owner,
+        uId: widget.0 as usize,
+        hinst: instance,
+        lpszText: PWSTR(state.tooltip_text.as_mut_ptr()),
+        ..Default::default()
+    };
+    let result = SendMessageW(
+        tooltip,
+        TTM_ADDTOOLW,
+        Some(WPARAM(0)),
+        Some(LPARAM((&tool as *const TTTOOLINFOW) as isize)),
+    );
+    if result.0 == 0 {
+        let _ = DestroyWindow(tooltip);
+        state.tooltip = HWND::default();
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+unsafe fn update_tooltip(state_pointer: *mut NativeState<'_>) {
+    let view = (*state_pointer).backend.snapshot();
+    let state = &mut *state_pointer;
+    state.tooltip_text = view.taskbar_tooltip.encode_utf16().chain(Some(0)).collect();
+    if state.tooltip == HWND::default() {
+        return;
+    }
+    let tool = TTTOOLINFOW {
+        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+        hwnd: state.owner,
+        uId: state.widget.0 as usize,
+        hinst: state.instance,
+        lpszText: PWSTR(state.tooltip_text.as_mut_ptr()),
+        ..Default::default()
+    };
+    let _ = SendMessageW(
+        state.tooltip,
+        TTM_UPDATETIPTEXTW,
+        Some(WPARAM(0)),
+        Some(LPARAM((&tool as *const TTTOOLINFOW) as isize)),
+    );
+}
+
 unsafe fn recover_widget(
     state_pointer: *mut NativeState<'_>,
     event: RecoveryEvent,
@@ -453,6 +591,7 @@ unsafe fn recover_widget(
     };
     if matches!(decision, RecoveryDecision::RecreateAndApply) {
         create_widget(state_pointer)?;
+        let _ = create_tooltip(state_pointer);
     }
     if !matches!(decision, RecoveryDecision::NoWidgetNeeded)
         && (matches!(event, RecoveryEvent::TaskbarCreated) || mode == DisplayMode::Taskbar)
@@ -511,7 +650,7 @@ unsafe fn apply_window_policy(
                     state.lifecycle.widget_attached_to_taskbar();
                     let _ = ShowWindow(widget, SW_SHOWNA);
                     let snapshot = state.backend.snapshot();
-                    match paint_taskbar_widget(widget, &snapshot) {
+                    match paint_taskbar_widget(widget, &snapshot, state.hover.value()) {
                         Ok(()) => return Ok(()),
                         Err(error) => log_taskbar_render_error("compose", &error),
                     }
@@ -791,7 +930,7 @@ unsafe fn validate_paint(hwnd: HWND) {
     let _ = EndPaint(hwnd, &paint);
 }
 
-unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel) -> io::Result<()> {
+unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) -> io::Result<()> {
     let mut client = RECT::default();
     GetClientRect(hwnd, &mut client).map_err(win_error)?;
     let width = client.right - client.left;
@@ -853,7 +992,7 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel) -> io::Result
 
     let old_bitmap = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
     let dpi = GetDpiForWindow(hwnd).max(96);
-    paint_widget_content(
+    paint_compact_taskbar_content(
         memory_dc,
         RECT {
             left: 0,
@@ -864,10 +1003,13 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel) -> io::Result
         dpi,
         view,
     );
-    make_pixels_opaque(std::slice::from_raw_parts_mut(
-        bits.cast::<u32>(),
-        pixel_count,
-    ));
+    apply_glass_alpha(
+        std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
+        width,
+        height,
+        dpi,
+        hover,
+    );
 
     let source = POINT { x: 0, y: 0 };
     let size = SIZE {
@@ -899,9 +1041,223 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel) -> io::Result
     result
 }
 
-fn make_pixels_opaque(pixels: &mut [u32]) {
-    for pixel in pixels {
-        *pixel |= 0xff00_0000;
+fn rounded_material_alpha(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    radius: i32,
+    base_alpha: u8,
+) -> u8 {
+    let px = f64::from(x) + 0.5;
+    let py = f64::from(y) + 0.5;
+    let radius = f64::from(radius.max(1));
+    let center_x = if px < radius {
+        radius
+    } else if px > f64::from(width) - radius {
+        f64::from(width) - radius
+    } else {
+        px
+    };
+    let center_y = if py < radius {
+        radius
+    } else if py > f64::from(height) - radius {
+        f64::from(height) - radius
+    } else {
+        py
+    };
+    let distance = ((px - center_x).powi(2) + (py - center_y).powi(2)).sqrt();
+    let coverage = (radius - distance).clamp(0.0, 1.0);
+    (f64::from(base_alpha) * coverage).round() as u8
+}
+
+fn glass_noise(x: i32, y: i32) -> i32 {
+    let hash = x
+        .wrapping_mul(73_856_093)
+        .wrapping_add(y.wrapping_mul(19_349_663))
+        .wrapping_add(83_492_791);
+    hash.rem_euclid(5) - 2
+}
+
+fn apply_glass_alpha(pixels: &mut [u32], width: i32, height: i32, dpi: u32, hover: u8) {
+    const MATERIAL_RGB: u32 = 0x0028_2828;
+    let base_alpha = 174_u8.saturating_add(((u16::from(hover) * 14) / 255) as u8);
+    let radius = logical_to_physical(10, dpi).min(width.min(height) / 2);
+    for y in 0..height {
+        for x in 0..width {
+            let index = (y as usize) * (width as usize) + x as usize;
+            let pixel = pixels[index];
+            let coverage = rounded_material_alpha(x, y, width, height, radius, 255);
+            if coverage == 0 {
+                pixels[index] = 0;
+                continue;
+            }
+            let rgb = pixel & 0x00ff_ffff;
+            let alpha = if rgb == MATERIAL_RGB {
+                ((u16::from(base_alpha) * u16::from(coverage)) / 255) as u8
+            } else {
+                ((235_u16 * u16::from(coverage)) / 255) as u8
+            };
+            let noise = if rgb == MATERIAL_RGB {
+                glass_noise(x, y) + i32::from(y <= 1) * 2
+            } else {
+                0
+            };
+            let blue =
+                (((pixel & 0xff) as i32 + noise).clamp(0, 255) as u32 * u32::from(alpha)) / 255;
+            let green = ((((pixel >> 8) & 0xff) as i32 + noise).clamp(0, 255) as u32
+                * u32::from(alpha))
+                / 255;
+            let red = ((((pixel >> 16) & 0xff) as i32 + noise).clamp(0, 255) as u32
+                * u32::from(alpha))
+                / 255;
+            pixels[index] = (u32::from(alpha) << 24) | (red << 16) | (green << 8) | blue;
+        }
+    }
+}
+
+unsafe fn paint_compact_taskbar_content(dc: HDC, client: RECT, dpi: u32, view: &WidgetViewModel) {
+    let width = client.right - client.left;
+    let height = client.bottom - client.top;
+    let layout = TaskbarLayout::for_size(width, height, dpi);
+    let row = select_weekly_row(view.primary.as_ref(), view.secondary.as_ref());
+    let risk = match view.data_state {
+        WidgetDataState::Loading => TaskbarRisk::Loading,
+        WidgetDataState::Error => TaskbarRisk::Error,
+        WidgetDataState::Ready => row
+            .map(|row| TaskbarRisk::from_percent(row.used_percent))
+            .unwrap_or(TaskbarRisk::Loading),
+    };
+    let accent = taskbar_risk_color(risk);
+
+    let background = CreateSolidBrush(COLORREF(0x0028_2828));
+    FillRect(dc, &client, background);
+    let _ = DeleteObject(HGDIOBJ(background.0));
+    let _ = SetBkMode(dc, TRANSPARENT);
+
+    if risk == TaskbarRisk::Error {
+        let font = CreateFontW(
+            -logical_to_physical(11, dpi),
+            0,
+            0,
+            0,
+            FW_MEDIUM.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            PROOF_QUALITY,
+            u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+            w!("Segoe UI Variable"),
+        );
+        let old = SelectObject(dc, HGDIOBJ(font.0));
+        let mut dot = native_rect(layout.dot);
+        draw_text(
+            dc,
+            "!",
+            &mut dot,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            accent,
+        );
+        SelectObject(dc, old);
+        let _ = DeleteObject(HGDIOBJ(font.0));
+    } else {
+        let brush = CreateSolidBrush(accent);
+        let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
+        let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
+        let dot = native_rect(layout.dot);
+        let _ = Ellipse(dc, dot.left, dot.top, dot.right, dot.bottom);
+        SelectObject(dc, old_pen);
+        SelectObject(dc, old_brush);
+        let _ = DeleteObject(HGDIOBJ(brush.0));
+    }
+
+    let label_font = CreateFontW(
+        -logical_to_physical(12, dpi),
+        0,
+        0,
+        0,
+        FW_NORMAL.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        PROOF_QUALITY,
+        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+        w!("Segoe UI Variable"),
+    );
+    let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
+    let mut label = native_rect(layout.label);
+    draw_text(
+        dc,
+        &view.taskbar_label,
+        &mut label,
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+        COLORREF(0x00ed_eded),
+    );
+    SelectObject(dc, old_font);
+    let _ = DeleteObject(HGDIOBJ(label_font.0));
+
+    let percent_font = CreateFontW(
+        -logical_to_physical(12, dpi),
+        0,
+        0,
+        0,
+        FW_MEDIUM.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        PROOF_QUALITY,
+        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+        w!("Segoe UI Variable"),
+    );
+    let old_font = SelectObject(dc, HGDIOBJ(percent_font.0));
+    let mut percent = native_rect(layout.percent);
+    draw_text(
+        dc,
+        row.map_or("--", |row| row.percent_text.as_str()),
+        &mut percent,
+        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
+        COLORREF(0x00f5_f5f5),
+    );
+    SelectObject(dc, old_font);
+    let _ = DeleteObject(HGDIOBJ(percent_font.0));
+
+    let track = CreateSolidBrush(COLORREF(0x0042_4242));
+    FillRect(dc, &native_rect(layout.progress), track);
+    let _ = DeleteObject(HGDIOBJ(track.0));
+    if let Some(row) = row {
+        let fill_width = (f64::from(layout.progress.width()) * row.used_percent.clamp(0.0, 100.0)
+            / 100.0)
+            .round() as i32;
+        if fill_width > 0 {
+            let fill = CreateSolidBrush(accent);
+            FillRect(
+                dc,
+                &RECT {
+                    right: layout.progress.left + fill_width,
+                    ..native_rect(layout.progress)
+                },
+                fill,
+            );
+            let _ = DeleteObject(HGDIOBJ(fill.0));
+        }
+    }
+}
+
+const fn taskbar_risk_color(risk: TaskbarRisk) -> COLORREF {
+    match risk {
+        TaskbarRisk::Healthy => COLORREF(0x0074_c748),
+        TaskbarRisk::Warning => COLORREF(0x0023_a6f5),
+        TaskbarRisk::Critical | TaskbarRisk::Error => COLORREF(0x005c_5cff),
+        TaskbarRisk::Loading => COLORREF(0x0097_9797),
     }
 }
 
@@ -1217,14 +1573,24 @@ pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::make_pixels_opaque;
+    use super::{glass_noise, rounded_material_alpha};
 
     #[test]
-    fn layered_bitmap_pixels_are_made_fully_opaque() {
-        let mut pixels = [0x0012_3456, 0x8012_3456, 0xffab_cdef];
+    fn rounded_material_alpha_softens_corners_and_keeps_center_translucent() {
+        assert_eq!(rounded_material_alpha(0, 0, 208, 48, 10, 174), 0);
+        assert_eq!(rounded_material_alpha(104, 24, 208, 48, 10, 174), 174);
+        let edge = rounded_material_alpha(3, 3, 208, 48, 10, 174);
+        assert!(edge > 0 && edge < 174);
+    }
 
-        make_pixels_opaque(&mut pixels);
-
-        assert_eq!(pixels, [0xff12_3456, 0xff12_3456, 0xffab_cdef]);
+    #[test]
+    fn glass_noise_is_deterministic_and_subtle() {
+        for y in 0..48 {
+            for x in 0..208 {
+                let first = glass_noise(x, y);
+                assert_eq!(first, glass_noise(x, y));
+                assert!((-2..=2).contains(&first));
+            }
+        }
     }
 }

@@ -17,6 +17,7 @@ use codex_usage_monitor::{
             TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
             TaskbarPlacementError,
         },
+        taskbar_widget::{select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk},
         tray::update_menu_text,
         widget::{
             clamp_floating_position, logical_to_physical, physical_to_logical,
@@ -329,10 +330,77 @@ fn taskbar_attachment_adapts_to_compact_taskbar_height() {
         taskbar_widget_size(35, 96),
         Err(TaskbarPlacementError::InsufficientSpace)
     );
-    assert_eq!(taskbar_widget_size(40, 96), Ok((380, 40)));
-    assert_eq!(taskbar_widget_size(48, 96), Ok((380, 48)));
-    assert_eq!(taskbar_widget_size(48, 120), Ok((475, 48)));
-    assert_eq!(taskbar_widget_size(60, 120), Ok((475, 60)));
+    assert_eq!(taskbar_widget_size(40, 96), Ok((208, 40)));
+    assert_eq!(taskbar_widget_size(48, 96), Ok((208, 48)));
+    assert_eq!(taskbar_widget_size(48, 120), Ok((260, 48)));
+    assert_eq!(taskbar_widget_size(60, 120), Ok((260, 60)));
+}
+
+#[test]
+fn taskbar_weekly_row_prefers_secondary_and_falls_back_to_primary() {
+    let primary = codex_usage_monitor::windows::UsageRowView {
+        label: "5시간".to_owned(),
+        used_percent: 20.0,
+        percent_text: "20%".to_owned(),
+        reset_text: "2시간".to_owned(),
+        level: codex_usage_monitor::UsageLevel::Stable,
+    };
+    let secondary = codex_usage_monitor::windows::UsageRowView {
+        label: "7일".to_owned(),
+        used_percent: 80.0,
+        percent_text: "80%".to_owned(),
+        reset_text: "3일".to_owned(),
+        level: codex_usage_monitor::UsageLevel::Caution,
+    };
+
+    assert_eq!(
+        select_weekly_row(Some(&primary), Some(&secondary)),
+        Some(&secondary)
+    );
+    assert_eq!(select_weekly_row(Some(&primary), None), Some(&primary));
+}
+
+#[test]
+fn taskbar_risk_uses_the_compact_widget_thresholds() {
+    assert_eq!(TaskbarRisk::from_percent(0.0), TaskbarRisk::Healthy);
+    assert_eq!(TaskbarRisk::from_percent(69.0), TaskbarRisk::Healthy);
+    assert_eq!(TaskbarRisk::from_percent(70.0), TaskbarRisk::Warning);
+    assert_eq!(TaskbarRisk::from_percent(89.0), TaskbarRisk::Warning);
+    assert_eq!(TaskbarRisk::from_percent(90.0), TaskbarRisk::Critical);
+    assert_eq!(TaskbarRisk::from_percent(125.0), TaskbarRisk::Critical);
+}
+
+#[test]
+fn compact_taskbar_layout_fits_supported_dpis() {
+    for dpi in [96, 120, 144, 192] {
+        let width = logical_to_physical(208, dpi);
+        let height = logical_to_physical(48, dpi);
+        let layout = TaskbarLayout::for_size(width, height, dpi);
+
+        assert!(layout.dot.is_inside(layout.window));
+        assert!(layout.label.is_inside(layout.window));
+        assert!(layout.percent.is_inside(layout.window));
+        assert!(layout.progress.is_inside(layout.window));
+        assert!(!layout.label.intersects(layout.percent));
+    }
+}
+
+#[test]
+fn hover_transition_reverses_from_the_current_value_without_jumping() {
+    let mut hover = HoverTransition::default();
+    hover.set_hovered(true);
+    for _ in 0..4 {
+        assert!(hover.tick());
+    }
+    let reached = hover.value();
+    assert!(reached > 0 && reached < 255);
+
+    hover.set_hovered(false);
+    assert_eq!(hover.value(), reached);
+    assert!(hover.tick());
+    assert!(hover.value() < reached);
+    while hover.tick() {}
+    assert_eq!(hover.value(), 0);
 }
 
 const ORIGINAL_STYLE: u32 = 0x8001_0000;
