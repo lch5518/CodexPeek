@@ -8,14 +8,10 @@ pub mod taskbar_widget;
 pub mod tray;
 pub mod widget;
 
-use crate::{DisplayMode, Language, LanguagePreference, LogicalPosition, StartupView};
+use crate::{Language, LanguagePreference, StartupView};
 
 /// 즉시 갱신 메뉴 식별자입니다.
 pub const MENU_REFRESH: u16 = 100;
-/// 작업 표시줄 모드 메뉴 식별자입니다.
-pub const MENU_DISPLAY_TASKBAR: u16 = 110;
-/// 부동 창 모드 메뉴 식별자입니다.
-pub const MENU_DISPLAY_FLOATING: u16 = 111;
 /// 1분 갱신 간격 메뉴 식별자입니다.
 pub const MENU_INTERVAL_1: u16 = 121;
 /// 5분 갱신 간격 메뉴 식별자입니다.
@@ -36,16 +32,12 @@ pub const MENU_STARTUP_TRAY: u16 = 171;
 pub const MENU_AUTH_REFRESH: u16 = 180;
 /// 자동 인증 갱신 메뉴 식별자입니다.
 pub const MENU_AUTO_AUTH_REFRESH: u16 = 181;
-/// 항상 위 메뉴 식별자입니다.
-pub const MENU_ALWAYS_ON_TOP: u16 = 190;
 /// 자동 언어 메뉴 식별자입니다.
 pub const MENU_LANGUAGE_AUTO: u16 = 200;
 /// 한국어 메뉴 식별자입니다.
 pub const MENU_LANGUAGE_KOREAN: u16 = 201;
 /// 영어 메뉴 식별자입니다.
 pub const MENU_LANGUAGE_ENGLISH: u16 = 202;
-/// 위치 초기화 메뉴 식별자입니다.
-pub const MENU_POSITION_RESET: u16 = 210;
 /// 진단 메뉴 식별자입니다.
 pub const MENU_DIAGNOSTICS: u16 = 220;
 /// 업데이트 확인 메뉴 식별자입니다.
@@ -192,8 +184,6 @@ pub const fn initial_widget_visible(
 pub enum UiAction {
     /// 즉시 사용량을 갱신합니다.
     Refresh,
-    /// 표시 방식을 변경합니다.
-    SetDisplayMode(DisplayMode),
     /// 자동 갱신 간격을 분 단위로 변경합니다.
     SetRefreshInterval(u32),
     /// Windows 자동 시작을 전환합니다.
@@ -204,17 +194,8 @@ pub enum UiAction {
     RefreshWithAuth,
     /// 자동 인증 갱신 정책을 전환합니다.
     ToggleAutoAuthRefresh,
-    /// 항상 위 표시를 전환합니다.
-    ToggleAlwaysOnTop,
     /// 표시 언어를 변경합니다.
     SetLanguage(LanguagePreference),
-    /// 저장된 창 위치를 초기화합니다.
-    ResetPosition,
-    /// 이동이 끝난 부동 창의 논리 좌표와 모니터 장치를 저장합니다.
-    SaveFloatingPosition {
-        position: LogicalPosition,
-        monitor_device: Option<String>,
-    },
     /// 안전 진단을 실행합니다.
     RunDiagnostics,
     /// 업데이트를 확인합니다.
@@ -229,8 +210,6 @@ pub enum UiAction {
 pub fn menu_action(menu_id: u16) -> Option<UiAction> {
     Some(match menu_id {
         MENU_REFRESH => UiAction::Refresh,
-        MENU_DISPLAY_TASKBAR => UiAction::SetDisplayMode(DisplayMode::Taskbar),
-        MENU_DISPLAY_FLOATING => UiAction::SetDisplayMode(DisplayMode::Floating),
         MENU_INTERVAL_1 => UiAction::SetRefreshInterval(1),
         MENU_INTERVAL_5 => UiAction::SetRefreshInterval(5),
         MENU_INTERVAL_10 => UiAction::SetRefreshInterval(10),
@@ -241,11 +220,9 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_STARTUP_TRAY => UiAction::SetStartupView(StartupView::TrayOnly),
         MENU_AUTH_REFRESH => UiAction::RefreshWithAuth,
         MENU_AUTO_AUTH_REFRESH => UiAction::ToggleAutoAuthRefresh,
-        MENU_ALWAYS_ON_TOP => UiAction::ToggleAlwaysOnTop,
         MENU_LANGUAGE_AUTO => UiAction::SetLanguage(LanguagePreference::Auto),
         MENU_LANGUAGE_KOREAN => UiAction::SetLanguage(LanguagePreference::Korean),
         MENU_LANGUAGE_ENGLISH => UiAction::SetLanguage(LanguagePreference::English),
-        MENU_POSITION_RESET => UiAction::ResetPosition,
         MENU_DIAGNOSTICS => UiAction::RunDiagnostics,
         MENU_UPDATE_CHECK => UiAction::CheckForUpdates,
         MENU_WIDGET_VISIBLE => UiAction::ToggleWidget,
@@ -304,14 +281,10 @@ pub struct WidgetViewModel {
 /// 메뉴 체크 상태와 창 정책에 필요한 비민감 설정 복사본입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiSettings {
-    /// 위젯 표시 방식입니다.
-    pub display_mode: DisplayMode,
     /// 위젯 표시 여부입니다.
     pub widget_visible: bool,
     /// 자동 갱신 간격입니다.
     pub refresh_interval_minutes: u32,
-    /// 항상 위 표시 여부입니다.
-    pub always_on_top: bool,
     /// Windows 자동 시작 여부입니다.
     pub start_with_windows: bool,
     /// 자동 시작 시 표시 방식입니다.
@@ -324,10 +297,6 @@ pub struct UiSettings {
     pub resolved_language: Language,
     /// 작업 표시줄 논리 픽셀 오프셋입니다.
     pub taskbar_offset: i32,
-    /// 저장된 부동 창 논리 좌표입니다.
-    pub floating_position: Option<LogicalPosition>,
-    /// 저장된 모니터 장치 이름입니다.
-    pub monitor_device: Option<String>,
     /// 사용자에게 표시할 업데이트 검사 상태입니다.
     pub update_status: crate::UpdatePresentationStatus,
 }

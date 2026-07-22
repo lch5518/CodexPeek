@@ -7,10 +7,7 @@ use codex_usage_monitor::{
     windows::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
         initial_widget_visible, is_exact_github_tag_page,
-        lifecycle::{
-            CleanupAction, DetachOutcome, FloatingTransition, NativeLifecycle, RecoveryDecision,
-            RecoveryEvent,
-        },
+        lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
         menu_action, resolve_windows_language, startup_plan,
         taskbar::{
             place_taskbar_widget, run_taskbar_attachment, taskbar_widget_size,
@@ -19,18 +16,14 @@ use codex_usage_monitor::{
         },
         taskbar_widget::{select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk},
         tray::update_menu_text,
-        widget::{
-            clamp_floating_position, logical_to_physical, physical_to_logical,
-            restore_monitor_relative_position, save_monitor_relative_position, Rect, WidgetLayout,
-        },
-        LaunchMode, StartupStep, UiAction, MENU_ALWAYS_ON_TOP, MENU_AUTH_REFRESH, MENU_AUTOSTART,
-        MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_DISPLAY_FLOATING, MENU_DISPLAY_TASKBAR,
-        MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
-        MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN,
-        MENU_POSITION_RESET, MENU_REFRESH, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
-        MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+        widget::{logical_to_physical, Rect},
+        LaunchMode, StartupStep, UiAction, MENU_AUTH_REFRESH, MENU_AUTOSTART,
+        MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
+        MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_AUTO,
+        MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH, MENU_STARTUP_TRAY,
+        MENU_STARTUP_WIDGET, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
-    DisplayMode, Language, LanguagePreference, StartupView, UpdatePresentationStatus,
+    Language, LanguagePreference, StartupView, UpdatePresentationStatus,
 };
 
 #[test]
@@ -55,14 +48,6 @@ fn update_menu_labels_surface_every_presentation_status() {
 fn every_menu_command_maps_to_a_typed_action() {
     let cases = [
         (MENU_REFRESH, UiAction::Refresh),
-        (
-            MENU_DISPLAY_TASKBAR,
-            UiAction::SetDisplayMode(DisplayMode::Taskbar),
-        ),
-        (
-            MENU_DISPLAY_FLOATING,
-            UiAction::SetDisplayMode(DisplayMode::Floating),
-        ),
         (MENU_INTERVAL_1, UiAction::SetRefreshInterval(1)),
         (MENU_INTERVAL_5, UiAction::SetRefreshInterval(5)),
         (MENU_INTERVAL_10, UiAction::SetRefreshInterval(10)),
@@ -79,7 +64,6 @@ fn every_menu_command_maps_to_a_typed_action() {
         ),
         (MENU_AUTH_REFRESH, UiAction::RefreshWithAuth),
         (MENU_AUTO_AUTH_REFRESH, UiAction::ToggleAutoAuthRefresh),
-        (MENU_ALWAYS_ON_TOP, UiAction::ToggleAlwaysOnTop),
         (
             MENU_LANGUAGE_AUTO,
             UiAction::SetLanguage(LanguagePreference::Auto),
@@ -92,7 +76,6 @@ fn every_menu_command_maps_to_a_typed_action() {
             MENU_LANGUAGE_ENGLISH,
             UiAction::SetLanguage(LanguagePreference::English),
         ),
-        (MENU_POSITION_RESET, UiAction::ResetPosition),
         (MENU_DIAGNOSTICS, UiAction::RunDiagnostics),
         (MENU_UPDATE_CHECK, UiAction::CheckForUpdates),
         (MENU_WIDGET_VISIBLE, UiAction::ToggleWidget),
@@ -176,60 +159,6 @@ fn windows_ui_language_resolves_auto_without_process_environment() {
 }
 
 #[test]
-fn widget_layout_scales_consistently_at_supported_dpis() {
-    for (dpi, width, height) in [
-        (96, 380, 112),
-        (120, 475, 140),
-        (144, 570, 168),
-        (192, 760, 224),
-    ] {
-        let layout = WidgetLayout::for_dpi(dpi);
-        assert_eq!(
-            (layout.window.width(), layout.window.height()),
-            (width, height)
-        );
-        assert!(layout.primary_bar.is_inside(layout.window));
-        assert!(layout.secondary_bar.is_inside(layout.window));
-        assert!(layout.status.is_inside(layout.window));
-        assert!(!layout.primary_bar.intersects(layout.secondary_bar));
-        assert!(!layout.secondary_bar.intersects(layout.status));
-    }
-}
-
-#[test]
-fn floating_position_is_clamped_into_the_work_area() {
-    let work = Rect::new(100, 50, 1100, 850);
-    assert_eq!(
-        clamp_floating_position((-50, 900), (380, 112), work),
-        (100, 738)
-    );
-    assert_eq!(
-        clamp_floating_position((350, 300), (380, 112), work),
-        (350, 300)
-    );
-}
-
-#[test]
-fn floating_coordinates_round_trip_between_logical_and_physical_dpi() {
-    assert_eq!(logical_to_physical(240, 144), 360);
-    assert_eq!(physical_to_logical(360, 144), 240);
-    assert_eq!(physical_to_logical(-151, 120), -121);
-}
-
-#[test]
-fn positions_are_saved_relative_to_negative_origin_and_restore_at_mixed_dpi() {
-    let saved = save_monitor_relative_position((-1_800, 150), (-1_920, 0), 144);
-    assert_eq!(
-        saved,
-        codex_usage_monitor::LogicalPosition { x: 80, y: 100 }
-    );
-    assert_eq!(
-        restore_monitor_relative_position(saved, (0, -900), 120),
-        (100, -775)
-    );
-}
-
-#[test]
 fn lifecycle_recreates_destroyed_taskbar_widget_and_cleans_in_safe_order() {
     let mut lifecycle = NativeLifecycle::default();
     lifecycle.owner_created();
@@ -250,22 +179,6 @@ fn lifecycle_recreates_destroyed_taskbar_widget_and_cleans_in_safe_order() {
             CleanupAction::RemoveTray,
             CleanupAction::DestroyOwner,
         ]
-    );
-}
-
-#[test]
-fn floating_transition_recreates_when_detach_is_not_verified() {
-    assert_eq!(
-        NativeLifecycle::floating_transition(DetachOutcome::DetachedAndVerified),
-        FloatingTransition::ReuseAndPlace
-    );
-    assert_eq!(
-        NativeLifecycle::floating_transition(DetachOutcome::ParentRemains),
-        FloatingTransition::RecreateAndPlace
-    );
-    assert_eq!(
-        NativeLifecycle::floating_transition(DetachOutcome::ApiFailed),
-        FloatingTransition::RecreateAndPlace
     );
 }
 

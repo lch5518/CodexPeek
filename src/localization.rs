@@ -20,12 +20,6 @@ pub enum LocalizationKey {
     Unavailable,
     /// 새로 고침 메뉴입니다.
     MenuRefresh,
-    /// 표시 모드 메뉴입니다.
-    MenuDisplayMode,
-    /// 작업 표시줄 표시 모드입니다.
-    MenuTaskbarMode,
-    /// 플로팅 표시 모드입니다.
-    MenuFloatingMode,
     /// 갱신 간격 메뉴입니다.
     MenuRefreshInterval,
     /// 자동 시작 메뉴입니다.
@@ -38,12 +32,8 @@ pub enum LocalizationKey {
     MenuStartupTrayOnly,
     /// 인증 갱신 메뉴입니다.
     MenuAuthRefresh,
-    /// 항상 위 메뉴입니다.
-    MenuAlwaysOnTop,
     /// 언어 메뉴입니다.
     MenuLanguage,
-    /// 위치 초기화 메뉴입니다.
-    MenuPositionReset,
     /// 진단 메뉴입니다.
     MenuDiagnostics,
     /// 업데이트 확인 메뉴입니다.
@@ -96,18 +86,13 @@ impl LocalizationKey {
         Self::Stale,
         Self::Unavailable,
         Self::MenuRefresh,
-        Self::MenuDisplayMode,
-        Self::MenuTaskbarMode,
-        Self::MenuFloatingMode,
         Self::MenuRefreshInterval,
         Self::MenuAutostart,
         Self::MenuStartupView,
         Self::MenuStartupWidget,
         Self::MenuStartupTrayOnly,
         Self::MenuAuthRefresh,
-        Self::MenuAlwaysOnTop,
         Self::MenuLanguage,
-        Self::MenuPositionReset,
         Self::MenuDiagnostics,
         Self::MenuUpdateCheck,
         Self::MenuSettings,
@@ -148,12 +133,6 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
         (LocalizationKey::Unavailable, Language::English) => "Usage unavailable",
         (LocalizationKey::MenuRefresh, Language::Korean) => "새로 고침",
         (LocalizationKey::MenuRefresh, Language::English) => "Refresh",
-        (LocalizationKey::MenuDisplayMode, Language::Korean) => "표시 모드",
-        (LocalizationKey::MenuDisplayMode, Language::English) => "Display mode",
-        (LocalizationKey::MenuTaskbarMode, Language::Korean) => "작업 표시줄",
-        (LocalizationKey::MenuTaskbarMode, Language::English) => "Taskbar",
-        (LocalizationKey::MenuFloatingMode, Language::Korean) => "플로팅 창",
-        (LocalizationKey::MenuFloatingMode, Language::English) => "Floating window",
         (LocalizationKey::MenuRefreshInterval, Language::Korean) => "갱신 간격",
         (LocalizationKey::MenuRefreshInterval, Language::English) => "Refresh interval",
         (LocalizationKey::MenuAutostart, Language::Korean) => "Windows 시작 시 실행",
@@ -166,12 +145,8 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
         (LocalizationKey::MenuStartupTrayOnly, Language::English) => "Tray only",
         (LocalizationKey::MenuAuthRefresh, Language::Korean) => "자동 인증 갱신",
         (LocalizationKey::MenuAuthRefresh, Language::English) => "Automatic authentication refresh",
-        (LocalizationKey::MenuAlwaysOnTop, Language::Korean) => "항상 위에 표시",
-        (LocalizationKey::MenuAlwaysOnTop, Language::English) => "Always on top",
         (LocalizationKey::MenuLanguage, Language::Korean) => "언어",
         (LocalizationKey::MenuLanguage, Language::English) => "Language",
-        (LocalizationKey::MenuPositionReset, Language::Korean) => "위치 초기화",
-        (LocalizationKey::MenuPositionReset, Language::English) => "Reset position",
         (LocalizationKey::MenuDiagnostics, Language::Korean) => "진단",
         (LocalizationKey::MenuDiagnostics, Language::English) => "Diagnostics",
         (LocalizationKey::MenuUpdateCheck, Language::Korean) => "업데이트 확인",

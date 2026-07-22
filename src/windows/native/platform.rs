@@ -4,7 +4,7 @@ use std::{
 };
 
 use windows::{
-    core::{w, BOOL, PCWSTR, PWSTR},
+    core::{w, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND,
@@ -13,13 +13,12 @@ use windows::{
         Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage},
         Graphics::Gdi::{
             BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
-            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, EnumDisplayMonitors, FillRect,
-            GetDC, GetMonitorInfoW, GetStockObject, InvalidateRect, MonitorFromWindow, ReleaseDC,
-            SelectObject, SetBkMode, SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION,
-            CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_END_ELLIPSIS,
-            DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC,
-            HGDIOBJ, HMONITOR, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST, NULL_PEN,
-            OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
+            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetStockObject,
+            InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
+            BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
+            DIB_RGB_COLORS, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
+            FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN, OUT_DEFAULT_PRECIS,
+            PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
@@ -32,49 +31,40 @@ use windows::{
                 TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
             },
             HiDpi::{
-                GetDpiForMonitor, GetDpiForWindow, SetProcessDpiAwarenessContext,
-                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
+                GetDpiForWindow, SetProcessDpiAwarenessContext,
+                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
             },
             Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
             Shell::{ShellExecuteW, NIN_SELECT},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-                GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect, IsWindow, KillTimer,
-                LoadCursorW, MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW,
-                RegisterWindowMessageW, SendMessageW, SetParent, SetTimer, SetWindowLongPtrW,
-                SetWindowPos, ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW,
-                CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
-                HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG,
-                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-                SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
-                WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_EXITSIZEMOVE, WM_LBUTTONUP,
-                WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_RBUTTONUP,
-                WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-                WS_POPUP,
+                GetMessageW, GetParent, GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW,
+                MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
+                SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+                TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+                CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
+                MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+                SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
+                WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED,
+                WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP,
+                WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
 };
 
-use crate::{
-    diagnostics::{DiagnosticLogger, SafeDiagnostic},
-    DisplayMode, UsageLevel,
-};
+use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 
 use super::super::{
     is_exact_github_tag_page,
-    lifecycle::{
-        CleanupAction, DetachOutcome, FloatingTransition, NativeLifecycle, RecoveryDecision,
-        RecoveryEvent,
-    },
+    lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
     taskbar::attach_to_taskbar,
-    taskbar_widget::{select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk},
-    tray::{TrayIcon, TRAY_CALLBACK},
-    widget::{
-        clamp_floating_position, logical_to_physical, restore_monitor_relative_position,
-        save_monitor_relative_position, Rect, WidgetLayout,
+    taskbar_widget::{
+        select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
-    UiAction, UiBackend, UiSettings, UsageRowView, WidgetDataState, WidgetViewModel,
+    tray::{TrayIcon, TRAY_CALLBACK},
+    widget::{logical_to_physical, Rect},
+    UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
 };
 
 const TIMER_ID: usize = 1;
@@ -162,7 +152,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
                 return Err(io::Error::last_os_error());
             }
             state.lifecycle.timer_started();
-            apply_window_policy((&mut *state) as *mut NativeState<'_>, true)?;
+            apply_window_policy((&mut *state) as *mut NativeState<'_>)?;
             let _ = create_tooltip((&mut *state) as *mut NativeState<'_>);
 
             let mut message = MSG::default();
@@ -356,14 +346,7 @@ unsafe extern "system" fn widget_proc(
     }
     if !matches!(
         message,
-        WM_NCHITTEST
-            | WM_PAINT
-            | WM_DPICHANGED
-            | WM_EXITSIZEMOVE
-            | WM_CLOSE
-            | WM_MOUSEMOVE
-            | WM_MOUSELEAVE
-            | WM_TIMER
+        WM_PAINT | WM_DPICHANGED | WM_CLOSE | WM_MOUSEMOVE | WM_MOUSELEAVE | WM_TIMER
     ) {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
@@ -371,7 +354,6 @@ unsafe extern "system" fn widget_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
-        WM_NCHITTEST if (*pointer).taskbar_parent.is_none() => LRESULT(HTCAPTION as isize),
         WM_MOUSEMOVE if (*pointer).taskbar_parent.is_some() => {
             let state = &mut *pointer;
             state.hover.set_hovered(true);
@@ -407,12 +389,8 @@ unsafe extern "system" fn widget_proc(
         }
         WM_PAINT => {
             let snapshot = (*pointer).backend.snapshot();
-            if (*pointer).taskbar_parent.is_some() {
-                validate_paint(hwnd);
-                let _ = paint_taskbar_widget(hwnd, &snapshot, (*pointer).hover.value());
-            } else {
-                paint_widget(hwnd, &snapshot);
-            }
+            validate_paint(hwnd);
+            let _ = paint_taskbar_widget(hwnd, &snapshot, (*pointer).hover.value());
             LRESULT(0)
         }
         WM_DPICHANGED => {
@@ -427,14 +405,10 @@ unsafe extern "system" fn widget_proc(
             );
             LRESULT(0)
         }
-        WM_EXITSIZEMOVE if (*pointer).taskbar_parent.is_none() => {
-            persist_position(pointer);
-            LRESULT(0)
-        }
         WM_CLOSE => {
             let settings = (*pointer).backend.dispatch(UiAction::ToggleWidget);
             (*pointer).settings = settings;
-            let _ = apply_window_policy(pointer, false);
+            let _ = apply_window_policy(pointer);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
@@ -454,21 +428,19 @@ unsafe fn dispatch_menu(state_pointer: *mut NativeState<'_>, menu_id: u16) {
         PostQuitMessage(0);
         return;
     }
-    let force_floating_position = matches!(
-        action,
-        UiAction::ResetPosition | UiAction::SetDisplayMode(DisplayMode::Floating)
-    );
     let settings = (*state_pointer).backend.dispatch(action);
     (*state_pointer).settings = settings;
-    let _ = apply_window_policy(state_pointer, force_floating_position);
+    let _ = apply_window_policy(state_pointer);
 }
 
 unsafe fn create_widget(state_pointer: *mut NativeState<'_>) -> io::Result<HWND> {
-    let (owner, instance, settings) = {
+    let (owner, instance) = {
         let state = &*state_pointer;
-        (state.owner, state.instance, state.settings.clone())
+        (state.owner, state.instance)
     };
-    let layout = WidgetLayout::for_dpi(96);
+    // 작업표시줄 위젯의 기본 논리 크기. 실제 물리 크기는 작업표시줄 부착 시 보정됩니다.
+    let width = logical_to_physical(TASKBAR_WIDTH_LOGICAL, 96);
+    let height = logical_to_physical(48, 96);
     let widget = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         WIDGET_CLASS,
@@ -476,8 +448,8 @@ unsafe fn create_widget(state_pointer: *mut NativeState<'_>) -> io::Result<HWND>
         WS_POPUP | WS_CLIPSIBLINGS,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        layout.window.width(),
-        layout.window.height(),
+        width,
+        height,
         Some(owner),
         None,
         Some(instance),
@@ -490,7 +462,6 @@ unsafe fn create_widget(state_pointer: *mut NativeState<'_>) -> io::Result<HWND>
         state.taskbar_parent = None;
         state.lifecycle.widget_created();
     }
-    place_floating(&settings, widget)?;
     Ok(widget)
 }
 
@@ -597,23 +568,18 @@ unsafe fn recover_widget(
         state.taskbar_parent = None;
         state.lifecycle.widget_destroyed();
     }
-    let (decision, mode) = {
+    let decision = {
         let state = &*state_pointer;
-        (
-            state
-                .lifecycle
-                .recovery_decision(event, state.settings.widget_visible),
-            state.settings.display_mode,
-        )
+        state
+            .lifecycle
+            .recovery_decision(event, state.settings.widget_visible)
     };
     if matches!(decision, RecoveryDecision::RecreateAndApply) {
         create_widget(state_pointer)?;
         let _ = create_tooltip(state_pointer);
     }
-    if !matches!(decision, RecoveryDecision::NoWidgetNeeded)
-        && (matches!(event, RecoveryEvent::TaskbarCreated) || mode == DisplayMode::Taskbar)
-    {
-        apply_window_policy(state_pointer, false)?;
+    if !matches!(decision, RecoveryDecision::NoWidgetNeeded) {
+        apply_window_policy(state_pointer)?;
     }
     Ok(())
 }
@@ -633,10 +599,7 @@ unsafe fn refresh_tray(state_pointer: *mut NativeState<'_>, restore: bool) -> io
     result
 }
 
-unsafe fn apply_window_policy(
-    state_pointer: *mut NativeState<'_>,
-    force_floating_position: bool,
-) -> io::Result<()> {
+unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result<()> {
     if (*state_pointer).widget == HWND::default() {
         create_widget(state_pointer)?;
     }
@@ -648,116 +611,33 @@ unsafe fn apply_window_policy(
         let _ = ShowWindow(widget, SW_HIDE);
         return Ok(());
     }
-    if settings.display_mode == DisplayMode::Taskbar {
-        let parent_is_valid = previous_taskbar_parent.is_some_and(|parent| {
-            IsWindow(Some(parent)).as_bool() && GetParent(widget).ok() == Some(parent)
-        });
-        if !parent_is_valid {
-            (*state_pointer).taskbar_parent = None;
-        }
-        match set_layered_mode(widget, true) {
-            Ok(()) => {
-                if let Ok(parent) = attach_to_taskbar(
-                    widget,
-                    settings.taskbar_offset,
-                    settings.monitor_device.as_deref(),
-                ) {
-                    let state = &mut *state_pointer;
-                    state.taskbar_parent = Some(parent);
-                    state.lifecycle.widget_attached_to_taskbar();
-                    let _ = ShowWindow(widget, SW_SHOWNA);
-                    let snapshot = state.backend.snapshot();
-                    match paint_taskbar_widget(widget, &snapshot, state.hover.value()) {
-                        Ok(()) => return Ok(()),
-                        Err(error) => log_taskbar_render_error("compose", &error),
-                    }
+    let parent_is_valid = previous_taskbar_parent.is_some_and(|parent| {
+        IsWindow(Some(parent)).as_bool() && GetParent(widget).ok() == Some(parent)
+    });
+    if !parent_is_valid {
+        (*state_pointer).taskbar_parent = None;
+    }
+    match set_layered_mode(widget, true) {
+        Ok(()) => {
+            if let Ok(parent) = attach_to_taskbar(widget, settings.taskbar_offset) {
+                let state = &mut *state_pointer;
+                state.taskbar_parent = Some(parent);
+                state.lifecycle.widget_attached_to_taskbar();
+                let _ = ShowWindow(widget, SW_SHOWNA);
+                let snapshot = state.backend.snapshot();
+                match paint_taskbar_widget(widget, &snapshot, state.hover.value()) {
+                    Ok(()) => return Ok(()),
+                    Err(error) => log_taskbar_render_error("compose", &error),
                 }
             }
-            Err(error) => log_taskbar_render_error("style", &error),
         }
+        Err(error) => log_taskbar_render_error("style", &error),
     }
-    transition_to_floating(
-        state_pointer,
-        force_floating_position || previous_taskbar_parent.is_some(),
-    )?;
+    // 작업표시줄 부착에 실패하면 위젯을 숨기고 트레이 아이콘만 유지합니다.
+    // 1초 타이머와 TaskbarCreated 메시지에서 작업표시줄 재부착을 계속 재시도합니다.
     let widget = (*state_pointer).widget;
-    let _ = ShowWindow(widget, SW_SHOWNA);
+    let _ = ShowWindow(widget, SW_HIDE);
     Ok(())
-}
-
-unsafe fn transition_to_floating(
-    state_pointer: *mut NativeState<'_>,
-    force_position: bool,
-) -> io::Result<()> {
-    let (widget, owner, settings, recorded_attached) = {
-        let state = &*state_pointer;
-        (
-            state.widget,
-            state.owner,
-            state.settings.clone(),
-            state.taskbar_parent.is_some(),
-        )
-    };
-    let attached =
-        recorded_attached || GetParent(widget).ok().is_some_and(|parent| parent != owner);
-    let outcome = if attached {
-        detach_widget(widget)
-    } else {
-        DetachOutcome::DetachedAndVerified
-    };
-    if matches!(
-        NativeLifecycle::floating_transition(outcome),
-        FloatingTransition::RecreateAndPlace
-    ) {
-        if IsWindow(Some(widget)).as_bool() {
-            let _ = DestroyWindow(widget);
-        }
-        create_widget(state_pointer)?;
-        return transition_to_floating(state_pointer, true);
-    }
-    let style = GetWindowLongPtrW(widget, GWL_STYLE) as u32;
-    SetWindowLongPtrW(
-        widget,
-        GWL_STYLE,
-        ((style & !WS_CHILD.0) | WS_POPUP.0 | WS_CLIPSIBLINGS.0) as isize,
-    );
-    if set_layered_mode(widget, false).is_err() {
-        if IsWindow(Some(widget)).as_bool() {
-            let _ = DestroyWindow(widget);
-        }
-        create_widget(state_pointer)?;
-        return transition_to_floating(state_pointer, true);
-    }
-    (*state_pointer).taskbar_parent = None;
-    let layout = WidgetLayout::for_dpi(GetDpiForWindow(widget).max(96));
-    let _ = SetWindowPos(
-        widget,
-        Some(if settings.always_on_top {
-            HWND_TOPMOST
-        } else {
-            HWND_NOTOPMOST
-        }),
-        0,
-        0,
-        layout.window.width(),
-        layout.window.height(),
-        SWP_NOMOVE | SWP_FRAMECHANGED | SWP_NOACTIVATE,
-    );
-    if force_position {
-        place_floating(&settings, widget)?;
-    }
-    Ok(())
-}
-
-unsafe fn detach_widget(widget: HWND) -> DetachOutcome {
-    if SetParent(widget, None).is_err() {
-        return DetachOutcome::ApiFailed;
-    }
-    if GetParent(widget).is_ok() {
-        DetachOutcome::ParentRemains
-    } else {
-        DetachOutcome::DetachedAndVerified
-    }
 }
 
 unsafe fn set_layered_mode(widget: HWND, enabled: bool) -> io::Result<()> {
@@ -781,164 +661,6 @@ unsafe fn set_layered_mode(widget: HWND, enabled: bool) -> io::Result<()> {
         SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
     )
     .map_err(win_error)
-}
-
-unsafe fn place_floating(settings: &UiSettings, hwnd: HWND) -> io::Result<()> {
-    let monitor = settings
-        .monitor_device
-        .as_deref()
-        .and_then(|device| find_monitor_by_device(device))
-        .unwrap_or_else(|| MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST));
-    let mut monitor_info = MONITORINFOEXW::default();
-    monitor_info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-    if !GetMonitorInfoW(monitor, &mut monitor_info.monitorInfo).as_bool() {
-        return Err(io::Error::last_os_error());
-    }
-    let work = monitor_info.monitorInfo.rcWork;
-    let dpi = monitor_dpi(monitor);
-    let layout = WidgetLayout::for_dpi(dpi);
-    let desired = settings
-        .floating_position
-        .map(|position| restore_monitor_relative_position(position, (work.left, work.top), dpi))
-        .unwrap_or((
-            work.right - layout.window.width() - logical_to_physical(24, dpi),
-            work.top + logical_to_physical(24, dpi),
-        ));
-    let position = clamp_floating_position(
-        desired,
-        (layout.window.width(), layout.window.height()),
-        Rect::new(work.left, work.top, work.right, work.bottom),
-    );
-    MoveWindow(
-        hwnd,
-        position.0,
-        position.1,
-        layout.window.width(),
-        layout.window.height(),
-        false,
-    )?;
-    let actual_dpi = GetDpiForWindow(hwnd).max(96);
-    if actual_dpi != dpi {
-        let actual_layout = WidgetLayout::for_dpi(actual_dpi);
-        let desired = settings
-            .floating_position
-            .map(|saved| {
-                restore_monitor_relative_position(saved, (work.left, work.top), actual_dpi)
-            })
-            .unwrap_or(position);
-        let actual_position = clamp_floating_position(
-            desired,
-            (actual_layout.window.width(), actual_layout.window.height()),
-            Rect::new(work.left, work.top, work.right, work.bottom),
-        );
-        MoveWindow(
-            hwnd,
-            actual_position.0,
-            actual_position.1,
-            actual_layout.window.width(),
-            actual_layout.window.height(),
-            false,
-        )?;
-    }
-    Ok(())
-}
-
-unsafe fn monitor_dpi(monitor: HMONITOR) -> u32 {
-    let mut dpi_x = 96;
-    let mut dpi_y = 96;
-    if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y).is_ok() {
-        dpi_x.max(96)
-    } else {
-        96
-    }
-}
-
-struct MonitorSearch {
-    device: Vec<u16>,
-    found: Option<HMONITOR>,
-}
-
-unsafe fn find_monitor_by_device(device: &str) -> Option<HMONITOR> {
-    let mut search = MonitorSearch {
-        device: device.encode_utf16().collect(),
-        found: None,
-    };
-    let _ = EnumDisplayMonitors(
-        None,
-        None,
-        Some(monitor_search_callback),
-        LPARAM((&mut search as *mut MonitorSearch) as isize),
-    );
-    search.found
-}
-
-unsafe extern "system" fn monitor_search_callback(
-    monitor: HMONITOR,
-    _dc: HDC,
-    _rect: *mut RECT,
-    data: LPARAM,
-) -> BOOL {
-    let search = &mut *(data.0 as *mut MonitorSearch);
-    let mut info = MONITORINFOEXW::default();
-    info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-    if GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
-        let end = info
-            .szDevice
-            .iter()
-            .position(|character| *character == 0)
-            .unwrap_or(info.szDevice.len());
-        if info.szDevice[..end] == search.device {
-            search.found = Some(monitor);
-            return BOOL(0);
-        }
-    }
-    BOOL(1)
-}
-
-unsafe fn persist_position(state_pointer: *mut NativeState<'_>) {
-    let widget = (*state_pointer).widget;
-    let mut rect = RECT::default();
-    if GetWindowRect(widget, &mut rect).is_err() {
-        return;
-    }
-    let dpi = GetDpiForWindow(widget).max(1);
-    let monitor = MonitorFromWindow(widget, MONITOR_DEFAULTTONEAREST);
-    let mut info = MONITORINFOEXW::default();
-    info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-    let (work_origin, device) = if GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
-        let end = info
-            .szDevice
-            .iter()
-            .position(|character| *character == 0)
-            .unwrap_or(info.szDevice.len());
-        (
-            (info.monitorInfo.rcWork.left, info.monitorInfo.rcWork.top),
-            Some(String::from_utf16_lossy(&info.szDevice[..end])),
-        )
-    } else {
-        ((0, 0), None)
-    };
-    let position = save_monitor_relative_position((rect.left, rect.top), work_origin, dpi);
-    let settings = (*state_pointer)
-        .backend
-        .dispatch(UiAction::SaveFloatingPosition {
-            position,
-            monitor_device: device,
-        });
-    (*state_pointer).settings = settings;
-}
-
-unsafe fn paint_widget(hwnd: HWND, view: &WidgetViewModel) {
-    let mut paint = PAINTSTRUCT::default();
-    let dc = BeginPaint(hwnd, &mut paint);
-    let dpi = GetDpiForWindow(hwnd).max(96);
-    let mut client = RECT::default();
-    if GetClientRect(hwnd, &mut client).is_err() {
-        let _ = EndPaint(hwnd, &paint);
-        return;
-    }
-    paint_widget_content(dc, client, dpi, view);
-    let _ = EndPaint(hwnd, &paint);
 }
 
 unsafe fn validate_paint(hwnd: HWND) {
@@ -967,8 +689,8 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) ->
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid layered bitmap size"))?;
 
-    let window_dc = GetDC(Some(hwnd));
-    let memory_dc = CreateCompatibleDC(Some(window_dc));
+    let screen_dc = GetDC(None);
+    let memory_dc = CreateCompatibleDC(Some(screen_dc));
     let bitmap_info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -994,7 +716,7 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) ->
         Err(error) => {
             let error = win_error(error);
             let _ = DeleteDC(memory_dc);
-            let _ = ReleaseDC(Some(hwnd), window_dc);
+            let _ = ReleaseDC(None, screen_dc);
             return Err(error);
         }
     };
@@ -1003,7 +725,7 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) ->
             let _ = DeleteObject(HGDIOBJ(bitmap.0));
         }
         let _ = DeleteDC(memory_dc);
-        let _ = ReleaseDC(Some(hwnd), window_dc);
+        let _ = ReleaseDC(None, screen_dc);
         return Err(io::Error::last_os_error());
     }
 
@@ -1041,7 +763,7 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) ->
     };
     let result = UpdateLayeredWindow(
         hwnd,
-        Some(window_dc),
+        Some(screen_dc),
         None,
         Some(&size),
         Some(memory_dc),
@@ -1054,7 +776,7 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) ->
     SelectObject(memory_dc, old_bitmap);
     let _ = DeleteObject(HGDIOBJ(bitmap.0));
     let _ = DeleteDC(memory_dc);
-    let _ = ReleaseDC(Some(hwnd), window_dc);
+    let _ = ReleaseDC(None, screen_dc);
     result
 }
 
@@ -1285,210 +1007,6 @@ fn log_taskbar_render_error(stage: &'static str, error: &io::Error) {
     });
 }
 
-unsafe fn paint_widget_content(dc: HDC, client: RECT, dpi: u32, view: &WidgetViewModel) {
-    let layout = WidgetLayout::for_dpi(dpi);
-    let background = CreateSolidBrush(COLORREF(0x0023_211f));
-    FillRect(dc, &client, background);
-    let _ = DeleteObject(HGDIOBJ(background.0));
-    let font_height = -((13_i64 * i64::from(dpi) + 48) / 96) as i32;
-    let font = CreateFontW(
-        font_height,
-        0,
-        0,
-        0,
-        FW_NORMAL.0 as i32,
-        0,
-        0,
-        0,
-        DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS,
-        PROOF_QUALITY,
-        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-        w!("Segoe UI"),
-    );
-    let previous = SelectObject(dc, HGDIOBJ(font.0));
-    let _ = SetBkMode(dc, TRANSPARENT);
-    if client.bottom - client.top <= logical_to_physical(64, dpi) {
-        // Windows 10의 낮은 작업 표시줄에서는 상태 문구를 생략한 2행 축약 뷰를 사용합니다.
-        let margin = logical_to_physical(8, dpi);
-        let gap = logical_to_physical(1, dpi);
-        let midpoint = (client.bottom - client.top) / 2;
-        if let Some(row) = &view.primary {
-            draw_compact_row(
-                dc,
-                row,
-                Rect::new(margin, gap, client.right - margin, midpoint - gap),
-                dpi,
-            );
-        }
-        if let Some(row) = &view.secondary {
-            draw_compact_row(
-                dc,
-                row,
-                Rect::new(
-                    margin,
-                    midpoint + gap,
-                    client.right - margin,
-                    client.bottom - gap,
-                ),
-                dpi,
-            );
-        }
-    } else {
-        if let Some(row) = &view.primary {
-            draw_row(dc, row, layout.primary_bar, dpi);
-        }
-        if let Some(row) = &view.secondary {
-            draw_row(dc, row, layout.secondary_bar, dpi);
-        }
-        let status = if view.last_success.is_empty() {
-            view.status.clone()
-        } else {
-            format!("{} · {}", view.status, view.last_success)
-        };
-        let mut status_rect = native_rect(layout.status);
-        draw_text(
-            dc,
-            &status,
-            &mut status_rect,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            COLORREF(0x00b8_b8b8),
-        );
-    }
-    SelectObject(dc, previous);
-    let _ = DeleteObject(HGDIOBJ(font.0));
-}
-
-unsafe fn draw_compact_row(
-    dc: windows::Win32::Graphics::Gdi::HDC,
-    row: &UsageRowView,
-    bounds: Rect,
-    dpi: u32,
-) {
-    let marker = match row.level {
-        UsageLevel::Stable => "○",
-        UsageLevel::Normal => "■",
-        UsageLevel::Caution => "▲",
-        UsageLevel::Danger => "!",
-        UsageLevel::Limited => "×",
-    };
-    let color = level_color(row.level);
-    let bar_height = logical_to_physical(3, dpi);
-    let label_reserve = logical_to_physical(64, dpi);
-    let percent_width = logical_to_physical(60, dpi);
-    let bar = Rect::new(
-        bounds.left,
-        bounds.bottom - bar_height,
-        bounds.right,
-        bounds.bottom,
-    );
-    let mut label = RECT {
-        left: bounds.left,
-        top: bounds.top,
-        right: bounds.right - label_reserve,
-        bottom: bar.top,
-    };
-    draw_text(
-        dc,
-        &format!("{marker} {}", row.label),
-        &mut label,
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-        COLORREF(0x00f0_f0f0),
-    );
-    let mut percent = RECT {
-        left: bounds.right - percent_width,
-        top: bounds.top,
-        right: bounds.right,
-        bottom: bar.top,
-    };
-    draw_text(
-        dc,
-        &row.percent_text,
-        &mut percent,
-        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
-        color,
-    );
-    let background = CreateSolidBrush(COLORREF(0x0045_4545));
-    FillRect(dc, &native_rect(bar), background);
-    let _ = DeleteObject(HGDIOBJ(background.0));
-    let width =
-        (f64::from(bar.width()) * row.used_percent.clamp(0.0, 100.0) / 100.0).round() as i32;
-    if width > 0 {
-        let fill = CreateSolidBrush(color);
-        FillRect(
-            dc,
-            &RECT {
-                right: bar.left + width,
-                ..native_rect(bar)
-            },
-            fill,
-        );
-        let _ = DeleteObject(HGDIOBJ(fill.0));
-    }
-}
-
-unsafe fn draw_row(
-    dc: windows::Win32::Graphics::Gdi::HDC,
-    row: &UsageRowView,
-    bar: Rect,
-    dpi: u32,
-) {
-    let scale = |value: i32| ((i64::from(value) * i64::from(dpi) + 48) / 96) as i32;
-    let top = bar.top - scale(20);
-    let marker = match row.level {
-        UsageLevel::Stable => "○",
-        UsageLevel::Normal => "■",
-        UsageLevel::Caution => "▲",
-        UsageLevel::Danger => "!",
-        UsageLevel::Limited => "×",
-    };
-    let color = level_color(row.level);
-    let mut label_rect = RECT {
-        left: bar.left,
-        top,
-        right: bar.right - scale(70),
-        bottom: bar.top,
-    };
-    draw_text(
-        dc,
-        &format!("{marker} {} · {}", row.label, row.reset_text),
-        &mut label_rect,
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-        COLORREF(0x00f0_f0f0),
-    );
-    let mut percent_rect = RECT {
-        left: bar.right - scale(68),
-        top,
-        right: bar.right,
-        bottom: bar.top,
-    };
-    draw_text(
-        dc,
-        &row.percent_text,
-        &mut percent_rect,
-        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
-        color,
-    );
-    let background = CreateSolidBrush(COLORREF(0x0045_4545));
-    FillRect(dc, &native_rect(bar), background);
-    let _ = DeleteObject(HGDIOBJ(background.0));
-    let used = row.used_percent.clamp(0.0, 100.0);
-    let width = (f64::from(bar.width()) * used / 100.0).round() as i32;
-    if width > 0 {
-        let fill = CreateSolidBrush(color);
-        FillRect(
-            dc,
-            &RECT {
-                right: bar.left + width,
-                ..native_rect(bar)
-            },
-            fill,
-        );
-        let _ = DeleteObject(HGDIOBJ(fill.0));
-    }
-}
-
 unsafe fn draw_text(
     dc: windows::Win32::Graphics::Gdi::HDC,
     value: &str,
@@ -1507,16 +1025,6 @@ const fn native_rect(rect: Rect) -> RECT {
         top: rect.top,
         right: rect.right,
         bottom: rect.bottom,
-    }
-}
-
-const fn level_color(level: UsageLevel) -> COLORREF {
-    match level {
-        UsageLevel::Stable => COLORREF(0x0085_d96b),
-        UsageLevel::Normal => COLORREF(0x00dc_b45c),
-        UsageLevel::Caution => COLORREF(0x0048_b8f0),
-        UsageLevel::Danger => COLORREF(0x0045_6df2),
-        UsageLevel::Limited => COLORREF(0x00a4_55d8),
     }
 }
 

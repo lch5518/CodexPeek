@@ -1,8 +1,8 @@
 # Codex Usage Monitor
 
 Codex Usage Monitor is a small native Windows widget that shows the current Codex
-primary and secondary usage windows in the taskbar, a floating window, and the system
-tray. It communicates with the installed Codex CLI's official app-server protocol; it
+primary and secondary usage windows in the taskbar and the system tray. It communicates with
+the installed Codex CLI's official app-server protocol; it
 does not scrape `auth.json` or run a Codex task.
 
 ![Codex Usage Monitor taskbar widget](docs/images/taskbar-widget.png)
@@ -258,19 +258,17 @@ for a no-UI diagnostic check; `--startup` is reserved for the Windows startup re
 Use `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
 `cargo test --all-targets`, and `cargo build --release` to verify a source build.
 
-The taskbar widget shows two usage rows. Floating mode adds connection and last-success
-information. The tray badge reflects the higher percentage. Status thresholds are Stable
-0–49%, Normal 50–74%, Caution 75–89%, Danger 90–99%, and Limited 100%+. Percentages above
-100 remain visible while only the bar is capped. If taskbar discovery, parenting, geometry,
-or Explorer recovery fails, the application keeps its tray icon and safely falls back to
-the floating widget.
+The taskbar widget shows two usage rows. The tray badge reflects the higher percentage. Status
+thresholds are Stable 0–49%, Normal 50–74%, Caution 75–89%, Danger 90–99%, and Limited 100%+.
+Percentages above 100 remain visible while only the bar is capped. If taskbar discovery,
+parenting, geometry, or Explorer recovery fails, the application hides the widget, keeps its
+tray icon, and keeps retrying taskbar attachment.
 
 ### Tray menu
 
-The menu provides Refresh now; Taskbar/Floating display; 1/5/10/15/30-minute intervals;
-Start with Windows; startup as Widget/Tray only; one-shot authentication refresh;
-automatic authentication refresh; Always on top; Automatic/Korean/English language;
-Reset position; Diagnostics; Check for updates; Show/Hide widget; and Exit.
+The menu provides Refresh now; 1/5/10/15/30-minute intervals; Start with Windows; startup as
+Widget/Tray only; one-shot authentication refresh; automatic authentication refresh;
+Automatic/Korean/English language; Diagnostics; Check for updates; Show/Hide widget; and Exit.
 
 Only one RPC runs at a time, manual refresh has a 10-second cooldown, and failed polls back
 off at 1/2/4/8/15 minutes. Last good data is preserved and becomes stale after the greater
@@ -302,8 +300,8 @@ replaces, or executes an update.
 
 Run `codex --version`, `where.exe codex`, and then `codex-usage-monitor.exe --diagnose` when
 the CLI is missing or unsupported. Complete login through the Codex CLI itself when logged
-out. A floating window after a shell or geometry failure is an intentional fallback; use
-Reset position if the saved placement is no longer useful.
+out. If the taskbar widget is unavailable after an Explorer restart or taskbar geometry change,
+the tray icon remains available while the application retries attachment.
 
 The v1 scope excludes self-update, direct `wham/usage` fallback, Claude/Gemini support,
 installers, WinGet, and code signing. Automated tests do not claim completion of the manual

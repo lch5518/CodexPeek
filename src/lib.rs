@@ -9,10 +9,7 @@ mod poller;
 mod update_check;
 pub mod windows;
 
-pub use config::{
-    AsyncSettingsWriter, DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore,
-    StartupView,
-};
+pub use config::{AsyncSettingsWriter, LanguagePreference, Settings, SettingsStore, StartupView};
 pub use diagnostics::{
     inspect_settings_for_diagnostics, DiagnosticCode, DiagnosticLogger, SafeDiagnostic,
 };

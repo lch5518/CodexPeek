@@ -215,7 +215,6 @@ impl UiBackend for AppRuntime {
             UiAction::Refresh => {
                 self.poller.refresh();
             }
-            UiAction::SetDisplayMode(mode) => self.settings.display_mode = mode,
             UiAction::SetRefreshInterval(minutes) if matches!(minutes, 1 | 5 | 10 | 15 | 30) => {
                 if self.settings.refresh_interval_minutes != minutes {
                     self.settings.refresh_interval_minutes = minutes;
@@ -246,21 +245,7 @@ impl UiBackend for AppRuntime {
                     .poller
                     .set_auto_auth_refresh(self.settings.auto_auth_refresh);
             }
-            UiAction::ToggleAlwaysOnTop => {
-                self.settings.always_on_top = !self.settings.always_on_top;
-            }
             UiAction::SetLanguage(language) => self.settings.language = language,
-            UiAction::ResetPosition => {
-                self.settings.floating_position = None;
-                self.settings.monitor_device = None;
-            }
-            UiAction::SaveFloatingPosition {
-                position,
-                monitor_device,
-            } => {
-                self.settings.floating_position = Some(position);
-                self.settings.monitor_device = monitor_device;
-            }
             UiAction::RunDiagnostics => {
                 let language = effective_language(self.settings.language);
                 thread::spawn(move || {
@@ -304,18 +289,14 @@ fn ui_settings(
     update_status: UpdatePresentationStatus,
 ) -> UiSettings {
     UiSettings {
-        display_mode: settings.display_mode,
         widget_visible: settings.widget_visible && !startup_hidden,
         refresh_interval_minutes: settings.refresh_interval_minutes,
-        always_on_top: settings.always_on_top,
         start_with_windows: settings.start_with_windows,
         startup_view: settings.startup_view,
         auto_auth_refresh: settings.auto_auth_refresh,
         language: settings.language,
         resolved_language: effective_language(settings.language),
         taskbar_offset: settings.taskbar_offset,
-        floating_position: settings.floating_position,
-        monitor_device: settings.monitor_device.clone(),
         update_status,
     }
 }

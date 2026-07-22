@@ -35,26 +35,6 @@ pub enum CleanupAction {
     DestroyOwner,
 }
 
-/// 작업 표시줄 부모 해제 결과입니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DetachOutcome {
-    /// API가 성공했고 최종 부모가 없음을 확인했습니다.
-    DetachedAndVerified,
-    /// API 호출 뒤에도 부모가 남아 있습니다.
-    ParentRemains,
-    /// 부모 해제 API가 실패했습니다.
-    ApiFailed,
-}
-
-/// 부동 창 전환 시 사용할 창 처리 방식입니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FloatingTransition {
-    /// 기존 위젯을 다시 배치합니다.
-    ReuseAndPlace,
-    /// 기존 창을 버리고 새 부동 위젯을 만들어 배치합니다.
-    RecreateAndPlace,
-}
-
 /// 네이티브 리소스 소유와 최근 작업 표시줄 연결 상태입니다.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NativeLifecycle {
@@ -114,16 +94,6 @@ impl NativeLifecycle {
             RecoveryDecision::Reapply
         } else {
             RecoveryDecision::Keep
-        }
-    }
-
-    /// 부모 해제 검증 결과를 부동 전환 방식으로 변환합니다.
-    pub const fn floating_transition(outcome: DetachOutcome) -> FloatingTransition {
-        match outcome {
-            DetachOutcome::DetachedAndVerified => FloatingTransition::ReuseAndPlace,
-            DetachOutcome::ParentRemains | DetachOutcome::ApiFailed => {
-                FloatingTransition::RecreateAndPlace
-            }
         }
     }
 

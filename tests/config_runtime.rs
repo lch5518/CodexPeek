@@ -4,8 +4,7 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    AsyncSettingsWriter, DisplayMode, LanguagePreference, LogicalPosition, Settings, SettingsStore,
-    StartupView,
+    AsyncSettingsWriter, LanguagePreference, Settings, SettingsStore, StartupView,
 };
 
 fn test_root(label: &str) -> std::path::PathBuf {
@@ -40,12 +39,8 @@ fn settings_defaults_match_product_policy() {
     let settings = Settings::default();
     assert_eq!(settings.schema_version, 1);
     assert_eq!(settings.refresh_interval_minutes, 5);
-    assert_eq!(settings.display_mode, DisplayMode::Taskbar);
     assert!(settings.widget_visible);
     assert_eq!(settings.taskbar_offset, 0);
-    assert_eq!(settings.monitor_device, None);
-    assert_eq!(settings.floating_position, None);
-    assert!(settings.always_on_top);
     assert!(!settings.start_with_windows);
     assert_eq!(settings.startup_view, StartupView::Widget);
     assert!(settings.auto_auth_refresh);
@@ -126,8 +121,6 @@ fn settings_round_trip_and_no_temporary_file_remains() {
     let root = test_root("round-trip");
     let store = SettingsStore::for_root(&root);
     let settings = Settings {
-        display_mode: DisplayMode::Floating,
-        floating_position: Some(LogicalPosition { x: 123, y: -456 }),
         language: LanguagePreference::Korean,
         refresh_interval_minutes: 30,
         ..Settings::default()
@@ -174,18 +167,46 @@ fn invalid_settings_are_backed_up_and_reset_to_defaults() {
 }
 
 #[test]
-fn unsupported_schema_and_unreasonable_coordinates_are_rejected() {
+fn unsupported_schema_is_rejected() {
     let root = test_root("validation");
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("settings.json"), r#"{"schema_version":2}"#).unwrap();
     let store = SettingsStore::for_root(&root);
     assert_eq!(store.load().unwrap(), Settings::default());
 
-    let invalid = Settings {
-        floating_position: Some(LogicalPosition { x: 2_000_001, y: 0 }),
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_floating_settings_are_ignored_when_loading() {
+    let root = test_root("legacy-floating");
+    fs::create_dir_all(&root).unwrap();
+    let store = SettingsStore::for_root(&root);
+    let mut legacy = serde_json::to_value(Settings {
+        refresh_interval_minutes: 10,
         ..Settings::default()
-    };
-    assert!(store.save(&invalid).is_err());
+    })
+    .unwrap();
+    legacy["display_mode"] = serde_json::json!("Floating");
+    legacy["floating_position"] = serde_json::json!({"x": 123, "y": -456});
+    legacy["always_on_top"] = serde_json::json!(true);
+    legacy["monitor_device"] = serde_json::json!("display-1");
+    fs::write(store.path(), serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+    let settings = store.load().unwrap();
+    assert_eq!(settings.refresh_interval_minutes, 10);
+    assert_eq!(settings.taskbar_offset, 0);
+    store.save(&settings).unwrap();
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+    for field in [
+        "display_mode",
+        "floating_position",
+        "always_on_top",
+        "monitor_device",
+    ] {
+        assert!(persisted.get(field).is_none(), "{field}");
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -271,12 +292,7 @@ fn complete_json_field_mutations_are_backed_up_exactly() {
     let cases = vec![
         ("schema", serde_json::json!(2)),
         ("interval", serde_json::json!(2)),
-        ("monitor_empty", serde_json::json!("")),
-        ("monitor_whitespace", serde_json::json!("   \t")),
-        ("monitor_long", serde_json::json!("x".repeat(513))),
-        ("monitor_control", serde_json::json!("a\nb")),
         ("offset", serde_json::json!(2_000_001)),
-        ("position", serde_json::json!({"x": 2_000_001, "y": 0})),
     ];
     for (name, value) in cases {
         let root = test_root(name);
@@ -286,8 +302,6 @@ fn complete_json_field_mutations_are_backed_up_exactly() {
         match name {
             "schema" => json["schema_version"] = value,
             "interval" => json["refresh_interval_minutes"] = value,
-            name if name.starts_with("monitor") => json["monitor_device"] = value,
-            "position" => json["floating_position"] = value,
             _ => json["taskbar_offset"] = value,
         }
         let bytes = serde_json::to_vec(&json).unwrap();

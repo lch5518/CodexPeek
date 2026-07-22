@@ -17,16 +17,6 @@ const MAX_LOGICAL_COORDINATE: i32 = 2_000_000;
 static FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
 
-/// 위젯 표시 위치 방식을 나타냅니다.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DisplayMode {
-    /// 작업 표시줄에 위젯을 표시합니다.
-    Taskbar,
-    /// 독립된 떠 있는 위젯을 표시합니다.
-    Floating,
-}
-
 /// 시작할 때 표시할 기본 화면을 나타냅니다.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -49,15 +39,6 @@ pub enum LanguagePreference {
     English,
 }
 
-/// DPI에 독립적인 떠 있는 위젯의 논리 좌표입니다.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct LogicalPosition {
-    /// 화면 왼쪽에서 떨어진 논리 픽셀 거리입니다.
-    pub x: i32,
-    /// 화면 위쪽에서 떨어진 논리 픽셀 거리입니다.
-    pub y: i32,
-}
-
 /// 영속화하는 사용자 환경설정입니다.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Settings {
@@ -65,18 +46,10 @@ pub struct Settings {
     pub schema_version: u32,
     /// 자동 새로 고침 주기(분)입니다.
     pub refresh_interval_minutes: u32,
-    /// 위젯 표시 방식입니다.
-    pub display_mode: DisplayMode,
     /// 위젯 표시 여부입니다.
     pub widget_visible: bool,
     /// 작업 표시줄에서 적용할 논리 픽셀 오프셋입니다.
     pub taskbar_offset: i32,
-    /// 마지막으로 사용한 모니터 장치 이름입니다.
-    pub monitor_device: Option<String>,
-    /// 떠 있는 위젯의 저장 좌표입니다.
-    pub floating_position: Option<LogicalPosition>,
-    /// 떠 있는 위젯을 항상 위에 표시할지 여부입니다.
-    pub always_on_top: bool,
     /// Windows 로그인 때 시작할지 여부입니다.
     pub start_with_windows: bool,
     /// 시작 시 표시할 화면입니다.
@@ -94,12 +67,8 @@ impl Default for Settings {
         Self {
             schema_version: SCHEMA_VERSION,
             refresh_interval_minutes: 5,
-            display_mode: DisplayMode::Taskbar,
             widget_visible: true,
             taskbar_offset: 0,
-            monitor_device: None,
-            floating_position: None,
-            always_on_top: true,
             start_with_windows: false,
             startup_view: StartupView::Widget,
             auto_auth_refresh: true,
@@ -115,13 +84,6 @@ impl Settings {
             || !matches!(self.refresh_interval_minutes, 1 | 5 | 10 | 15 | 30)
             || self.taskbar_offset < 0
             || self.taskbar_offset > MAX_LOGICAL_COORDINATE
-            || self.monitor_device.as_ref().is_some_and(|value| {
-                value.trim().is_empty() || value.len() > 512 || value.contains(['\r', '\n', '\0'])
-            })
-            || self.floating_position.is_some_and(|value| {
-                value.x.unsigned_abs() > MAX_LOGICAL_COORDINATE as u32
-                    || value.y.unsigned_abs() > MAX_LOGICAL_COORDINATE as u32
-            })
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

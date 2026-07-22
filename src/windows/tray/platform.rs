@@ -18,13 +18,12 @@ use windows::{
     },
 };
 
-use crate::{DisplayMode, Language, LanguagePreference, StartupView};
+use crate::{Language, LanguagePreference, StartupView};
 
 use super::super::{
-    UiSettings, MENU_ALWAYS_ON_TOP, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH,
-    MENU_DIAGNOSTICS, MENU_DISPLAY_FLOATING, MENU_DISPLAY_TASKBAR, MENU_EXIT, MENU_INTERVAL_1,
-    MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_AUTO,
-    MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_POSITION_RESET, MENU_REFRESH,
+    UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS,
+    MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
+    MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH,
     MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
 };
 
@@ -77,26 +76,6 @@ impl TrayIcon {
                 false,
             )?;
             separator(menu)?;
-            add(
-                menu,
-                MENU_DISPLAY_TASKBAR,
-                if ko {
-                    "표시: 작업 표시줄"
-                } else {
-                    "Display: taskbar"
-                },
-                settings.display_mode == DisplayMode::Taskbar,
-            )?;
-            add(
-                menu,
-                MENU_DISPLAY_FLOATING,
-                if ko {
-                    "표시: 부동 창"
-                } else {
-                    "Display: floating"
-                },
-                settings.display_mode == DisplayMode::Floating,
-            )?;
             for (id, minutes) in [
                 (MENU_INTERVAL_1, 1),
                 (MENU_INTERVAL_5, 5),
@@ -168,12 +147,6 @@ impl TrayIcon {
             )?;
             add(
                 menu,
-                MENU_ALWAYS_ON_TOP,
-                if ko { "항상 위" } else { "Always on top" },
-                settings.always_on_top,
-            )?;
-            add(
-                menu,
                 MENU_LANGUAGE_AUTO,
                 if ko {
                     "언어: 자동"
@@ -203,16 +176,6 @@ impl TrayIcon {
                 settings.language == LanguagePreference::English,
             )?;
             separator(menu)?;
-            add(
-                menu,
-                MENU_POSITION_RESET,
-                if ko {
-                    "위치 초기화"
-                } else {
-                    "Reset position"
-                },
-                false,
-            )?;
             add(
                 menu,
                 MENU_DIAGNOSTICS,

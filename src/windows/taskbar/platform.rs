@@ -4,9 +4,6 @@ use windows::{
     core::{w, PCWSTR},
     Win32::{
         Foundation::{HWND, RECT},
-        Graphics::Gdi::{
-            GetMonitorInfoW, MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
-        },
         UI::{
             HiDpi::GetDpiForWindow,
             WindowsAndMessaging::{
@@ -31,17 +28,8 @@ pub fn taskbar_available() -> bool {
     }
 }
 
-pub(crate) unsafe fn attach_to_taskbar(
-    hwnd: HWND,
-    offset: i32,
-    preferred_device: Option<&str>,
-) -> io::Result<HWND> {
-    let mut taskbars = taskbars();
-    taskbars.sort_by_key(|taskbar| {
-        u8::from(
-            preferred_device.is_none() || monitor_device(*taskbar).as_deref() != preferred_device,
-        )
-    });
+pub(crate) unsafe fn attach_to_taskbar(hwnd: HWND, offset: i32) -> io::Result<HWND> {
+    let taskbars = taskbars();
     for taskbar in taskbars {
         let Some(notification) = notification_area(taskbar) else {
             continue;
@@ -193,21 +181,6 @@ unsafe fn notification_area(taskbar: HWND) -> Option<HWND> {
         }
     }
     None
-}
-
-unsafe fn monitor_device(window: HWND) -> Option<String> {
-    let monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
-    let mut info = MONITORINFOEXW::default();
-    info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
-    if !GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
-        return None;
-    }
-    let end = info
-        .szDevice
-        .iter()
-        .position(|character| *character == 0)
-        .unwrap_or(info.szDevice.len());
-    Some(String::from_utf16_lossy(&info.szDevice[..end]))
 }
 
 const fn from_native(rect: RECT) -> Rect {
