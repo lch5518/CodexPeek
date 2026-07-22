@@ -28,8 +28,8 @@ use windows::{
         },
         UI::{
             Controls::{
-                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_UPDATETIPTEXTW,
-                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH,
+                TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
             },
             HiDpi::{
                 GetDpiForMonitor, GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -542,6 +542,23 @@ unsafe fn create_tooltip(state_pointer: *mut NativeState<'_>) -> io::Result<()> 
         state.tooltip = HWND::default();
         return Err(io::Error::last_os_error());
     }
+    let _ = SendMessageW(
+        tooltip,
+        TTM_SETMAXTIPWIDTH,
+        Some(WPARAM(0)),
+        Some(LPARAM(
+            logical_to_physical(320, GetDpiForWindow(widget).max(96)) as isize,
+        )),
+    );
+    let _ = SetWindowPos(
+        tooltip,
+        Some(HWND_TOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    );
     Ok(())
 }
 
