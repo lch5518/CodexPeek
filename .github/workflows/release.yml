@@ -9,17 +9,20 @@ permissions:
   contents: read
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
-    permissions:
-      contents: write
+    outputs:
+      archive-name: ${{ steps.package.outputs.name }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Rust 1.85 MSVC
-        uses: dtolnay/rust-toolchain@1.85.0
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
         with:
+          toolchain: 1.85.0
           targets: x86_64-pc-windows-msvc
           components: rustfmt, clippy
 
@@ -61,17 +64,29 @@ jobs:
           "name=$archiveBase.zip" >> $env:GITHUB_OUTPUT
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.package.outputs.name }}
           path: ${{ steps.package.outputs.archive }}
           if-no-files-found: error
 
+  release:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.build.outputs.archive-name }}
+          path: release-archive
+
       - name: Attach archive to GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          ARCHIVE: ${{ steps.package.outputs.archive }}
+          ARCHIVE: ${{ github.workspace }}\release-archive\${{ needs.build.outputs.archive-name }}
         run: |
           if (gh release view $env:GITHUB_REF_NAME) {
             gh release upload $env:GITHUB_REF_NAME $env:ARCHIVE --clobber
