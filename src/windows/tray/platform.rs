@@ -24,7 +24,8 @@ use super::super::{
     UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS,
     MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
     MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH,
-    MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+    MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_UPDATE_CHECK,
+    MENU_WIDGET_VISIBLE,
 };
 
 pub(crate) const TRAY_CALLBACK: u32 = WM_APP + 1;
@@ -162,6 +163,15 @@ impl TrayIcon {
                 MENU_LANGUAGE_ENGLISH,
                 super::language_menu_label(LanguagePreference::English, settings.resolved_language),
                 settings.language == LanguagePreference::English,
+            )?;
+            add(
+                menu,
+                MENU_SHOW_REMAINING,
+                super::usage_mode_menu_text(
+                    settings.show_remaining_percent,
+                    settings.resolved_language,
+                ),
+                false,
             )?;
             separator(menu)?;
             add(

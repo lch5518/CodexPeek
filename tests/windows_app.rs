@@ -269,6 +269,7 @@ fn taskbar_weekly_row_prefers_secondary_and_falls_back_to_primary() {
     let primary = codex_usage_monitor::windows::UsageRowView {
         label: "5시간".to_owned(),
         used_percent: 20.0,
+        display_percent: 20.0,
         percent_text: "20%".to_owned(),
         reset_text: "2시간".to_owned(),
         level: codex_usage_monitor::UsageLevel::Stable,
@@ -276,6 +277,7 @@ fn taskbar_weekly_row_prefers_secondary_and_falls_back_to_primary() {
     let secondary = codex_usage_monitor::windows::UsageRowView {
         label: "7일".to_owned(),
         used_percent: 80.0,
+        display_percent: 80.0,
         percent_text: "80%".to_owned(),
         reset_text: "3일".to_owned(),
         level: codex_usage_monitor::UsageLevel::Caution,

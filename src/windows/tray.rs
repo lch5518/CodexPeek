@@ -20,6 +20,16 @@ pub fn update_menu_text(
     };
     crate::localized_text(key, language)
 }
+
+fn usage_mode_menu_text(show_remaining: bool, language: crate::Language) -> &'static str {
+    let key = if show_remaining {
+        crate::LocalizationKey::MenuShowWeekly
+    } else {
+        crate::LocalizationKey::MenuShowRemaining
+    };
+    crate::localized_text(key, language)
+}
+
 /// 언어 선택 메뉴 항목의 문구를 반환합니다.
 ///
 /// 각 언어 이름은 현재 UI 언어와 무관하게 항상 해당 언어의 고유 표기(endonym)로
@@ -58,5 +68,31 @@ pub fn language_menu_label(
                 "Language: English"
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::usage_mode_menu_text;
+    use crate::Language;
+
+    #[test]
+    fn usage_mode_menu_describes_the_available_switch() {
+        assert_eq!(
+            usage_mode_menu_text(false, Language::Korean),
+            "남은 사용량 표시"
+        );
+        assert_eq!(
+            usage_mode_menu_text(true, Language::Korean),
+            "주간 사용량 표시"
+        );
+        assert_eq!(
+            usage_mode_menu_text(false, Language::English),
+            "Show remaining usage"
+        );
+        assert_eq!(
+            usage_mode_menu_text(true, Language::English),
+            "Show weekly usage"
+        );
     }
 }

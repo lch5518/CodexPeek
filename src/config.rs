@@ -60,6 +60,11 @@ pub struct Settings {
     pub language: LanguagePreference,
     /// 마지막 업데이트 확인의 UNIX 초입니다.
     pub last_update_check_unix: Option<u64>,
+    /// 위젯에 남은 한도(%)를 표시할지 여부입니다.
+    ///
+    /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
+    #[serde(default)]
+    pub show_remaining_percent: bool,
 }
 
 impl Default for Settings {
@@ -74,6 +79,7 @@ impl Default for Settings {
             auto_auth_refresh: true,
             language: LanguagePreference::Auto,
             last_update_check_unix: None,
+            show_remaining_percent: false,
         }
     }
 }

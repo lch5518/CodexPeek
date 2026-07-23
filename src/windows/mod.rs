@@ -44,6 +44,8 @@ pub const MENU_DIAGNOSTICS: u16 = 220;
 pub const MENU_UPDATE_CHECK: u16 = 230;
 /// 위젯 표시 전환 메뉴 식별자입니다.
 pub const MENU_WIDGET_VISIBLE: u16 = 240;
+/// 남은 한도 표시 토글 메뉴 식별자입니다.
+pub const MENU_SHOW_REMAINING: u16 = 241;
 /// 종료 메뉴 식별자입니다.
 pub const MENU_EXIT: u16 = 250;
 
@@ -202,6 +204,8 @@ pub enum UiAction {
     CheckForUpdates,
     /// 위젯 표시 여부를 전환합니다.
     ToggleWidget,
+    /// 남은 한도 표시 여부를 전환합니다.
+    ToggleShowRemaining,
     /// 프로그램을 종료합니다.
     Exit,
 }
@@ -226,6 +230,7 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_DIAGNOSTICS => UiAction::RunDiagnostics,
         MENU_UPDATE_CHECK => UiAction::CheckForUpdates,
         MENU_WIDGET_VISIBLE => UiAction::ToggleWidget,
+        MENU_SHOW_REMAINING => UiAction::ToggleShowRemaining,
         MENU_EXIT => UiAction::Exit,
         _ => return None,
     })
@@ -236,8 +241,10 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
 pub struct UsageRowView {
     /// 기간 표시 문자열입니다.
     pub label: String,
-    /// 원래 사용률이며 시각적 막대에서만 제한됩니다.
+    /// 위험 수준과 툴팁에 사용하는 원래 사용률입니다.
     pub used_percent: f64,
+    /// 현재 표시 모드에 맞춰 진행 막대에 사용하는 비율입니다.
+    pub display_percent: f64,
     /// 사용자에게 표시할 퍼센트 문자열입니다.
     pub percent_text: String,
     /// 초기화 시각 안내 문자열입니다.
@@ -299,6 +306,8 @@ pub struct UiSettings {
     pub taskbar_offset: i32,
     /// 사용자에게 표시할 업데이트 검사 상태입니다.
     pub update_status: crate::UpdatePresentationStatus,
+    /// 위젯 숫자를 남은 한도(%)로 표시할지 여부입니다.
+    pub show_remaining_percent: bool,
 }
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.

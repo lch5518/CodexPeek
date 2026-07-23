@@ -60,7 +60,8 @@ use super::super::{
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
     taskbar::attach_to_taskbar,
     taskbar_widget::{
-        select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
+        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk,
+        TASKBAR_WIDTH_LOGICAL,
     },
     tray::{TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
@@ -966,9 +967,7 @@ unsafe fn paint_compact_taskbar_content(dc: HDC, client: RECT, dpi: u32, view: &
     FillRect(dc, &native_rect(layout.progress), track);
     let _ = DeleteObject(HGDIOBJ(track.0));
     if let Some(row) = row {
-        let fill_width = (f64::from(layout.progress.width()) * row.used_percent.clamp(0.0, 100.0)
-            / 100.0)
-            .round() as i32;
+        let fill_width = progress_fill_width(layout.progress.width(), row.display_percent);
         if fill_width > 0 {
             let fill = CreateSolidBrush(accent);
             FillRect(

@@ -74,6 +74,13 @@ pub fn select_weekly_row<'a>(
     secondary.or(primary)
 }
 
+/// 진행 막대 너비와 표시 비율을 사용해 실제 채움 너비를 계산합니다.
+///
+/// 표시 비율은 0~100%로 제한되며, 잘못된 음수나 초과 값이 레이아웃 밖으로 그려지지 않게 합니다.
+pub(crate) fn progress_fill_width(width: i32, display_percent: f64) -> i32 {
+    (f64::from(width) * display_percent.clamp(0.0, 100.0) / 100.0).round() as i32
+}
+
 /// 작업 표시줄 글라스 위젯의 고정 영역입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskbarLayout {
@@ -115,5 +122,18 @@ impl TaskbarLayout {
             percent: Rect::new(percent_left, scale(5), width - inset, progress_top - 2),
             progress: Rect::new(inset, progress_top, width - inset, progress_bottom),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::progress_fill_width;
+
+    #[test]
+    fn progress_fill_width_follows_the_display_percent_and_clamps_it() {
+        assert_eq!(progress_fill_width(100, 20.0), 20);
+        assert_eq!(progress_fill_width(100, 80.0), 80);
+        assert_eq!(progress_fill_width(100, -1.0), 0);
+        assert_eq!(progress_fill_width(100, 125.0), 100);
     }
 }

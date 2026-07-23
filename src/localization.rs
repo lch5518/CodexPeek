@@ -76,6 +76,10 @@ pub enum LocalizationKey {
     DiagnosticProxy,
     /// 작업 표시줄 진단 문구입니다.
     DiagnosticTaskbar,
+    /// 남은 사용량 표시 전환 메뉴입니다.
+    MenuShowRemaining,
+    /// 주간 사용량 표시 전환 메뉴입니다.
+    MenuShowWeekly,
 }
 
 impl LocalizationKey {
@@ -114,6 +118,8 @@ impl LocalizationKey {
         Self::DiagnosticSettings,
         Self::DiagnosticProxy,
         Self::DiagnosticTaskbar,
+        Self::MenuShowRemaining,
+        Self::MenuShowWeekly,
     ];
 }
 
@@ -199,6 +205,10 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
         (LocalizationKey::DiagnosticTaskbar, Language::English) => {
             "Taskbar status could not be verified"
         }
+        (LocalizationKey::MenuShowRemaining, Language::Korean) => "남은 사용량 표시",
+        (LocalizationKey::MenuShowRemaining, Language::English) => "Show remaining usage",
+        (LocalizationKey::MenuShowWeekly, Language::Korean) => "주간 사용량 표시",
+        (LocalizationKey::MenuShowWeekly, Language::English) => "Show weekly usage",
     }
 }
 
