@@ -148,31 +148,25 @@ impl TrayIcon {
             add(
                 menu,
                 MENU_LANGUAGE_AUTO,
-                if ko {
-                    "언어: 자동"
-                } else {
-                    "Language: automatic"
-                },
+                super::language_menu_label(LanguagePreference::Auto, settings.resolved_language),
                 settings.language == LanguagePreference::Auto,
             )?;
             add(
                 menu,
                 MENU_LANGUAGE_KOREAN,
-                if ko {
-                    "언어: 한국어"
-                } else {
-                    "Language: Korean"
-                },
+                super::language_menu_label(
+                    LanguagePreference::Korean,
+                    settings.resolved_language,
+                ),
                 settings.language == LanguagePreference::Korean,
             )?;
             add(
                 menu,
                 MENU_LANGUAGE_ENGLISH,
-                if ko {
-                    "언어: 영어"
-                } else {
-                    "Language: English"
-                },
+                super::language_menu_label(
+                    LanguagePreference::English,
+                    settings.resolved_language,
+                ),
                 settings.language == LanguagePreference::English,
             )?;
             separator(menu)?;
