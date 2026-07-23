@@ -45,9 +45,9 @@ use windows::{
                 CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
                 MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
                 SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
-                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_LBUTTONUP,
-                WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP, WM_TIMER,
-                WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_MOUSEMOVE,
+                WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS,
+                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -292,10 +292,7 @@ unsafe extern "system" fn owner_proc(
         }
         TRAY_CALLBACK => {
             let event = lparam.0 as u32 & 0xffff;
-            if matches!(
-                event,
-                WM_CONTEXTMENU | WM_RBUTTONUP | WM_LBUTTONUP | NIN_SELECT
-            ) {
+            if should_open_tray_menu(event) {
                 let current_settings = (*pointer).backend.settings();
                 (*pointer).settings = current_settings;
                 let (owner, settings) = {
@@ -315,6 +312,10 @@ unsafe extern "system" fn owner_proc(
         }
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
     }
+}
+
+const fn should_open_tray_menu(event: u32) -> bool {
+    matches!(event, WM_CONTEXTMENU | NIN_SELECT)
 }
 
 unsafe extern "system" fn widget_proc(
@@ -1090,7 +1091,18 @@ pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::{glass_noise, rounded_material_alpha};
+    use super::{
+        glass_noise, rounded_material_alpha, should_open_tray_menu, NIN_SELECT, WM_CONTEXTMENU,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONUP, WM_RBUTTONUP};
+
+    #[test]
+    fn tray_menu_uses_only_version_4_activation_events() {
+        assert!(should_open_tray_menu(WM_CONTEXTMENU));
+        assert!(should_open_tray_menu(NIN_SELECT));
+        assert!(!should_open_tray_menu(WM_RBUTTONUP));
+        assert!(!should_open_tray_menu(WM_LBUTTONUP));
+    }
 
     #[test]
     fn rounded_material_alpha_softens_corners_and_keeps_center_translucent() {
