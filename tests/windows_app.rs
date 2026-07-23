@@ -15,9 +15,9 @@ use codex_usage_monitor::{
             TaskbarPlacementError,
         },
         taskbar_widget::{select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk},
-       tray::update_menu_text,
         tray::language_menu_label,
-       widget::{logical_to_physical, Rect},
+        tray::update_menu_text,
+        widget::{logical_to_physical, Rect},
         LaunchMode, StartupStep, UiAction, MENU_AUTH_REFRESH, MENU_AUTOSTART,
         MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
         MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_AUTO,
@@ -56,13 +56,11 @@ fn language_menu_labels_always_show_endonyms() {
 
     // "자동" 항목은 특정 언어가 아니라 동작이므로 현재 UI 언어를 따른다.
     assert!(language_menu_label(LanguagePreference::Auto, Language::Korean).contains("자동"));
-    assert!(
-        language_menu_label(LanguagePreference::Auto, Language::English).contains("automatic")
-    );
+    assert!(language_menu_label(LanguagePreference::Auto, Language::English).contains("automatic"));
 }
 
- #[test]
- fn every_menu_command_maps_to_a_typed_action() {
+#[test]
+fn every_menu_command_maps_to_a_typed_action() {
     let cases = [
         (MENU_REFRESH, UiAction::Refresh),
         (MENU_INTERVAL_1, UiAction::SetRefreshInterval(1)),

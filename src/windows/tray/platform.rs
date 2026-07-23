@@ -12,7 +12,7 @@ use windows::{
             WindowsAndMessaging::{
                 AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
                 PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_SEPARATOR,
-                MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
+                MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
             },
         },
     },
@@ -154,19 +154,13 @@ impl TrayIcon {
             add(
                 menu,
                 MENU_LANGUAGE_KOREAN,
-                super::language_menu_label(
-                    LanguagePreference::Korean,
-                    settings.resolved_language,
-                ),
+                super::language_menu_label(LanguagePreference::Korean, settings.resolved_language),
                 settings.language == LanguagePreference::Korean,
             )?;
             add(
                 menu,
                 MENU_LANGUAGE_ENGLISH,
-                super::language_menu_label(
-                    LanguagePreference::English,
-                    settings.resolved_language,
-                ),
+                super::language_menu_label(LanguagePreference::English, settings.resolved_language),
                 settings.language == LanguagePreference::English,
             )?;
             separator(menu)?;
@@ -207,7 +201,7 @@ impl TrayIcon {
             let _ = SetForegroundWindow(owner);
             let command = TrackPopupMenu(
                 menu,
-                TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                TPM_NONOTIFY | TPM_RETURNCMD | TPM_RIGHTBUTTON,
                 point.x,
                 point.y,
                 None,

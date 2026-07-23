@@ -45,9 +45,9 @@ use windows::{
                 CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
                 MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
                 SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
-                WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED,
-                WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP,
-                WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_LBUTTONUP,
+                WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP, WM_TIMER,
+                WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -261,10 +261,7 @@ unsafe extern "system" fn owner_proc(
     }
     let taskbar_created = TASKBAR_CREATED_MESSAGE.load(Ordering::Relaxed);
     if message != taskbar_created
-        && !matches!(
-            message,
-            WM_TIMER | TRAY_CALLBACK | WM_COMMAND | WM_CLOSE | WM_DESTROY
-        )
+        && !matches!(message, WM_TIMER | TRAY_CALLBACK | WM_CLOSE | WM_DESTROY)
     {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
@@ -309,10 +306,6 @@ unsafe extern "system" fn owner_proc(
                     dispatch_menu(pointer, command);
                 }
             }
-            LRESULT(0)
-        }
-        WM_COMMAND => {
-            dispatch_menu(pointer, (wparam.0 & 0xffff) as u16);
             LRESULT(0)
         }
         WM_CLOSE | WM_DESTROY => {
