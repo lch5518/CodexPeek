@@ -1,7 +1,7 @@
 use std::{
     io,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
     thread,
@@ -26,13 +26,14 @@ use windows::{
             },
             HiDpi::GetDpiForWindow,
             WindowsAndMessaging::{
-                EnumChildWindows, FindWindowExW, FindWindowW, GetClassNameW, GetMessageW,
-                GetParent, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+                EnumChildWindows, FindWindowExW, FindWindowW, GetAncestor, GetClassNameW,
+                GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
                 PeekMessageW, PostMessageW, PostThreadMessageW, SetParent, SetWindowLongPtrW,
-                SetWindowPos, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY,
-                EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, GWL_STYLE, HWND_TOP, MSG,
-                PM_NOREMOVE, PM_REMOVE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-                SWP_NOZORDER, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
+                SetWindowPos, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
+                EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, GA_ROOT,
+                GWL_STYLE, HWND_TOP, MSG, PM_NOREMOVE, PM_REMOVE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+                SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINEVENT_OUTOFCONTEXT,
+                WINEVENT_SKIPOWNPROCESS, WM_APP,
             },
         },
     },
@@ -47,6 +48,27 @@ const TASK_BUTTON_GAP_LOGICAL: i32 = 4;
 pub(crate) const TASKBAR_LAYOUT_CHANGED: u32 = WM_APP + 41;
 const OBSERVER_REFRESH: u32 = WM_APP + 42;
 const OBSERVER_STOP: u32 = WM_APP + 43;
+static OBSERVER_REFRESH_GATE: RefreshGate = RefreshGate::new();
+
+struct RefreshGate {
+    pending: AtomicBool,
+}
+
+impl RefreshGate {
+    const fn new() -> Self {
+        Self {
+            pending: AtomicBool::new(false),
+        }
+    }
+
+    fn request(&self) -> bool {
+        !self.pending.swap(true, Ordering::AcqRel)
+    }
+
+    fn complete(&self) {
+        self.pending.store(false, Ordering::Release);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TaskbarTarget {
@@ -142,13 +164,10 @@ impl TaskbarObserver {
                 run_observer_thread(owner, worker_snapshot, ready_sender);
             })?;
         let thread_id = ready_receiver.recv().unwrap_or_default();
-        let observer = Self {
+        Ok(Self {
             snapshot,
             thread_id,
-        };
-        // Explorer가 시작 직후 작업 표시줄을 순차적으로 만들 수 있으므로 첫 관찰 뒤 한 번 더 확인합니다.
-        observer.refresh();
-        Ok(observer)
+        })
     }
 
     pub(crate) fn targets(&self, offset: i32) -> Vec<TaskbarTarget> {
@@ -162,7 +181,7 @@ impl TaskbarObserver {
     pub(crate) fn refresh(&self) {
         if self.thread_id != 0 {
             unsafe {
-                let _ = PostThreadMessageW(self.thread_id, OBSERVER_REFRESH, WPARAM(0), LPARAM(0));
+                request_observer_refresh(self.thread_id);
             }
         }
     }
@@ -482,6 +501,7 @@ unsafe fn run_observer_thread(
         )
         .as_bool()
         {}
+        OBSERVER_REFRESH_GATE.complete();
         refresh_observer_snapshot(
             owner,
             &snapshot,
@@ -550,7 +570,7 @@ unsafe fn refresh_observer_snapshot(
 unsafe extern "system" fn taskbar_event(
     _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
     event: u32,
-    _hwnd: HWND,
+    hwnd: HWND,
     _object: i32,
     _child: i32,
     _event_thread: u32,
@@ -560,11 +580,42 @@ unsafe extern "system" fn taskbar_event(
         event,
         EVENT_OBJECT_CREATE
             | EVENT_OBJECT_DESTROY
+            | EVENT_OBJECT_SHOW
+            | EVENT_OBJECT_HIDE
             | EVENT_OBJECT_REORDER
             | EVENT_OBJECT_LOCATIONCHANGE
-    ) {
-        let _ = PostThreadMessageW(GetCurrentThreadId(), OBSERVER_REFRESH, WPARAM(0), LPARAM(0));
+    ) && taskbar_event_window(hwnd)
+    {
+        request_observer_refresh(GetCurrentThreadId());
     }
+}
+
+unsafe fn request_observer_refresh(thread_id: u32) {
+    if thread_id == 0 || !OBSERVER_REFRESH_GATE.request() {
+        return;
+    }
+    if PostThreadMessageW(thread_id, OBSERVER_REFRESH, WPARAM(0), LPARAM(0)).is_err() {
+        OBSERVER_REFRESH_GATE.complete();
+    }
+}
+
+unsafe fn taskbar_event_window(hwnd: HWND) -> bool {
+    if hwnd == HWND::default() {
+        return false;
+    }
+    let root = GetAncestor(hwnd, GA_ROOT);
+    if root == HWND::default() {
+        return false;
+    }
+    let mut class_name = [0_u16; 64];
+    let length = GetClassNameW(root, &mut class_name);
+    length > 0 && taskbar_root_class(&class_name[..length as usize])
+}
+
+fn taskbar_root_class(class_name: &[u16]) -> bool {
+    ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+        .into_iter()
+        .any(|expected| expected.encode_utf16().eq(class_name.iter().copied()))
 }
 
 unsafe fn taskbars() -> Vec<HWND> {
@@ -614,7 +665,30 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use super::GenerationCache;
+    use super::{taskbar_root_class, GenerationCache, RefreshGate};
+
+    #[test]
+    fn refresh_gate_coalesces_requests_until_the_worker_accepts_one() {
+        let gate = RefreshGate::new();
+        assert!(gate.request());
+        assert!(!gate.request());
+        assert!(!gate.request());
+        gate.complete();
+        assert!(gate.request());
+    }
+
+    #[test]
+    fn event_filter_accepts_only_taskbar_root_classes() {
+        assert!(taskbar_root_class(
+            &"Shell_TrayWnd".encode_utf16().collect::<Vec<_>>()
+        ));
+        assert!(taskbar_root_class(
+            &"Shell_SecondaryTrayWnd".encode_utf16().collect::<Vec<_>>()
+        ));
+        assert!(!taskbar_root_class(
+            &"CabinetWClass".encode_utf16().collect::<Vec<_>>()
+        ));
+    }
 
     #[test]
     fn observer_reads_never_wait_for_a_blocked_scanner() {

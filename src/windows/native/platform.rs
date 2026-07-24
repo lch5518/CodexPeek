@@ -75,10 +75,39 @@ use super::super::{
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
+const TASKBAR_STARTUP_RETRIES: u8 = 5;
 const TASKBAR_RECONCILE_TICKS: u8 = 30;
 const OWNER_CLASS: PCWSTR = w!("CodexUsageMonitor.Hidden.v1");
 const WIDGET_CLASS: PCWSTR = w!("CodexUsageMonitor.Widget.v1");
 static TASKBAR_CREATED_MESSAGE: AtomicU32 = AtomicU32::new(0);
+
+struct TaskbarRefreshSchedule {
+    startup_retries_remaining: u8,
+    reconcile_ticks: u8,
+}
+
+impl TaskbarRefreshSchedule {
+    const fn new() -> Self {
+        Self {
+            startup_retries_remaining: TASKBAR_STARTUP_RETRIES,
+            reconcile_ticks: 0,
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        if self.startup_retries_remaining > 0 {
+            self.startup_retries_remaining -= 1;
+            return true;
+        }
+        self.reconcile_ticks = self.reconcile_ticks.saturating_add(1);
+        if self.reconcile_ticks >= TASKBAR_RECONCILE_TICKS {
+            self.reconcile_ticks = 0;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 pub(super) struct SingleInstanceGuard(pub(super) HANDLE);
 
@@ -99,7 +128,7 @@ struct NativeState<'a> {
     tray: Option<AsyncTrayIcon>,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
-    taskbar_reconcile_ticks: u8,
+    taskbar_refresh_schedule: TaskbarRefreshSchedule,
 }
 
 struct WidgetSlot {
@@ -129,7 +158,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             tray: None,
             settings,
             lifecycle: NativeLifecycle::default(),
-            taskbar_reconcile_ticks: 0,
+            taskbar_refresh_schedule: TaskbarRefreshSchedule::new(),
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
@@ -295,10 +324,7 @@ unsafe extern "system" fn owner_proc(
         WM_TIMER if wparam.0 == TIMER_ID => {
             let settings = (*pointer).backend.settings();
             (*pointer).settings = settings;
-            (*pointer).taskbar_reconcile_ticks =
-                (*pointer).taskbar_reconcile_ticks.saturating_add(1);
-            if (*pointer).taskbar_reconcile_ticks >= TASKBAR_RECONCILE_TICKS {
-                (*pointer).taskbar_reconcile_ticks = 0;
+            if (*pointer).taskbar_refresh_schedule.tick() {
                 if let Some(observer) = &(*pointer).taskbar_observer {
                     observer.refresh();
                 }
@@ -1152,12 +1178,20 @@ unsafe fn paint_compact_taskbar_content(
     } else {
         DT_RIGHT
     };
+    let minimal_error = layout.mode == TaskbarLayoutMode::Minimal && risk == TaskbarRisk::Error;
+    let percent_text =
+        compact_percent_text(layout.mode, risk, row.map(|row| row.percent_text.as_str()));
+    let percent_color = if minimal_error {
+        accent
+    } else {
+        COLORREF(palette.percent)
+    };
     draw_text(
         dc,
-        row.map_or("--", |row| row.percent_text.as_str()),
+        percent_text,
         &mut percent,
         percent_alignment | DT_SINGLELINE | DT_VCENTER,
-        COLORREF(palette.percent),
+        percent_color,
     );
     SelectObject(dc, old_font);
     let _ = DeleteObject(HGDIOBJ(percent_font.0));
@@ -1179,6 +1213,14 @@ unsafe fn paint_compact_taskbar_content(
             );
             let _ = DeleteObject(HGDIOBJ(fill.0));
         }
+    }
+}
+
+fn compact_percent_text(mode: TaskbarLayoutMode, risk: TaskbarRisk, percent: Option<&str>) -> &str {
+    if mode == TaskbarLayoutMode::Minimal && risk == TaskbarRisk::Error {
+        "!"
+    } else {
+        percent.unwrap_or("--")
     }
 }
 
@@ -1290,7 +1332,8 @@ pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::
 #[cfg(test)]
 mod tests {
     use super::{
-        glass_noise, rounded_material_alpha, should_open_tray_menu, taskbar_palette, NIN_SELECT,
+        compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
+        taskbar_palette, TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, NIN_SELECT,
         WM_CONTEXTMENU,
     };
     use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONUP, WM_RBUTTONUP};
@@ -1301,6 +1344,30 @@ mod tests {
         assert!(should_open_tray_menu(NIN_SELECT));
         assert!(!should_open_tray_menu(WM_RBUTTONUP));
         assert!(!should_open_tray_menu(WM_LBUTTONUP));
+    }
+
+    #[test]
+    fn taskbar_refresh_schedule_retries_startup_then_uses_the_safety_interval() {
+        let mut schedule = TaskbarRefreshSchedule::new();
+        for _ in 0..5 {
+            assert!(schedule.tick());
+        }
+        for _ in 0..29 {
+            assert!(!schedule.tick());
+        }
+        assert!(schedule.tick());
+    }
+
+    #[test]
+    fn minimal_layout_keeps_error_state_visible() {
+        assert_eq!(
+            compact_percent_text(TaskbarLayoutMode::Minimal, TaskbarRisk::Error, Some("42%")),
+            "!"
+        );
+        assert_eq!(
+            compact_percent_text(TaskbarLayoutMode::Full, TaskbarRisk::Error, Some("42%")),
+            "42%"
+        );
     }
 
     #[test]
