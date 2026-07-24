@@ -5,6 +5,7 @@ use std::{
 
 use codex_usage_monitor::{
     AsyncSettingsWriter, LanguagePreference, Settings, SettingsStore, StartupView,
+    TaskbarDisplayMode,
 };
 
 fn test_root(label: &str) -> std::path::PathBuf {
@@ -41,6 +42,7 @@ fn settings_defaults_match_product_policy() {
     assert_eq!(settings.refresh_interval_minutes, 5);
     assert!(settings.widget_visible);
     assert_eq!(settings.taskbar_offset, 0);
+    assert_eq!(settings.taskbar_display_mode, TaskbarDisplayMode::All);
     assert!(!settings.start_with_windows);
     assert_eq!(settings.startup_view, StartupView::Widget);
     assert!(settings.auto_auth_refresh);
@@ -62,6 +64,7 @@ fn settings_without_show_remaining_field_loads_with_default() {
 
     let settings = store.load().unwrap();
     assert!(!settings.show_remaining_percent);
+    assert_eq!(settings.taskbar_display_mode, TaskbarDisplayMode::All);
 
     let _ = fs::remove_dir_all(root);
 }
@@ -131,6 +134,22 @@ fn negative_taskbar_offset_is_rejected() {
     });
 
     assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn taskbar_display_mode_round_trips() {
+    let root = test_root("taskbar-display-mode");
+    let store = SettingsStore::for_root(&root);
+    let selected = Settings {
+        taskbar_display_mode: TaskbarDisplayMode::Primary,
+        ..Settings::default()
+    };
+    store.save(&selected).unwrap();
+    assert_eq!(
+        store.load().unwrap().taskbar_display_mode,
+        TaskbarDisplayMode::Primary
+    );
     let _ = fs::remove_dir_all(root);
 }
 

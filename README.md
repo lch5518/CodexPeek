@@ -11,6 +11,7 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 
 - Shows primary and secondary Codex usage windows, including reset times.
 - Uses the installed Codex CLI's `app-server` interface instead of parsing authentication files.
+- Supports showing the widget on every taskbar or only on the primary monitor.
 - Falls back safely to a floating widget and tray icon when taskbar attachment is unavailable.
 - Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and Korean or English UI.
 
@@ -52,6 +53,9 @@ Run the following command to check the CLI, app-server connection, and local set
 
 Use the tray menu to refresh usage, choose a 1/5/10/15/30-minute refresh interval, and show or hide the widget.
 It also provides Windows startup, startup view, authentication refresh, automatic authentication refresh, language, and diagnostics settings.
+Choose **Widget: all monitors** or **Widget: primary monitor only** to control multi-monitor placement; the selection is remembered across restarts.
+
+The taskbar widget uses the Windows light/dark system theme for its text and lets the native taskbar material show through its background.
 
 Only one usage request runs at a time. Failed requests retry with increasing delays while the last successful values remain visible.
 
@@ -77,7 +81,8 @@ For the full data-handling and vulnerability-reporting guidance, see [SECURITY.m
 | Codex CLI is not found | Run `codex --version` and `where.exe codex`, then ensure Codex CLI is on `PATH`. |
 | The CLI is unsupported | Update Codex CLI. Required RPC support matters more than the displayed version number. |
 | Logged out or authentication expired | Complete the normal login flow in Codex CLI, then choose **Refresh authentication** in the tray menu. |
-| The taskbar widget is missing | Use the floating widget or tray icon, restart Explorer if needed, and try the display mode again. |
+| The taskbar widget is on the wrong monitor | Choose **Widget: all monitors** or **Widget: primary monitor only** from the tray menu. |
+| The taskbar widget is missing | Use the floating widget or tray icon, restart Explorer if needed, and select the preferred widget monitor mode. |
 | More detail is needed | Run `--diagnose` or open **Diagnostics** from the tray menu. |
 
 ## Development

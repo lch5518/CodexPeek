@@ -8,7 +8,7 @@ pub mod taskbar_widget;
 pub mod tray;
 pub mod widget;
 
-use crate::{Language, LanguagePreference, StartupView};
+use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode};
 
 /// 즉시 갱신 메뉴 식별자입니다.
 pub const MENU_REFRESH: u16 = 100;
@@ -46,6 +46,10 @@ pub const MENU_UPDATE_CHECK: u16 = 230;
 pub const MENU_WIDGET_VISIBLE: u16 = 240;
 /// 남은 한도 표시 토글 메뉴 식별자입니다.
 pub const MENU_SHOW_REMAINING: u16 = 241;
+/// 모든 모니터 작업표시줄 표시 메뉴 식별자입니다.
+pub const MENU_TASKBAR_ALL: u16 = 242;
+/// 주 모니터 작업표시줄만 표시하는 메뉴 식별자입니다.
+pub const MENU_TASKBAR_PRIMARY: u16 = 243;
 /// 종료 메뉴 식별자입니다.
 pub const MENU_EXIT: u16 = 250;
 
@@ -206,6 +210,8 @@ pub enum UiAction {
     ToggleWidget,
     /// 남은 한도 표시 여부를 전환합니다.
     ToggleShowRemaining,
+    /// 작업표시줄 위젯을 표시할 모니터 범위를 변경합니다.
+    SetTaskbarDisplayMode(TaskbarDisplayMode),
     /// 프로그램을 종료합니다.
     Exit,
 }
@@ -231,6 +237,8 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_UPDATE_CHECK => UiAction::CheckForUpdates,
         MENU_WIDGET_VISIBLE => UiAction::ToggleWidget,
         MENU_SHOW_REMAINING => UiAction::ToggleShowRemaining,
+        MENU_TASKBAR_ALL => UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::All),
+        MENU_TASKBAR_PRIMARY => UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::Primary),
         MENU_EXIT => UiAction::Exit,
         _ => return None,
     })
@@ -304,6 +312,8 @@ pub struct UiSettings {
     pub resolved_language: Language,
     /// 작업 표시줄 논리 픽셀 오프셋입니다.
     pub taskbar_offset: i32,
+    /// 다중 모니터에서 작업표시줄 위젯을 표시할 범위입니다.
+    pub taskbar_display_mode: TaskbarDisplayMode,
     /// 사용자에게 표시할 업데이트 검사 상태입니다.
     pub update_status: crate::UpdatePresentationStatus,
     /// 위젯 숫자를 남은 한도(%)로 표시할지 여부입니다.
