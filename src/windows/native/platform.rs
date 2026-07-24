@@ -46,9 +46,10 @@ use windows::{
                 CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
                 MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
                 SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
-                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_MOUSEMOVE,
-                WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS,
-                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE,
+                WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
+                WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED,
+                WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -59,7 +60,10 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
-    taskbar::{attach_to_taskbar, reposition_taskbar_widget, AsyncTaskbarTargets, TaskbarTarget},
+    taskbar::{
+        attach_to_taskbar, reposition_taskbar_widget, TaskbarObserver, TaskbarTarget,
+        TASKBAR_LAYOUT_CHANGED,
+    },
     taskbar_widget::{
         progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode,
         TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
@@ -90,10 +94,10 @@ struct NativeState<'a> {
     instance: HINSTANCE,
     owner: HWND,
     widgets: Vec<WidgetSlot>,
+    taskbar_observer: Option<TaskbarObserver>,
     tray: Option<AsyncTrayIcon>,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
-    taskbars: AsyncTaskbarTargets,
 }
 
 struct WidgetSlot {
@@ -119,10 +123,10 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             instance,
             owner: HWND::default(),
             widgets: Vec::new(),
+            taskbar_observer: None,
             tray: None,
             settings,
             lifecycle: NativeLifecycle::default(),
-            taskbars: AsyncTaskbarTargets::new()?,
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
@@ -143,6 +147,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             .map_err(win_error)?;
             state.owner = owner;
             state.lifecycle.owner_created();
+            state.taskbar_observer = Some(TaskbarObserver::start(owner)?);
             let snapshot = state.backend.snapshot();
             state.tray = Some(AsyncTrayIcon::new(
                 owner,
@@ -218,6 +223,7 @@ unsafe fn register_classes(instance: HINSTANCE) -> io::Result<()> {
 }
 
 unsafe fn cleanup_native_state(state_pointer: *mut NativeState<'_>) {
+    drop((*state_pointer).taskbar_observer.take());
     let actions = (*state_pointer).lifecycle.cleanup_actions();
     for action in actions {
         match action {
@@ -255,7 +261,17 @@ unsafe extern "system" fn owner_proc(
     }
     let taskbar_created = TASKBAR_CREATED_MESSAGE.load(Ordering::Relaxed);
     if message != taskbar_created
-        && !matches!(message, WM_TIMER | TRAY_CALLBACK | WM_CLOSE | WM_DESTROY)
+        && !matches!(
+            message,
+            WM_TIMER
+                | TRAY_CALLBACK
+                | WM_CLOSE
+                | WM_DESTROY
+                | TASKBAR_LAYOUT_CHANGED
+                | WM_DISPLAYCHANGE
+                | WM_SETTINGCHANGE
+                | WM_THEMECHANGED
+        )
     {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
@@ -266,8 +282,9 @@ unsafe extern "system" fn owner_proc(
 
     if message == taskbar_created {
         let _ = refresh_tray(pointer, true);
-        (*pointer).taskbars.invalidate();
-        let _ = recover_widget(pointer, RecoveryEvent::TaskbarCreated);
+        if let Some(observer) = &(*pointer).taskbar_observer {
+            observer.invalidate();
+        }
         return LRESULT(0);
     }
 
@@ -284,6 +301,16 @@ unsafe extern "system" fn owner_proc(
                 for widget in &state.widgets {
                     let _ = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value());
                 }
+            }
+            LRESULT(0)
+        }
+        TASKBAR_LAYOUT_CHANGED => {
+            let _ = apply_window_policy(pointer);
+            LRESULT(0)
+        }
+        WM_DISPLAYCHANGE | WM_SETTINGCHANGE | WM_THEMECHANGED => {
+            if let Some(observer) = &(*pointer).taskbar_observer {
+                observer.refresh();
             }
             LRESULT(0)
         }
@@ -615,7 +642,7 @@ unsafe fn recover_widget(
     if !(*state_pointer).settings.widget_visible {
         return Ok(());
     }
-    let targets = desired_taskbars(state_pointer);
+    let targets = desired_taskbars(&*state_pointer);
     if matches!(event, RecoveryEvent::TaskbarCreated)
         || !widgets_match_targets(&(*state_pointer).widgets, &targets)
     {
@@ -648,7 +675,7 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         }
         return Ok(());
     }
-    let targets = desired_taskbars(state_pointer);
+    let targets = desired_taskbars(&*state_pointer);
     if widgets_match_targets(&(*state_pointer).widgets, &targets) {
         reposition_widgets(&(*state_pointer).widgets, &targets);
         let state = &*state_pointer;
@@ -677,9 +704,12 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     Ok(())
 }
 
-unsafe fn desired_taskbars(state_pointer: *mut NativeState<'_>) -> Vec<TaskbarTarget> {
-    let state = &mut *state_pointer;
-    let mut targets = state.taskbars.current(state.settings.taskbar_offset);
+unsafe fn desired_taskbars(state: &NativeState<'_>) -> Vec<TaskbarTarget> {
+    let mut targets = state
+        .taskbar_observer
+        .as_ref()
+        .map(|observer| observer.targets(state.settings.taskbar_offset))
+        .unwrap_or_default();
     if state.settings.taskbar_display_mode == crate::TaskbarDisplayMode::Primary {
         targets.truncate(1);
     }
