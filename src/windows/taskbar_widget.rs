@@ -84,15 +84,28 @@ pub(crate) fn progress_fill_width(width: i32, display_percent: f64) -> i32 {
     (f64::from(width) * display_percent.clamp(0.0, 100.0) / 100.0).round() as i32
 }
 
+/// 사용 가능한 너비에 맞춘 작업 표시줄 위젯 표현 단계입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskbarLayoutMode {
+    /// 상태점, 기간 라벨, 사용률을 모두 표시합니다.
+    Full,
+    /// 기간 라벨을 생략하고 상태점과 사용률을 표시합니다.
+    Compact,
+    /// 사용률을 중앙에 크게 표시하고 나머지 텍스트를 생략합니다.
+    Minimal,
+}
+
 /// 작업 표시줄 글라스 위젯의 고정 영역입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskbarLayout {
+    /// 현재 너비에 맞춘 표현 단계입니다.
+    pub mode: TaskbarLayoutMode,
     /// 전체 클라이언트 영역입니다.
     pub window: Rect,
     /// 상태 점 영역입니다.
-    pub dot: Rect,
+    pub dot: Option<Rect>,
     /// 주간 사용량 레이블 영역입니다.
-    pub label: Rect,
+    pub label: Option<Rect>,
     /// 오른쪽 고정 퍼센트 영역입니다.
     pub percent: Rect,
     /// 진행 막대 영역입니다.
@@ -103,26 +116,52 @@ impl TaskbarLayout {
     /// 실제 클라이언트 크기와 DPI에 맞춰 고정 영역을 계산합니다.
     pub fn for_size(width: i32, height: i32, dpi: u32) -> Self {
         let scale = |value| logical_to_physical(value, dpi);
+        let mode = if width >= scale(140) {
+            TaskbarLayoutMode::Full
+        } else if width >= scale(100) {
+            TaskbarLayoutMode::Compact
+        } else {
+            TaskbarLayoutMode::Minimal
+        };
         let inset = scale(11).min((width / 4).max(1));
         let dot_size = scale(6).min((height / 3).max(1));
         let top = scale(9).min((height - dot_size - 4).max(1));
         let progress_height = scale(3).min((height / 4).max(1));
         let progress_bottom = (height - scale(8)).max(top + dot_size + progress_height);
         let progress_top = (progress_bottom - progress_height).max(top + dot_size + 2);
-        let percent_width = scale(42).min((width / 3).max(1));
-        let percent_left = (width - inset - percent_width).max(inset + dot_size + scale(8));
         let label_left = inset + dot_size + scale(8);
+        let percent_width = scale(42).min((width / 3).max(1));
+        let full_percent_left = (width - inset - percent_width).max(label_left + scale(8));
+        let text_bottom = progress_top - 2;
+        let (dot, label, percent) = match mode {
+            TaskbarLayoutMode::Full => (
+                Some(Rect::new(inset, top, inset + dot_size, top + dot_size)),
+                Some(Rect::new(
+                    label_left,
+                    scale(5),
+                    full_percent_left - scale(4),
+                    text_bottom,
+                )),
+                Rect::new(full_percent_left, scale(5), width - inset, text_bottom),
+            ),
+            TaskbarLayoutMode::Compact => (
+                Some(Rect::new(inset, top, inset + dot_size, top + dot_size)),
+                None,
+                Rect::new(label_left, scale(5), width - inset, text_bottom),
+            ),
+            TaskbarLayoutMode::Minimal => (
+                None,
+                None,
+                Rect::new(inset, scale(5), width - inset, text_bottom),
+            ),
+        };
 
         Self {
+            mode,
             window: Rect::new(0, 0, width, height),
-            dot: Rect::new(inset, top, inset + dot_size, top + dot_size),
-            label: Rect::new(
-                label_left,
-                scale(5),
-                percent_left - scale(4),
-                progress_top - 2,
-            ),
-            percent: Rect::new(percent_left, scale(5), width - inset, progress_top - 2),
+            dot,
+            label,
+            percent,
             progress: Rect::new(inset, progress_top, width - inset, progress_bottom),
         }
     }

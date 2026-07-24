@@ -16,8 +16,8 @@ use windows::{
             DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetStockObject,
             InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
             BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
-            DIB_RGB_COLORS, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
-            FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN, OUT_DEFAULT_PRECIS,
+            DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE,
+            DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN, OUT_DEFAULT_PRECIS,
             PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
@@ -61,8 +61,8 @@ use super::super::{
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
     taskbar::{attach_to_taskbar, reposition_taskbar_widget, AsyncTaskbarTargets, TaskbarTarget},
     taskbar_widget::{
-        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk,
-        TASKBAR_WIDTH_LOGICAL,
+        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode,
+        TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
@@ -1019,7 +1019,7 @@ unsafe fn paint_compact_taskbar_content(
     let _ = DeleteObject(HGDIOBJ(background.0));
     let _ = SetBkMode(dc, TRANSPARENT);
 
-    if risk == TaskbarRisk::Error {
+    if risk == TaskbarRisk::Error && layout.dot.is_some() {
         let font = CreateFontW(
             -logical_to_physical(11, dpi),
             0,
@@ -1037,7 +1037,7 @@ unsafe fn paint_compact_taskbar_content(
             w!("Segoe UI Variable"),
         );
         let old = SelectObject(dc, HGDIOBJ(font.0));
-        let mut dot = native_rect(layout.dot);
+        let mut dot = native_rect(layout.dot.expect("checked above"));
         draw_text(
             dc,
             "!",
@@ -1047,44 +1047,46 @@ unsafe fn paint_compact_taskbar_content(
         );
         SelectObject(dc, old);
         let _ = DeleteObject(HGDIOBJ(font.0));
-    } else {
+    } else if let Some(dot) = layout.dot {
         let brush = CreateSolidBrush(accent);
         let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
         let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-        let dot = native_rect(layout.dot);
+        let dot = native_rect(dot);
         let _ = Ellipse(dc, dot.left, dot.top, dot.right, dot.bottom);
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
         let _ = DeleteObject(HGDIOBJ(brush.0));
     }
 
-    let label_font = CreateFontW(
-        -logical_to_physical(12, dpi),
-        0,
-        0,
-        0,
-        FW_NORMAL.0 as i32,
-        0,
-        0,
-        0,
-        DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS,
-        PROOF_QUALITY,
-        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-        w!("Segoe UI Variable"),
-    );
-    let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
-    let mut label = native_rect(layout.label);
-    draw_text(
-        dc,
-        &view.taskbar_label,
-        &mut label,
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-        COLORREF(palette.label),
-    );
-    SelectObject(dc, old_font);
-    let _ = DeleteObject(HGDIOBJ(label_font.0));
+    if let Some(label) = layout.label {
+        let label_font = CreateFontW(
+            -logical_to_physical(12, dpi),
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            PROOF_QUALITY,
+            u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+            w!("Segoe UI Variable"),
+        );
+        let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
+        let mut label = native_rect(label);
+        draw_text(
+            dc,
+            &view.taskbar_label,
+            &mut label,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            COLORREF(palette.label),
+        );
+        SelectObject(dc, old_font);
+        let _ = DeleteObject(HGDIOBJ(label_font.0));
+    }
 
     let percent_font = CreateFontW(
         -logical_to_physical(12, dpi),
@@ -1104,11 +1106,16 @@ unsafe fn paint_compact_taskbar_content(
     );
     let old_font = SelectObject(dc, HGDIOBJ(percent_font.0));
     let mut percent = native_rect(layout.percent);
+    let percent_alignment = if layout.mode == TaskbarLayoutMode::Minimal {
+        DT_CENTER
+    } else {
+        DT_RIGHT
+    };
     draw_text(
         dc,
         row.map_or("--", |row| row.percent_text.as_str()),
         &mut percent,
-        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
+        percent_alignment | DT_SINGLELINE | DT_VCENTER,
         COLORREF(palette.percent),
     );
     SelectObject(dc, old_font);

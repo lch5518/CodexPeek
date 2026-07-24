@@ -14,7 +14,9 @@ use codex_usage_monitor::{
             TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
             TaskbarPlacementError,
         },
-        taskbar_widget::{select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk},
+        taskbar_widget::{
+            select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
+        },
         tray::language_menu_label,
         tray::update_menu_text,
         widget::{logical_to_physical, Rect},
@@ -352,18 +354,42 @@ fn taskbar_risk_uses_the_compact_widget_thresholds() {
 #[test]
 fn compact_taskbar_layout_fits_supported_dpis() {
     for dpi in [96, 120, 144, 192] {
-        for logical_width in [88, 208] {
+        for (logical_width, expected_mode) in [
+            (88, TaskbarLayoutMode::Minimal),
+            (110, TaskbarLayoutMode::Compact),
+            (208, TaskbarLayoutMode::Full),
+        ] {
             let width = logical_to_physical(logical_width, dpi);
             let height = logical_to_physical(48, dpi);
             let layout = TaskbarLayout::for_size(width, height, dpi);
 
-            assert!(layout.dot.is_inside(layout.window));
-            assert!(layout.label.is_inside(layout.window));
+            assert_eq!(layout.mode, expected_mode);
+            if let Some(dot) = layout.dot {
+                assert!(dot.is_inside(layout.window));
+            }
+            if let Some(label) = layout.label {
+                assert!(label.is_inside(layout.window));
+                assert!(!label.intersects(layout.percent));
+            }
             assert!(layout.percent.is_inside(layout.window));
             assert!(layout.progress.is_inside(layout.window));
-            assert!(!layout.label.intersects(layout.percent));
         }
     }
+}
+
+#[test]
+fn taskbar_layout_hides_details_as_space_decreases() {
+    let full = TaskbarLayout::for_size(140, 48, 96);
+    assert!(full.dot.is_some());
+    assert!(full.label.is_some());
+
+    let compact = TaskbarLayout::for_size(100, 48, 96);
+    assert!(compact.dot.is_some());
+    assert!(compact.label.is_none());
+
+    let minimal = TaskbarLayout::for_size(99, 48, 96);
+    assert!(minimal.dot.is_none());
+    assert!(minimal.label.is_none());
 }
 
 #[test]
