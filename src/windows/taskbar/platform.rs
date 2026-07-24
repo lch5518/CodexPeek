@@ -142,10 +142,13 @@ impl TaskbarObserver {
                 run_observer_thread(owner, worker_snapshot, ready_sender);
             })?;
         let thread_id = ready_receiver.recv().unwrap_or_default();
-        Ok(Self {
+        let observer = Self {
             snapshot,
             thread_id,
-        })
+        };
+        // Explorer가 시작 직후 작업 표시줄을 순차적으로 만들 수 있으므로 첫 관찰 뒤 한 번 더 확인합니다.
+        observer.refresh();
+        Ok(observer)
     }
 
     pub(crate) fn targets(&self, offset: i32) -> Vec<TaskbarTarget> {

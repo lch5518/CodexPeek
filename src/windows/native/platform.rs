@@ -75,6 +75,7 @@ use super::super::{
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
+const TASKBAR_RECONCILE_TICKS: u8 = 30;
 const OWNER_CLASS: PCWSTR = w!("CodexUsageMonitor.Hidden.v1");
 const WIDGET_CLASS: PCWSTR = w!("CodexUsageMonitor.Widget.v1");
 static TASKBAR_CREATED_MESSAGE: AtomicU32 = AtomicU32::new(0);
@@ -98,6 +99,7 @@ struct NativeState<'a> {
     tray: Option<AsyncTrayIcon>,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
+    taskbar_reconcile_ticks: u8,
 }
 
 struct WidgetSlot {
@@ -127,6 +129,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             tray: None,
             settings,
             lifecycle: NativeLifecycle::default(),
+            taskbar_reconcile_ticks: 0,
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
@@ -292,6 +295,14 @@ unsafe extern "system" fn owner_proc(
         WM_TIMER if wparam.0 == TIMER_ID => {
             let settings = (*pointer).backend.settings();
             (*pointer).settings = settings;
+            (*pointer).taskbar_reconcile_ticks =
+                (*pointer).taskbar_reconcile_ticks.saturating_add(1);
+            if (*pointer).taskbar_reconcile_ticks >= TASKBAR_RECONCILE_TICKS {
+                (*pointer).taskbar_reconcile_ticks = 0;
+                if let Some(observer) = &(*pointer).taskbar_observer {
+                    observer.refresh();
+                }
+            }
             let _ = refresh_tray(pointer, false);
             update_tooltips(pointer);
             let _ = recover_widget(pointer, RecoveryEvent::Timer);
