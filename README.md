@@ -98,7 +98,7 @@ Automated checks do not replace the Windows, DPI, multi-monitor, and Explorer re
 If CodexPeek saves you time, consider supporting its development.
 
 - ⭐ Star this repository
-- ❤️ Sponsor on GitHub
+- ❤️ [Sponsor on GitHub](https://github.com/sponsors/lch5518)
 
 Every sponsorship helps keep the project actively maintained.
 
