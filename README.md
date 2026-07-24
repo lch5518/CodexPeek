@@ -93,6 +93,15 @@ cargo build --release
 
 Automated checks do not replace the Windows, DPI, multi-monitor, and Explorer recovery scenarios in the [release checklist](docs/RELEASE_CHECKLIST.md).
 
+## ❤️ Support
+
+If CodexPeek saves you time, consider supporting its development.
+
+- ⭐ Star this repository
+- ❤️ Sponsor on GitHub
+
+Every sponsorship helps keep the project actively maintained.
+
 ## License
 
 This project is available under the [MIT License](LICENSE).
