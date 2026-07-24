@@ -4,7 +4,7 @@
 mod platform;
 
 #[cfg(windows)]
-pub(crate) use platform::{TrayIcon, TRAY_CALLBACK};
+pub(crate) use platform::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK};
 
 /// 업데이트 검사 상태에 맞는 트레이 메뉴 문구를 반환합니다.
 pub fn update_menu_text(

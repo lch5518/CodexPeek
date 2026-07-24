@@ -59,12 +59,12 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
-    taskbar::{attach_to_taskbar, reposition_taskbar_widget, taskbar_targets, TaskbarTarget},
+    taskbar::{attach_to_taskbar, reposition_taskbar_widget, AsyncTaskbarTargets, TaskbarTarget},
     taskbar_widget::{
         progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk,
         TASKBAR_WIDTH_LOGICAL,
     },
-    tray::{TrayIcon, TRAY_CALLBACK},
+    tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
 };
@@ -90,9 +90,10 @@ struct NativeState<'a> {
     instance: HINSTANCE,
     owner: HWND,
     widgets: Vec<WidgetSlot>,
-    tray: Option<TrayIcon>,
+    tray: Option<AsyncTrayIcon>,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
+    taskbars: AsyncTaskbarTargets,
 }
 
 struct WidgetSlot {
@@ -121,6 +122,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             tray: None,
             settings,
             lifecycle: NativeLifecycle::default(),
+            taskbars: AsyncTaskbarTargets::new()?,
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
@@ -142,7 +144,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             state.owner = owner;
             state.lifecycle.owner_created();
             let snapshot = state.backend.snapshot();
-            state.tray = Some(TrayIcon::new(
+            state.tray = Some(AsyncTrayIcon::new(
                 owner,
                 highest_percent(&snapshot),
                 &snapshot.status,
@@ -264,6 +266,7 @@ unsafe extern "system" fn owner_proc(
 
     if message == taskbar_created {
         let _ = refresh_tray(pointer, true);
+        (*pointer).taskbars.invalidate();
         let _ = recover_widget(pointer, RecoveryEvent::TaskbarCreated);
         return LRESULT(0);
     }
@@ -612,7 +615,7 @@ unsafe fn recover_widget(
     if !(*state_pointer).settings.widget_visible {
         return Ok(());
     }
-    let targets = desired_taskbars(&(*state_pointer).settings);
+    let targets = desired_taskbars(state_pointer);
     if matches!(event, RecoveryEvent::TaskbarCreated)
         || !widgets_match_targets(&(*state_pointer).widgets, &targets)
     {
@@ -625,17 +628,16 @@ unsafe fn recover_widget(
 
 unsafe fn refresh_tray(state_pointer: *mut NativeState<'_>, restore: bool) -> io::Result<()> {
     let snapshot = (*state_pointer).backend.snapshot();
-    let mut tray = (*state_pointer)
+    let tray = (*state_pointer)
         .tray
-        .take()
+        .as_ref()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "tray icon unavailable"))?;
-    let result = if restore {
-        tray.restore(highest_percent(&snapshot), &snapshot.status)
+    if restore {
+        tray.restore(highest_percent(&snapshot), &snapshot.status);
     } else {
-        tray.update(highest_percent(&snapshot), &snapshot.status)
-    };
-    (*state_pointer).tray = Some(tray);
-    result
+        tray.update(highest_percent(&snapshot), &snapshot.status);
+    }
+    Ok(())
 }
 
 unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result<()> {
@@ -646,7 +648,7 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         }
         return Ok(());
     }
-    let targets = desired_taskbars(&settings);
+    let targets = desired_taskbars(state_pointer);
     if widgets_match_targets(&(*state_pointer).widgets, &targets) {
         reposition_widgets(&(*state_pointer).widgets, &targets);
         let state = &*state_pointer;
@@ -675,9 +677,10 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     Ok(())
 }
 
-unsafe fn desired_taskbars(settings: &UiSettings) -> Vec<TaskbarTarget> {
-    let mut targets = taskbar_targets(settings.taskbar_offset);
-    if settings.taskbar_display_mode == crate::TaskbarDisplayMode::Primary {
+unsafe fn desired_taskbars(state_pointer: *mut NativeState<'_>) -> Vec<TaskbarTarget> {
+    let state = &mut *state_pointer;
+    let mut targets = state.taskbars.current(state.settings.taskbar_offset);
+    if state.settings.taskbar_display_mode == crate::TaskbarDisplayMode::Primary {
         targets.truncate(1);
     }
     targets

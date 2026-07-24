@@ -1,4 +1,11 @@
-use std::io;
+use std::{
+    io,
+    sync::{
+        mpsc::{self, Receiver, SyncSender},
+        Arc, Mutex,
+    },
+    thread,
+};
 
 use windows::{
     core::{w, PCWSTR},
@@ -38,6 +45,119 @@ pub(crate) struct TaskbarTarget {
     pub parent: HWND,
     pub placement: Rect,
     pub origin: (i32, i32),
+}
+
+// HWND는 이 워커에서 생성·소유하지 않고 값으로만 전달하며, 실제 창 조작은 UI 스레드에서 수행합니다.
+unsafe impl Send for TaskbarTarget {}
+
+#[derive(Clone, Copy)]
+struct RefreshRequest {
+    generation: u64,
+    offset: i32,
+}
+
+struct RefreshResult<T> {
+    request: RefreshRequest,
+    value: T,
+}
+
+/// 느릴 수 있는 작업 표시줄 조회와 UI 스레드 사이의 최신 결과 캐시입니다.
+struct BackgroundRefresh<T> {
+    requested: Arc<Mutex<RefreshRequest>>,
+    trigger: SyncSender<()>,
+    results: Receiver<RefreshResult<T>>,
+    generation: u64,
+    latest: Option<(i32, T)>,
+}
+
+impl<T: Send + 'static> BackgroundRefresh<T> {
+    /// 느릴 수 있는 조회를 전용 워커에서 실행하는 비차단 캐시를 만듭니다.
+    ///
+    /// `scanner`는 워커 스레드에서 호출됩니다. 호출이 정지하더라도 `current`는 마지막 정상 결과를
+    /// 즉시 반환하며, 프로세스 종료 시 정지한 외부 호출을 기다리지 않습니다.
+    fn spawn(scanner: impl Fn(i32) -> T + Send + 'static) -> io::Result<Self> {
+        let requested = Arc::new(Mutex::new(RefreshRequest {
+            generation: 0,
+            offset: 0,
+        }));
+        let worker_request = Arc::clone(&requested);
+        let (trigger, requests) = mpsc::sync_channel(1);
+        let (result_tx, results) = mpsc::channel();
+        thread::Builder::new()
+            .name("taskbar-geometry".to_string())
+            .spawn(move || {
+                while requests.recv().is_ok() {
+                    let request = *worker_request
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    let value = scanner(request.offset);
+                    if result_tx.send(RefreshResult { request, value }).is_err() {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requested,
+            trigger,
+            results,
+            generation: 0,
+            latest: None,
+        })
+    }
+
+    fn current(&mut self, offset: i32) -> Option<&T> {
+        while let Ok(result) = self.results.try_recv() {
+            if result.request.generation == self.generation && result.request.offset == offset {
+                self.latest = Some((offset, result.value));
+            }
+        }
+        *self
+            .requested
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = RefreshRequest {
+            generation: self.generation,
+            offset,
+        };
+        let _ = self.trigger.try_send(());
+        self.latest
+            .as_ref()
+            .and_then(|(cached_offset, value)| (*cached_offset == offset).then_some(value))
+    }
+
+    fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.latest = None;
+    }
+}
+
+/// UI Automation을 기다리지 않고 마지막 작업 표시줄 배치를 제공하는 비동기 조회기입니다.
+pub(crate) struct AsyncTaskbarTargets {
+    refresh: BackgroundRefresh<Vec<TaskbarTarget>>,
+}
+
+impl AsyncTaskbarTargets {
+    /// 작업 표시줄 기하 조회를 전용 워커에서 수행하는 캐시를 만듭니다.
+    ///
+    /// UI 스레드는 `current`에서 마지막 완료 결과만 읽으며 UI Automation 완료를 기다리지 않습니다.
+    /// Explorer가 다시 시작되면 `invalidate`로 이전 HWND 결과를 폐기해야 합니다.
+    pub(crate) fn new() -> io::Result<Self> {
+        Ok(Self {
+            refresh: BackgroundRefresh::spawn(|offset| unsafe { taskbar_targets(offset) })?,
+        })
+    }
+
+    /// 현재 오프셋에 대한 마지막 완료 결과를 반환하고 다음 갱신을 예약합니다.
+    ///
+    /// 결과가 아직 없거나 오프셋이 바뀌었으면 빈 목록을 반환합니다. 반환된 HWND는 UI 스레드에서만
+    /// 사용해야 하며, 이 호출은 진행 중인 UI Automation을 기다리지 않습니다.
+    pub(crate) fn current(&mut self, offset: i32) -> Vec<TaskbarTarget> {
+        self.refresh.current(offset).cloned().unwrap_or_default()
+    }
+
+    /// Explorer 재시작 전에 시작된 조회와 캐시된 HWND를 모두 무효화합니다.
+    pub(crate) fn invalidate(&mut self) {
+        self.refresh.invalidate();
+    }
 }
 
 pub fn taskbar_available() -> bool {
@@ -336,4 +456,77 @@ fn fallback_notification_area(taskbar: Rect, dpi: u32) -> Rect {
 
 const fn from_native(rect: RECT) -> Rect {
     Rect::new(rect.left, rect.top, rect.right, rect.bottom)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc, Arc,
+        },
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use super::BackgroundRefresh;
+
+    #[test]
+    fn background_refresh_never_waits_for_a_blocked_scanner() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut refresh = BackgroundRefresh::spawn(move |_| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            7_u32
+        })
+        .unwrap();
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            release_tx.send(()).unwrap();
+        });
+
+        let started = Instant::now();
+        let current = refresh.current(0);
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert_eq!(current, None);
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        release.join().unwrap();
+    }
+
+    #[test]
+    fn invalidation_ignores_a_result_from_before_explorer_restart() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let worker_calls = Arc::clone(&calls);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut refresh = BackgroundRefresh::spawn(move |_| {
+            if worker_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                1_u32
+            } else {
+                2_u32
+            }
+        })
+        .unwrap();
+
+        assert_eq!(refresh.current(0), None);
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        refresh.invalidate();
+        assert_eq!(refresh.current(0), None);
+        release_tx.send(()).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match refresh.current(0).copied() {
+                Some(1) => panic!("stale target survived Explorer restart"),
+                Some(2) => break,
+                None if Instant::now() < deadline => thread::yield_now(),
+                None => panic!("refreshed target was not published"),
+                Some(other) => panic!("unexpected target {other}"),
+            }
+        }
+    }
 }

@@ -300,7 +300,7 @@ mod platform;
 
 #[cfg(windows)]
 pub(crate) use platform::{
-    attach_to_taskbar, reposition_taskbar_widget, taskbar_targets, TaskbarTarget,
+    attach_to_taskbar, reposition_taskbar_widget, AsyncTaskbarTargets, TaskbarTarget,
 };
 
 #[cfg(windows)]
