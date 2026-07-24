@@ -18,14 +18,14 @@ use windows::{
     },
 };
 
-use crate::{Language, LanguagePreference, StartupView};
+use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode};
 
 use super::super::{
     UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS,
     MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
     MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH,
-    MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_UPDATE_CHECK,
-    MENU_WIDGET_VISIBLE,
+    MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
+    MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
 };
 
 pub(crate) const TRAY_CALLBACK: u32 = WM_APP + 1;
@@ -195,14 +195,32 @@ impl TrayIcon {
                     } else {
                         "Hide widget"
                     }
+                } else if ko {
+                    "위젯 표시"
                 } else {
-                    if ko {
-                        "위젯 표시"
-                    } else {
-                        "Show widget"
-                    }
+                    "Show widget"
                 },
                 settings.widget_visible,
+            )?;
+            add(
+                menu,
+                MENU_TASKBAR_ALL,
+                if ko {
+                    "위젯: 모든 모니터"
+                } else {
+                    "Widget: all monitors"
+                },
+                settings.taskbar_display_mode == TaskbarDisplayMode::All,
+            )?;
+            add(
+                menu,
+                MENU_TASKBAR_PRIMARY,
+                if ko {
+                    "위젯: 주 모니터만"
+                } else {
+                    "Widget: primary monitor only"
+                },
+                settings.taskbar_display_mode == TaskbarDisplayMode::Primary,
             )?;
             separator(menu)?;
             add(menu, MENU_EXIT, if ko { "종료" } else { "Exit" }, false)?;

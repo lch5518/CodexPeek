@@ -28,49 +28,28 @@ pub fn taskbar_available() -> bool {
     }
 }
 
-pub(crate) unsafe fn attach_to_taskbar(hwnd: HWND, offset: i32) -> io::Result<HWND> {
-    let taskbars = taskbars();
-    for taskbar in taskbars {
-        let Some(notification) = notification_area(taskbar) else {
-            continue;
-        };
-        let mut taskbar_rect = RECT::default();
-        let mut notification_rect = RECT::default();
-        if GetWindowRect(taskbar, &mut taskbar_rect).is_err()
-            || GetWindowRect(notification, &mut notification_rect).is_err()
-        {
-            continue;
-        }
-        let geometry = TaskbarGeometry {
-            taskbar: from_native(taskbar_rect),
-            notification: from_native(notification_rect),
-        };
-        let dpi = GetDpiForWindow(taskbar).max(96);
-        let Ok(widget_size) = taskbar_widget_size(geometry.taskbar.height(), dpi) else {
-            continue;
-        };
-        let offset = crate::windows::widget::logical_to_physical(offset, dpi);
-        let Ok(placement) = place_taskbar_widget(geometry, widget_size, offset) else {
-            continue;
-        };
+pub(crate) unsafe fn taskbar_targets() -> Vec<HWND> {
+    taskbars()
+        .into_iter()
+        .filter(|taskbar| taskbar_has_widget_space(*taskbar))
+        .collect()
+}
 
-        let mut backend = WindowsAttachmentBackend {
-            hwnd,
-            placement,
-            taskbar_origin: (geometry.taskbar.left, geometry.taskbar.top),
-        };
-        match run_taskbar_attachment(&mut backend, taskbar) {
-            Ok(()) => return Ok(taskbar),
-            Err(error) if error.rollback_failed() => {
-                return Err(io::Error::other(error.to_string()));
-            }
-            Err(_) => continue,
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "no compatible horizontal taskbar",
-    ))
+pub(crate) unsafe fn attach_to_taskbar(hwnd: HWND, offset: i32, taskbar: HWND) -> io::Result<()> {
+    let (geometry, dpi) = taskbar_geometry(taskbar)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "taskbar geometry unavailable"))?;
+    let widget_size = taskbar_widget_size(geometry.taskbar.height(), dpi)
+        .map_err(|_| io::Error::other("taskbar is not compatible"))?;
+    let offset = crate::windows::widget::logical_to_physical(offset, dpi);
+    let placement = place_taskbar_widget(geometry, widget_size, offset)
+        .map_err(|_| io::Error::other("taskbar has insufficient widget space"))?;
+    let mut backend = WindowsAttachmentBackend {
+        hwnd,
+        placement,
+        taskbar_origin: (geometry.taskbar.left, geometry.taskbar.top),
+    };
+    run_taskbar_attachment(&mut backend, taskbar)
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 struct WindowsAttachmentBackend {
@@ -138,25 +117,37 @@ fn win_error(_: windows::core::Error) -> io::Error {
 }
 
 unsafe fn taskbar_has_widget_space(taskbar: HWND) -> bool {
-    let Some(notification) = notification_area(taskbar) else {
+    let Some((geometry, dpi)) = taskbar_geometry(taskbar) else {
         return false;
     };
-    let mut taskbar_rect = RECT::default();
-    let mut notification_rect = RECT::default();
-    if GetWindowRect(taskbar, &mut taskbar_rect).is_err()
-        || GetWindowRect(notification, &mut notification_rect).is_err()
-    {
-        return false;
-    }
-    let geometry = TaskbarGeometry {
-        taskbar: from_native(taskbar_rect),
-        notification: from_native(notification_rect),
-    };
-    let dpi = GetDpiForWindow(taskbar).max(96);
     let Ok(size) = taskbar_widget_size(geometry.taskbar.height(), dpi) else {
         return false;
     };
     place_taskbar_widget(geometry, size, 0).is_ok()
+}
+
+unsafe fn taskbar_geometry(taskbar: HWND) -> Option<(TaskbarGeometry, u32)> {
+    let mut taskbar_rect = RECT::default();
+    if GetWindowRect(taskbar, &mut taskbar_rect).is_err() {
+        return None;
+    }
+    let dpi = GetDpiForWindow(taskbar).max(96);
+    let taskbar_bounds = from_native(taskbar_rect);
+    let notification = notification_area(taskbar)
+        .and_then(|notification| {
+            let mut rect = RECT::default();
+            GetWindowRect(notification, &mut rect)
+                .is_ok()
+                .then(|| from_native(rect))
+        })
+        .unwrap_or_else(|| fallback_notification_area(taskbar_bounds, dpi));
+    Some((
+        TaskbarGeometry {
+            taskbar: taskbar_bounds,
+            notification,
+        },
+        dpi,
+    ))
 }
 
 unsafe fn taskbars() -> Vec<HWND> {
@@ -181,6 +172,18 @@ unsafe fn notification_area(taskbar: HWND) -> Option<HWND> {
         }
     }
     None
+}
+
+fn fallback_notification_area(taskbar: Rect, dpi: u32) -> Rect {
+    let reserved = crate::windows::widget::logical_to_physical(180, dpi)
+        .min(taskbar.width().saturating_div(3))
+        .max(0);
+    Rect::new(
+        taskbar.right.saturating_sub(reserved),
+        taskbar.top,
+        taskbar.right,
+        taskbar.bottom,
+    )
 }
 
 const fn from_native(rect: RECT) -> Rect {

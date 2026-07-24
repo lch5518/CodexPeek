@@ -22,9 +22,10 @@ use codex_usage_monitor::{
         MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
         MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_AUTO,
         MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH, MENU_STARTUP_TRAY,
-        MENU_STARTUP_WIDGET, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+        MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
+        MENU_WIDGET_VISIBLE,
     },
-    Language, LanguagePreference, StartupView, UpdatePresentationStatus,
+    Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
 };
 
 #[test]
@@ -94,6 +95,14 @@ fn every_menu_command_maps_to_a_typed_action() {
         (MENU_DIAGNOSTICS, UiAction::RunDiagnostics),
         (MENU_UPDATE_CHECK, UiAction::CheckForUpdates),
         (MENU_WIDGET_VISIBLE, UiAction::ToggleWidget),
+        (
+            MENU_TASKBAR_ALL,
+            UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::All),
+        ),
+        (
+            MENU_TASKBAR_PRIMARY,
+            UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::Primary),
+        ),
         (MENU_EXIT, UiAction::Exit),
     ];
     for (id, expected) in cases {
@@ -194,6 +203,20 @@ fn lifecycle_recreates_destroyed_taskbar_widget_and_cleans_in_safe_order() {
             CleanupAction::RemoveTray,
             CleanupAction::DestroyOwner,
         ]
+    );
+}
+
+#[test]
+fn periodic_recovery_keeps_a_valid_taskbar_attachment_stable() {
+    let mut lifecycle = NativeLifecycle::default();
+    lifecycle.owner_created();
+    lifecycle.timer_started();
+    lifecycle.widget_created();
+    lifecycle.widget_attached_to_taskbar();
+
+    assert_eq!(
+        lifecycle.recovery_decision(RecoveryEvent::Timer, true),
+        RecoveryDecision::Keep
     );
 }
 

@@ -39,6 +39,17 @@ pub enum LanguagePreference {
     English,
 }
 
+/// 다중 모니터에서 작업표시줄 위젯을 표시할 범위입니다.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskbarDisplayMode {
+    /// 사용 가능한 모든 모니터의 작업표시줄에 표시합니다.
+    #[default]
+    All,
+    /// Windows 주 모니터의 작업표시줄에만 표시합니다.
+    Primary,
+}
+
 /// 영속화하는 사용자 환경설정입니다.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Settings {
@@ -50,6 +61,9 @@ pub struct Settings {
     pub widget_visible: bool,
     /// 작업 표시줄에서 적용할 논리 픽셀 오프셋입니다.
     pub taskbar_offset: i32,
+    /// 다중 모니터에서 작업표시줄 위젯을 표시할 범위입니다.
+    #[serde(default)]
+    pub taskbar_display_mode: TaskbarDisplayMode,
     /// Windows 로그인 때 시작할지 여부입니다.
     pub start_with_windows: bool,
     /// 시작 시 표시할 화면입니다.
@@ -74,6 +88,7 @@ impl Default for Settings {
             refresh_interval_minutes: 5,
             widget_visible: true,
             taskbar_offset: 0,
+            taskbar_display_mode: TaskbarDisplayMode::All,
             start_with_windows: false,
             startup_view: StartupView::Widget,
             auto_auth_refresh: true,

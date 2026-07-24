@@ -282,7 +282,7 @@ fn rollback_attachment<B: TaskbarAttachmentBackend>(
 mod platform;
 
 #[cfg(windows)]
-pub(crate) use platform::attach_to_taskbar;
+pub(crate) use platform::{attach_to_taskbar, taskbar_targets};
 
 #[cfg(windows)]
 /// 지원 가능한 수평 작업 표시줄과 알림 영역이 있는지 확인합니다.

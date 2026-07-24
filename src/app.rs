@@ -272,6 +272,7 @@ impl UiBackend for AppRuntime {
             UiAction::ToggleShowRemaining => {
                 self.settings.show_remaining_percent = !self.settings.show_remaining_percent;
             }
+            UiAction::SetTaskbarDisplayMode(mode) => self.settings.taskbar_display_mode = mode,
         }
         self.save_settings();
         ui_settings(
@@ -305,6 +306,7 @@ fn ui_settings(
         language: settings.language,
         resolved_language: effective_language(settings.language),
         taskbar_offset: settings.taskbar_offset,
+        taskbar_display_mode: settings.taskbar_display_mode,
         update_status,
         show_remaining_percent: settings.show_remaining_percent,
     }
