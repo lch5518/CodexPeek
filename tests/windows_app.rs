@@ -240,37 +240,63 @@ fn taskbar_placement_handles_offsets_secondary_and_rejections() {
     let primary = TaskbarGeometry {
         taskbar: Rect::new(0, 1040, 1920, 1080),
         notification: Rect::new(1700, 1040, 1920, 1080),
+        occupied: None,
     };
     assert_eq!(
-        place_taskbar_widget(primary, (380, 40), 0),
+        place_taskbar_widget(primary, (380, 40), 88, 0),
         Ok(Rect::new(1320, 1040, 1700, 1080))
     );
     assert_eq!(
-        place_taskbar_widget(primary, (380, 40), -1),
+        place_taskbar_widget(primary, (380, 40), 88, -1),
         Err(TaskbarPlacementError::InsufficientSpace)
     );
     let secondary = TaskbarGeometry {
         taskbar: Rect::new(-1280, 984, 0, 1024),
         notification: Rect::new(-180, 984, 0, 1024),
+        occupied: None,
     };
     assert_eq!(
-        place_taskbar_widget(secondary, (380, 40), 12),
+        place_taskbar_widget(secondary, (380, 40), 88, 12),
         Ok(Rect::new(-572, 984, -192, 1024))
     );
     let vertical = TaskbarGeometry {
         taskbar: Rect::new(0, 0, 48, 1080),
         notification: Rect::new(0, 900, 48, 1080),
+        occupied: None,
     };
     assert_eq!(
-        place_taskbar_widget(vertical, (380, 48), 0),
+        place_taskbar_widget(vertical, (380, 48), 88, 0),
         Err(TaskbarPlacementError::VerticalTaskbar)
     );
     let narrow = TaskbarGeometry {
         taskbar: Rect::new(0, 0, 500, 40),
         notification: Rect::new(300, 0, 500, 40),
+        occupied: None,
     };
     assert_eq!(
-        place_taskbar_widget(narrow, (380, 40), 0),
+        place_taskbar_widget(narrow, (380, 40), 88, 0),
+        Ok(Rect::new(0, 0, 300, 40))
+    );
+}
+
+#[test]
+fn taskbar_placement_shrinks_to_the_gap_after_the_last_task_button() {
+    let geometry = TaskbarGeometry {
+        taskbar: Rect::new(1920, 1235, 3000, 1283),
+        notification: Rect::new(2820, 1235, 3000, 1283),
+        occupied: Some(Rect::new(1920, 1235, 2727, 1283)),
+    };
+    assert_eq!(
+        place_taskbar_widget(geometry, (208, 48), 88, 0),
+        Ok(Rect::new(2727, 1235, 2820, 1283))
+    );
+
+    let crowded = TaskbarGeometry {
+        occupied: Some(Rect::new(1920, 1235, 2733, 1283)),
+        ..geometry
+    };
+    assert_eq!(
+        place_taskbar_widget(crowded, (208, 48), 88, 0),
         Err(TaskbarPlacementError::InsufficientSpace)
     );
 }
@@ -326,15 +352,17 @@ fn taskbar_risk_uses_the_compact_widget_thresholds() {
 #[test]
 fn compact_taskbar_layout_fits_supported_dpis() {
     for dpi in [96, 120, 144, 192] {
-        let width = logical_to_physical(208, dpi);
-        let height = logical_to_physical(48, dpi);
-        let layout = TaskbarLayout::for_size(width, height, dpi);
+        for logical_width in [88, 208] {
+            let width = logical_to_physical(logical_width, dpi);
+            let height = logical_to_physical(48, dpi);
+            let layout = TaskbarLayout::for_size(width, height, dpi);
 
-        assert!(layout.dot.is_inside(layout.window));
-        assert!(layout.label.is_inside(layout.window));
-        assert!(layout.percent.is_inside(layout.window));
-        assert!(layout.progress.is_inside(layout.window));
-        assert!(!layout.label.intersects(layout.percent));
+            assert!(layout.dot.is_inside(layout.window));
+            assert!(layout.label.is_inside(layout.window));
+            assert!(layout.percent.is_inside(layout.window));
+            assert!(layout.progress.is_inside(layout.window));
+            assert!(!layout.label.intersects(layout.percent));
+        }
     }
 }
 

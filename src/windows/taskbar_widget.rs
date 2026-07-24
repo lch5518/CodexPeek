@@ -3,8 +3,11 @@
 use super::{widget::logical_to_physical, UsageRowView};
 use crate::windows::widget::Rect;
 
-/// 작업 표시줄 위젯의 고정 논리 너비입니다.
+/// 작업 표시줄에 여유 공간이 있을 때 사용하는 위젯의 기본 논리 너비입니다.
 pub const TASKBAR_WIDTH_LOGICAL: i32 = 208;
+
+/// 작업 표시줄 아이콘과 겹치지 않으면서 내용을 유지할 수 있는 최소 논리 너비입니다.
+pub const TASKBAR_MIN_WIDTH_LOGICAL: i32 = 88;
 
 /// hover 밝기를 약 150ms 동안 현재 값에서 목표 값으로 이동시킵니다.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -59,7 +59,7 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
-    taskbar::{attach_to_taskbar, taskbar_targets},
+    taskbar::{attach_to_taskbar, reposition_taskbar_widget, taskbar_targets, TaskbarTarget},
     taskbar_widget::{
         progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk,
         TASKBAR_WIDTH_LOGICAL,
@@ -448,8 +448,7 @@ unsafe fn dispatch_menu(state_pointer: *mut NativeState<'_>, menu_id: u16) {
 
 unsafe fn create_widget(
     state_pointer: *mut NativeState<'_>,
-    taskbar_parent: HWND,
-    taskbar_offset: i32,
+    target: TaskbarTarget,
 ) -> io::Result<HWND> {
     let (owner, instance) = {
         let state = &*state_pointer;
@@ -476,7 +475,7 @@ unsafe fn create_widget(
     let was_empty = (*state_pointer).widgets.is_empty();
     (*state_pointer).widgets.push(WidgetSlot {
         hwnd: widget,
-        taskbar_parent,
+        taskbar_parent: target.parent,
         hover: HoverTransition::default(),
         mouse_tracking: false,
         tooltip: HWND::default(),
@@ -486,8 +485,8 @@ unsafe fn create_widget(
         let state = &mut *state_pointer;
         state.lifecycle.widget_created();
     }
-    if let Err(error) = set_layered_mode(widget, true)
-        .and_then(|()| attach_to_taskbar(widget, taskbar_offset, taskbar_parent))
+    if let Err(error) =
+        set_layered_mode(widget, true).and_then(|()| attach_to_taskbar(widget, target))
     {
         let _ = DestroyWindow(widget);
         return Err(error);
@@ -618,6 +617,8 @@ unsafe fn recover_widget(
         || !widgets_match_targets(&(*state_pointer).widgets, &targets)
     {
         apply_window_policy(state_pointer)?;
+    } else {
+        reposition_widgets(&(*state_pointer).widgets, &targets);
     }
     Ok(())
 }
@@ -647,6 +648,7 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     }
     let targets = desired_taskbars(&settings);
     if widgets_match_targets(&(*state_pointer).widgets, &targets) {
+        reposition_widgets(&(*state_pointer).widgets, &targets);
         let state = &*state_pointer;
         let snapshot = state.backend.snapshot();
         for widget in &state.widgets {
@@ -659,8 +661,8 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     }
     destroy_all_widgets(state_pointer);
     let snapshot = (*state_pointer).backend.snapshot();
-    for taskbar in targets {
-        match create_widget(state_pointer, taskbar, settings.taskbar_offset) {
+    for target in targets {
+        match create_widget(state_pointer, target) {
             Ok(widget) => {
                 let _ = ShowWindow(widget, SW_SHOWNA);
                 if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0) {
@@ -673,22 +675,30 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     Ok(())
 }
 
-unsafe fn desired_taskbars(settings: &UiSettings) -> Vec<HWND> {
-    let mut targets = taskbar_targets();
+unsafe fn desired_taskbars(settings: &UiSettings) -> Vec<TaskbarTarget> {
+    let mut targets = taskbar_targets(settings.taskbar_offset);
     if settings.taskbar_display_mode == crate::TaskbarDisplayMode::Primary {
         targets.truncate(1);
     }
     targets
 }
 
-unsafe fn widgets_match_targets(widgets: &[WidgetSlot], targets: &[HWND]) -> bool {
+unsafe fn widgets_match_targets(widgets: &[WidgetSlot], targets: &[TaskbarTarget]) -> bool {
     widgets.len() == targets.len()
         && widgets.iter().zip(targets).all(|(widget, target)| {
-            widget.taskbar_parent == *target
+            widget.taskbar_parent == target.parent
                 && IsWindow(Some(widget.hwnd)).as_bool()
-                && IsWindow(Some(*target)).as_bool()
-                && GetParent(widget.hwnd).ok() == Some(*target)
+                && IsWindow(Some(target.parent)).as_bool()
+                && GetParent(widget.hwnd).ok() == Some(target.parent)
         })
+}
+
+unsafe fn reposition_widgets(widgets: &[WidgetSlot], targets: &[TaskbarTarget]) {
+    for (widget, target) in widgets.iter().zip(targets) {
+        if let Err(error) = reposition_taskbar_widget(widget.hwnd, *target) {
+            log_taskbar_render_error("position", &error);
+        }
+    }
 }
 
 unsafe fn destroy_all_widgets(state_pointer: *mut NativeState<'_>) {

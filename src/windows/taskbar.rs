@@ -1,7 +1,7 @@
 //! 작업 표시줄 위젯 배치와 네이티브 연결 지원입니다.
 
 use super::{
-    taskbar_widget::TASKBAR_WIDTH_LOGICAL,
+    taskbar_widget::{TASKBAR_MIN_WIDTH_LOGICAL, TASKBAR_WIDTH_LOGICAL},
     widget::{logical_to_physical, Rect},
 };
 use std::fmt;
@@ -17,6 +17,8 @@ pub struct TaskbarGeometry {
     pub taskbar: Rect,
     /// 알림 영역 화면 좌표입니다.
     pub notification: Rect,
+    /// 위젯이 침범하면 안 되는 작업 표시줄 버튼 영역입니다.
+    pub occupied: Option<Rect>,
 }
 
 /// 작업 표시줄 배치를 안전하게 수행할 수 없는 이유입니다.
@@ -32,6 +34,7 @@ pub enum TaskbarPlacementError {
 pub fn place_taskbar_widget(
     geometry: TaskbarGeometry,
     widget_size: (i32, i32),
+    minimum_width: i32,
     offset: i32,
 ) -> Result<Rect, TaskbarPlacementError> {
     if offset < 0 {
@@ -41,9 +44,18 @@ pub fn place_taskbar_widget(
         return Err(TaskbarPlacementError::VerticalTaskbar);
     }
     let right = geometry.notification.left.saturating_sub(offset);
-    let left = right.saturating_sub(widget_size.0);
+    let preferred_left = right.saturating_sub(widget_size.0);
+    let occupied_right = geometry
+        .occupied
+        .map(|occupied| occupied.right)
+        .unwrap_or(geometry.taskbar.left)
+        .max(geometry.taskbar.left);
+    let left = preferred_left.max(occupied_right);
     if widget_size.0 <= 0
         || widget_size.1 <= 0
+        || minimum_width <= 0
+        || minimum_width > widget_size.0
+        || right.saturating_sub(left) < minimum_width
         || left < geometry.taskbar.left
         || right > geometry.taskbar.right
         || widget_size.1 > geometry.taskbar.height()
@@ -56,6 +68,11 @@ pub fn place_taskbar_widget(
         right,
         geometry.taskbar.top + widget_size.1,
     ))
+}
+
+/// 대상 DPI에서 위젯이 축소될 수 있는 최소 물리 너비를 반환합니다.
+pub fn taskbar_widget_minimum_width(dpi: u32) -> i32 {
+    logical_to_physical(TASKBAR_MIN_WIDTH_LOGICAL, dpi)
 }
 
 /// 작업 표시줄 높이에 맞춘 축약 위젯의 물리 크기를 반환합니다.
@@ -282,7 +299,9 @@ fn rollback_attachment<B: TaskbarAttachmentBackend>(
 mod platform;
 
 #[cfg(windows)]
-pub(crate) use platform::{attach_to_taskbar, taskbar_targets};
+pub(crate) use platform::{
+    attach_to_taskbar, reposition_taskbar_widget, taskbar_targets, TaskbarTarget,
+};
 
 #[cfg(windows)]
 /// 지원 가능한 수평 작업 표시줄과 알림 영역이 있는지 확인합니다.
