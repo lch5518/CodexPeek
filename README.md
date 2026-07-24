@@ -33,6 +33,12 @@ It does not start a Codex task or call `codex exec`.
 
 There is no installer or WinGet package yet. Build the application from source after installing and signing in to Codex CLI.
 
+If Rust is not installed, download the Rust installer first, run the downloaded file, and then open a new PowerShell window:
+
+```powershell
+Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:TEMP\rustup-init.exe"
+```
+
 ```powershell
 git clone https://github.com/lch5518/CodexPeek.git
 Set-Location .\CodexPeek
