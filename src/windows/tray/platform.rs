@@ -1,4 +1,11 @@
-use std::io;
+use std::{
+    io,
+    sync::{
+        mpsc::{self, SyncSender},
+        Arc, Mutex,
+    },
+    thread,
+};
 
 use windows::{
     core::PCWSTR,
@@ -30,6 +37,115 @@ use super::super::{
 
 pub(crate) const TRAY_CALLBACK: u32 = WM_APP + 1;
 const ICON_ID: u32 = 1;
+
+/// 셸 명령을 하나의 워커에서 직렬화하고 대기 명령을 최신 값으로 합치는 실행기입니다.
+struct CoalescingWorker<C> {
+    pending: Arc<Mutex<C>>,
+    trigger: SyncSender<()>,
+}
+
+impl<C: Clone + Send + 'static> CoalescingWorker<C> {
+    /// 느릴 수 있는 최신 명령 하나를 전용 워커에서 실행합니다.
+    ///
+    /// `submit`은 진행 중인 명령을 기다리지 않습니다. 대기 중인 여러 명령은 마지막 값으로 합쳐지며,
+    /// 외부 호출이 정지한 경우에도 워커 스레드를 추가로 만들지 않습니다.
+    fn spawn<H>(
+        initial: C,
+        handler_factory: impl FnOnce() -> H + Send + 'static,
+    ) -> io::Result<Self>
+    where
+        H: FnMut(C) + 'static,
+    {
+        let pending = Arc::new(Mutex::new(initial));
+        let worker_pending = Arc::clone(&pending);
+        let (trigger, commands) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("tray-shell".to_string())
+            .spawn(move || {
+                let mut handler = handler_factory();
+                while commands.recv().is_ok() {
+                    let command = worker_pending
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clone();
+                    handler(command);
+                }
+            })?;
+        Ok(Self { pending, trigger })
+    }
+
+    fn submit(&self, command: C) {
+        *self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = command;
+        let _ = self.trigger.try_send(());
+    }
+}
+
+/// 트레이 워커에 전달하는 최신 아이콘 표시 명령입니다.
+#[derive(Clone)]
+struct TrayUpdate {
+    percent: Option<f64>,
+    tip: String,
+    restore: bool,
+}
+
+/// Explorer 셸 호출과 UI 메시지 처리를 분리하는 비동기 트레이 아이콘입니다.
+pub(crate) struct AsyncTrayIcon {
+    worker: CoalescingWorker<TrayUpdate>,
+}
+
+impl AsyncTrayIcon {
+    /// Explorer 셸 호출을 전용 워커에서 실행하는 트레이 아이콘을 만듭니다.
+    ///
+    /// `owner`는 트레이 콜백을 받을 UI 창입니다. 생성·갱신·복구·삭제 셸 호출은 UI 스레드를
+    /// 차단하지 않으며, Explorer가 응답하지 않으면 마지막 명령 하나만 대기합니다.
+    pub(crate) fn new(owner: HWND, percent: Option<f64>, tip: &str) -> io::Result<Self> {
+        let initial = TrayUpdate {
+            percent,
+            tip: tip.to_string(),
+            restore: true,
+        };
+        let owner_value = owner.0 as usize;
+        let worker = CoalescingWorker::spawn(initial.clone(), move || {
+            let owner = HWND(owner_value as *mut _);
+            let mut tray: Option<TrayIcon> = None;
+            move |update: TrayUpdate| unsafe {
+                let result = match tray.as_mut() {
+                    Some(tray) if update.restore => tray.restore(update.percent, &update.tip),
+                    Some(tray) => tray
+                        .update(update.percent, &update.tip)
+                        .or_else(|_| tray.restore(update.percent, &update.tip)),
+                    None => TrayIcon::new(owner, update.percent, &update.tip).map(|created| {
+                        tray = Some(created);
+                    }),
+                };
+                let _ = result;
+            }
+        })?;
+        worker.submit(initial);
+        Ok(Self { worker })
+    }
+
+    /// 최신 상태로 트레이 아이콘 갱신을 예약하고 즉시 반환합니다.
+    pub(crate) fn update(&self, percent: Option<f64>, tip: &str) {
+        self.submit(percent, tip, false);
+    }
+
+    /// Explorer 재시작 후 트레이 아이콘 복구를 예약하고 즉시 반환합니다.
+    pub(crate) fn restore(&self, percent: Option<f64>, tip: &str) {
+        self.submit(percent, tip, true);
+    }
+
+    fn submit(&self, percent: Option<f64>, tip: &str, restore: bool) {
+        self.worker.submit(TrayUpdate {
+            percent,
+            tip: tip.to_string(),
+            restore,
+        });
+    }
+}
 
 /// 알림 영역 아이콘과 동적 미터 아이콘의 소유자입니다.
 pub(crate) struct TrayIcon {
@@ -341,4 +457,47 @@ unsafe fn separator(menu: windows::Win32::UI::WindowsAndMessaging::HMENU) -> Opt
     AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())
         .ok()
         .map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use super::CoalescingWorker;
+
+    #[test]
+    fn tray_worker_submission_never_waits_for_a_blocked_shell_call() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (handled_tx, handled_rx) = mpsc::channel();
+        let worker = CoalescingWorker::spawn(0_u32, move || {
+            move |value| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                handled_tx.send(value).unwrap();
+            }
+        })
+        .unwrap();
+
+        let delayed_release = release_tx.clone();
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            delayed_release.send(()).unwrap();
+        });
+        let started = Instant::now();
+        worker.submit(1);
+        assert!(started.elapsed() < Duration::from_millis(100));
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        release.join().unwrap();
+        assert_eq!(handled_rx.recv_timeout(Duration::from_secs(1)), Ok(1));
+
+        worker.submit(2);
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        release_tx.send(()).unwrap();
+        assert_eq!(handled_rx.recv_timeout(Duration::from_secs(1)), Ok(2));
+    }
 }
