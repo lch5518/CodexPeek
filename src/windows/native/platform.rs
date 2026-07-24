@@ -16,8 +16,8 @@ use windows::{
             DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetStockObject,
             InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
             BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
-            DIB_RGB_COLORS, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE, DT_VCENTER,
-            FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN, OUT_DEFAULT_PRECIS,
+            DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE,
+            DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN, OUT_DEFAULT_PRECIS,
             PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
@@ -46,9 +46,10 @@ use windows::{
                 CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
                 MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
                 SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
-                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DPICHANGED, WM_MOUSEMOVE,
-                WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS,
-                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE,
+                WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
+                WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED,
+                WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -59,10 +60,13 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
-    taskbar::{attach_to_taskbar, reposition_taskbar_widget, AsyncTaskbarTargets, TaskbarTarget},
+    taskbar::{
+        attach_to_taskbar, reposition_taskbar_widget, TaskbarObserver, TaskbarTarget,
+        TASKBAR_LAYOUT_CHANGED,
+    },
     taskbar_widget::{
-        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarRisk,
-        TASKBAR_WIDTH_LOGICAL,
+        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode,
+        TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
@@ -71,9 +75,39 @@ use super::super::{
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
+const TASKBAR_STARTUP_RETRIES: u8 = 5;
+const TASKBAR_RECONCILE_TICKS: u8 = 30;
 const OWNER_CLASS: PCWSTR = w!("CodexUsageMonitor.Hidden.v1");
 const WIDGET_CLASS: PCWSTR = w!("CodexUsageMonitor.Widget.v1");
 static TASKBAR_CREATED_MESSAGE: AtomicU32 = AtomicU32::new(0);
+
+struct TaskbarRefreshSchedule {
+    startup_retries_remaining: u8,
+    reconcile_ticks: u8,
+}
+
+impl TaskbarRefreshSchedule {
+    const fn new() -> Self {
+        Self {
+            startup_retries_remaining: TASKBAR_STARTUP_RETRIES,
+            reconcile_ticks: 0,
+        }
+    }
+
+    fn tick(&mut self) -> bool {
+        if self.startup_retries_remaining > 0 {
+            self.startup_retries_remaining -= 1;
+            return true;
+        }
+        self.reconcile_ticks = self.reconcile_ticks.saturating_add(1);
+        if self.reconcile_ticks >= TASKBAR_RECONCILE_TICKS {
+            self.reconcile_ticks = 0;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 pub(super) struct SingleInstanceGuard(pub(super) HANDLE);
 
@@ -90,10 +124,11 @@ struct NativeState<'a> {
     instance: HINSTANCE,
     owner: HWND,
     widgets: Vec<WidgetSlot>,
+    taskbar_observer: Option<TaskbarObserver>,
     tray: Option<AsyncTrayIcon>,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
-    taskbars: AsyncTaskbarTargets,
+    taskbar_refresh_schedule: TaskbarRefreshSchedule,
 }
 
 struct WidgetSlot {
@@ -119,10 +154,11 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             instance,
             owner: HWND::default(),
             widgets: Vec::new(),
+            taskbar_observer: None,
             tray: None,
             settings,
             lifecycle: NativeLifecycle::default(),
-            taskbars: AsyncTaskbarTargets::new()?,
+            taskbar_refresh_schedule: TaskbarRefreshSchedule::new(),
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
@@ -143,6 +179,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             .map_err(win_error)?;
             state.owner = owner;
             state.lifecycle.owner_created();
+            state.taskbar_observer = Some(TaskbarObserver::start(owner)?);
             let snapshot = state.backend.snapshot();
             state.tray = Some(AsyncTrayIcon::new(
                 owner,
@@ -218,6 +255,7 @@ unsafe fn register_classes(instance: HINSTANCE) -> io::Result<()> {
 }
 
 unsafe fn cleanup_native_state(state_pointer: *mut NativeState<'_>) {
+    drop((*state_pointer).taskbar_observer.take());
     let actions = (*state_pointer).lifecycle.cleanup_actions();
     for action in actions {
         match action {
@@ -255,7 +293,17 @@ unsafe extern "system" fn owner_proc(
     }
     let taskbar_created = TASKBAR_CREATED_MESSAGE.load(Ordering::Relaxed);
     if message != taskbar_created
-        && !matches!(message, WM_TIMER | TRAY_CALLBACK | WM_CLOSE | WM_DESTROY)
+        && !matches!(
+            message,
+            WM_TIMER
+                | TRAY_CALLBACK
+                | WM_CLOSE
+                | WM_DESTROY
+                | TASKBAR_LAYOUT_CHANGED
+                | WM_DISPLAYCHANGE
+                | WM_SETTINGCHANGE
+                | WM_THEMECHANGED
+        )
     {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
@@ -266,8 +314,9 @@ unsafe extern "system" fn owner_proc(
 
     if message == taskbar_created {
         let _ = refresh_tray(pointer, true);
-        (*pointer).taskbars.invalidate();
-        let _ = recover_widget(pointer, RecoveryEvent::TaskbarCreated);
+        if let Some(observer) = &(*pointer).taskbar_observer {
+            observer.invalidate();
+        }
         return LRESULT(0);
     }
 
@@ -275,6 +324,11 @@ unsafe extern "system" fn owner_proc(
         WM_TIMER if wparam.0 == TIMER_ID => {
             let settings = (*pointer).backend.settings();
             (*pointer).settings = settings;
+            if (*pointer).taskbar_refresh_schedule.tick() {
+                if let Some(observer) = &(*pointer).taskbar_observer {
+                    observer.refresh();
+                }
+            }
             let _ = refresh_tray(pointer, false);
             update_tooltips(pointer);
             let _ = recover_widget(pointer, RecoveryEvent::Timer);
@@ -284,6 +338,16 @@ unsafe extern "system" fn owner_proc(
                 for widget in &state.widgets {
                     let _ = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value());
                 }
+            }
+            LRESULT(0)
+        }
+        TASKBAR_LAYOUT_CHANGED => {
+            let _ = apply_window_policy(pointer);
+            LRESULT(0)
+        }
+        WM_DISPLAYCHANGE | WM_SETTINGCHANGE | WM_THEMECHANGED => {
+            if let Some(observer) = &(*pointer).taskbar_observer {
+                observer.refresh();
             }
             LRESULT(0)
         }
@@ -615,7 +679,7 @@ unsafe fn recover_widget(
     if !(*state_pointer).settings.widget_visible {
         return Ok(());
     }
-    let targets = desired_taskbars(state_pointer);
+    let targets = desired_taskbars(&*state_pointer);
     if matches!(event, RecoveryEvent::TaskbarCreated)
         || !widgets_match_targets(&(*state_pointer).widgets, &targets)
     {
@@ -648,7 +712,7 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         }
         return Ok(());
     }
-    let targets = desired_taskbars(state_pointer);
+    let targets = desired_taskbars(&*state_pointer);
     if widgets_match_targets(&(*state_pointer).widgets, &targets) {
         reposition_widgets(&(*state_pointer).widgets, &targets);
         let state = &*state_pointer;
@@ -677,9 +741,12 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     Ok(())
 }
 
-unsafe fn desired_taskbars(state_pointer: *mut NativeState<'_>) -> Vec<TaskbarTarget> {
-    let state = &mut *state_pointer;
-    let mut targets = state.taskbars.current(state.settings.taskbar_offset);
+unsafe fn desired_taskbars(state: &NativeState<'_>) -> Vec<TaskbarTarget> {
+    let mut targets = state
+        .taskbar_observer
+        .as_ref()
+        .map(|observer| observer.targets(state.settings.taskbar_offset))
+        .unwrap_or_default();
     if state.settings.taskbar_display_mode == crate::TaskbarDisplayMode::Primary {
         targets.truncate(1);
     }
@@ -1019,7 +1086,7 @@ unsafe fn paint_compact_taskbar_content(
     let _ = DeleteObject(HGDIOBJ(background.0));
     let _ = SetBkMode(dc, TRANSPARENT);
 
-    if risk == TaskbarRisk::Error {
+    if risk == TaskbarRisk::Error && layout.dot.is_some() {
         let font = CreateFontW(
             -logical_to_physical(11, dpi),
             0,
@@ -1037,7 +1104,7 @@ unsafe fn paint_compact_taskbar_content(
             w!("Segoe UI Variable"),
         );
         let old = SelectObject(dc, HGDIOBJ(font.0));
-        let mut dot = native_rect(layout.dot);
+        let mut dot = native_rect(layout.dot.expect("checked above"));
         draw_text(
             dc,
             "!",
@@ -1047,44 +1114,46 @@ unsafe fn paint_compact_taskbar_content(
         );
         SelectObject(dc, old);
         let _ = DeleteObject(HGDIOBJ(font.0));
-    } else {
+    } else if let Some(dot) = layout.dot {
         let brush = CreateSolidBrush(accent);
         let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
         let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-        let dot = native_rect(layout.dot);
+        let dot = native_rect(dot);
         let _ = Ellipse(dc, dot.left, dot.top, dot.right, dot.bottom);
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
         let _ = DeleteObject(HGDIOBJ(brush.0));
     }
 
-    let label_font = CreateFontW(
-        -logical_to_physical(12, dpi),
-        0,
-        0,
-        0,
-        FW_NORMAL.0 as i32,
-        0,
-        0,
-        0,
-        DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS,
-        PROOF_QUALITY,
-        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-        w!("Segoe UI Variable"),
-    );
-    let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
-    let mut label = native_rect(layout.label);
-    draw_text(
-        dc,
-        &view.taskbar_label,
-        &mut label,
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-        COLORREF(palette.label),
-    );
-    SelectObject(dc, old_font);
-    let _ = DeleteObject(HGDIOBJ(label_font.0));
+    if let Some(label) = layout.label {
+        let label_font = CreateFontW(
+            -logical_to_physical(12, dpi),
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            PROOF_QUALITY,
+            u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+            w!("Segoe UI Variable"),
+        );
+        let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
+        let mut label = native_rect(label);
+        draw_text(
+            dc,
+            &view.taskbar_label,
+            &mut label,
+            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            COLORREF(palette.label),
+        );
+        SelectObject(dc, old_font);
+        let _ = DeleteObject(HGDIOBJ(label_font.0));
+    }
 
     let percent_font = CreateFontW(
         -logical_to_physical(12, dpi),
@@ -1104,12 +1173,25 @@ unsafe fn paint_compact_taskbar_content(
     );
     let old_font = SelectObject(dc, HGDIOBJ(percent_font.0));
     let mut percent = native_rect(layout.percent);
+    let percent_alignment = if layout.mode == TaskbarLayoutMode::Minimal {
+        DT_CENTER
+    } else {
+        DT_RIGHT
+    };
+    let minimal_error = layout.mode == TaskbarLayoutMode::Minimal && risk == TaskbarRisk::Error;
+    let percent_text =
+        compact_percent_text(layout.mode, risk, row.map(|row| row.percent_text.as_str()));
+    let percent_color = if minimal_error {
+        accent
+    } else {
+        COLORREF(palette.percent)
+    };
     draw_text(
         dc,
-        row.map_or("--", |row| row.percent_text.as_str()),
+        percent_text,
         &mut percent,
-        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
-        COLORREF(palette.percent),
+        percent_alignment | DT_SINGLELINE | DT_VCENTER,
+        percent_color,
     );
     SelectObject(dc, old_font);
     let _ = DeleteObject(HGDIOBJ(percent_font.0));
@@ -1131,6 +1213,14 @@ unsafe fn paint_compact_taskbar_content(
             );
             let _ = DeleteObject(HGDIOBJ(fill.0));
         }
+    }
+}
+
+fn compact_percent_text(mode: TaskbarLayoutMode, risk: TaskbarRisk, percent: Option<&str>) -> &str {
+    if mode == TaskbarLayoutMode::Minimal && risk == TaskbarRisk::Error {
+        "!"
+    } else {
+        percent.unwrap_or("--")
     }
 }
 
@@ -1242,7 +1332,8 @@ pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::
 #[cfg(test)]
 mod tests {
     use super::{
-        glass_noise, rounded_material_alpha, should_open_tray_menu, taskbar_palette, NIN_SELECT,
+        compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
+        taskbar_palette, TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, NIN_SELECT,
         WM_CONTEXTMENU,
     };
     use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONUP, WM_RBUTTONUP};
@@ -1253,6 +1344,30 @@ mod tests {
         assert!(should_open_tray_menu(NIN_SELECT));
         assert!(!should_open_tray_menu(WM_RBUTTONUP));
         assert!(!should_open_tray_menu(WM_LBUTTONUP));
+    }
+
+    #[test]
+    fn taskbar_refresh_schedule_retries_startup_then_uses_the_safety_interval() {
+        let mut schedule = TaskbarRefreshSchedule::new();
+        for _ in 0..5 {
+            assert!(schedule.tick());
+        }
+        for _ in 0..29 {
+            assert!(!schedule.tick());
+        }
+        assert!(schedule.tick());
+    }
+
+    #[test]
+    fn minimal_layout_keeps_error_state_visible() {
+        assert_eq!(
+            compact_percent_text(TaskbarLayoutMode::Minimal, TaskbarRisk::Error, Some("42%")),
+            "!"
+        );
+        assert_eq!(
+            compact_percent_text(TaskbarLayoutMode::Full, TaskbarRisk::Error, Some("42%")),
+            "42%"
+        );
     }
 
     #[test]

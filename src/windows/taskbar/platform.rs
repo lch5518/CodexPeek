@@ -1,8 +1,8 @@
 use std::{
     io,
     sync::{
-        mpsc::{self, Receiver, SyncSender},
-        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc, Arc, Mutex,
     },
     thread,
 };
@@ -10,24 +10,30 @@ use std::{
 use windows::{
     core::{w, PCWSTR},
     Win32::{
-        Foundation::{HWND, RECT, RPC_E_CHANGED_MODE},
+        Foundation::{HWND, LPARAM, RECT, RPC_E_CHANGED_MODE, WPARAM},
         System::{
             Com::{
                 CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
                 COINIT_MULTITHREADED,
             },
+            Threading::GetCurrentThreadId,
             Variant::VARIANT,
         },
         UI::{
             Accessibility::{
-                CUIAutomation, IUIAutomation, TreeScope_Descendants, UIA_ClassNamePropertyId,
+                CUIAutomation, IUIAutomation, SetWinEventHook, TreeScope_Descendants,
+                UIA_ClassNamePropertyId, UnhookWinEvent,
             },
             HiDpi::GetDpiForWindow,
             WindowsAndMessaging::{
-                EnumChildWindows, FindWindowExW, FindWindowW, GetClassNameW, GetParent,
-                GetWindowLongPtrW, GetWindowRect, SetParent, SetWindowLongPtrW, SetWindowPos,
-                GWL_STYLE, HWND_TOP, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-                SWP_NOZORDER,
+                EnumChildWindows, FindWindowExW, FindWindowW, GetAncestor, GetClassNameW,
+                GetMessageW, GetParent, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
+                PeekMessageW, PostMessageW, PostThreadMessageW, SetParent, SetWindowLongPtrW,
+                SetWindowPos, EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE,
+                EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_REORDER, EVENT_OBJECT_SHOW, GA_ROOT,
+                GWL_STYLE, HWND_TOP, MSG, PM_NOREMOVE, PM_REMOVE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+                SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WINEVENT_OUTOFCONTEXT,
+                WINEVENT_SKIPOWNPROCESS, WM_APP,
             },
         },
     },
@@ -39,6 +45,30 @@ use super::{
 };
 
 const TASK_BUTTON_GAP_LOGICAL: i32 = 4;
+pub(crate) const TASKBAR_LAYOUT_CHANGED: u32 = WM_APP + 41;
+const OBSERVER_REFRESH: u32 = WM_APP + 42;
+const OBSERVER_STOP: u32 = WM_APP + 43;
+static OBSERVER_REFRESH_GATE: RefreshGate = RefreshGate::new();
+
+struct RefreshGate {
+    pending: AtomicBool,
+}
+
+impl RefreshGate {
+    const fn new() -> Self {
+        Self {
+            pending: AtomicBool::new(false),
+        }
+    }
+
+    fn request(&self) -> bool {
+        !self.pending.swap(true, Ordering::AcqRel)
+    }
+
+    fn complete(&self) {
+        self.pending.store(false, Ordering::Release);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TaskbarTarget {
@@ -47,116 +77,129 @@ pub(crate) struct TaskbarTarget {
     pub origin: (i32, i32),
 }
 
-// HWND는 이 워커에서 생성·소유하지 않고 값으로만 전달하며, 실제 창 조작은 UI 스레드에서 수행합니다.
-unsafe impl Send for TaskbarTarget {}
-
-#[derive(Clone, Copy)]
-struct RefreshRequest {
-    generation: u64,
-    offset: i32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ObservedTaskbar {
+    parent: isize,
+    geometry: TaskbarGeometry,
+    dpi: u32,
 }
 
-struct RefreshResult<T> {
-    request: RefreshRequest,
+struct GenerationSnapshot<T> {
+    generation: u64,
     value: T,
 }
 
-/// 느릴 수 있는 작업 표시줄 조회와 UI 스레드 사이의 최신 결과 캐시입니다.
-struct BackgroundRefresh<T> {
-    requested: Arc<Mutex<RefreshRequest>>,
-    trigger: SyncSender<()>,
-    results: Receiver<RefreshResult<T>>,
-    generation: u64,
-    latest: Option<(i32, T)>,
+/// Explorer 세대별로 최신 작업 표시줄 관찰 결과만 공개하는 짧은 잠금 캐시입니다.
+struct GenerationCache<T> {
+    generation: AtomicU64,
+    snapshot: Mutex<GenerationSnapshot<T>>,
 }
 
-impl<T: Send + 'static> BackgroundRefresh<T> {
-    /// 느릴 수 있는 조회를 전용 워커에서 실행하는 비차단 캐시를 만듭니다.
-    ///
-    /// `scanner`는 워커 스레드에서 호출됩니다. 호출이 정지하더라도 `current`는 마지막 정상 결과를
-    /// 즉시 반환하며, 프로세스 종료 시 정지한 외부 호출을 기다리지 않습니다.
-    fn spawn(scanner: impl Fn(i32) -> T + Send + 'static) -> io::Result<Self> {
-        let requested = Arc::new(Mutex::new(RefreshRequest {
-            generation: 0,
-            offset: 0,
-        }));
-        let worker_request = Arc::clone(&requested);
-        let (trigger, requests) = mpsc::sync_channel(1);
-        let (result_tx, results) = mpsc::channel();
+impl<T: Clone + Default + PartialEq> GenerationCache<T> {
+    fn new() -> Self {
+        Self {
+            generation: AtomicU64::new(0),
+            snapshot: Mutex::new(GenerationSnapshot {
+                generation: 0,
+                value: T::default(),
+            }),
+        }
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    fn current(&self) -> T {
+        let generation = self.generation();
+        let snapshot = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if generation == self.generation() && snapshot.generation == generation {
+            snapshot.value.clone()
+        } else {
+            T::default()
+        }
+    }
+
+    fn publish(&self, generation: u64, value: T) -> bool {
+        if generation != self.generation() {
+            return false;
+        }
+        let mut snapshot = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if generation != self.generation() {
+            return false;
+        }
+        let changed = snapshot.generation != generation || snapshot.value != value;
+        if changed {
+            snapshot.generation = generation;
+            snapshot.value = value;
+        }
+        changed
+    }
+
+    fn invalidate(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+pub(crate) struct TaskbarObserver {
+    snapshot: Arc<GenerationCache<Vec<ObservedTaskbar>>>,
+    thread_id: u32,
+}
+
+impl TaskbarObserver {
+    pub(crate) fn start(owner: HWND) -> io::Result<Self> {
+        let snapshot = Arc::new(GenerationCache::new());
+        let worker_snapshot = Arc::clone(&snapshot);
+        let owner = owner.0 as isize;
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         thread::Builder::new()
-            .name("taskbar-geometry".to_string())
-            .spawn(move || {
-                while requests.recv().is_ok() {
-                    let request = *worker_request
-                        .lock()
-                        .unwrap_or_else(|error| error.into_inner());
-                    let value = scanner(request.offset);
-                    if result_tx.send(RefreshResult { request, value }).is_err() {
-                        break;
-                    }
-                }
+            .name("taskbar-observer".to_owned())
+            .spawn(move || unsafe {
+                run_observer_thread(owner, worker_snapshot, ready_sender);
             })?;
+        let thread_id = ready_receiver.recv().unwrap_or_default();
         Ok(Self {
-            requested,
-            trigger,
-            results,
-            generation: 0,
-            latest: None,
+            snapshot,
+            thread_id,
         })
     }
 
-    fn current(&mut self, offset: i32) -> Option<&T> {
-        while let Ok(result) = self.results.try_recv() {
-            if result.request.generation == self.generation && result.request.offset == offset {
-                self.latest = Some((offset, result.value));
+    pub(crate) fn targets(&self, offset: i32) -> Vec<TaskbarTarget> {
+        self.snapshot
+            .current()
+            .into_iter()
+            .filter_map(|taskbar| target_from_observation(taskbar, offset))
+            .collect()
+    }
+
+    pub(crate) fn refresh(&self) {
+        if self.thread_id != 0 {
+            unsafe {
+                request_observer_refresh(self.thread_id);
             }
         }
-        *self
-            .requested
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = RefreshRequest {
-            generation: self.generation,
-            offset,
-        };
-        let _ = self.trigger.try_send(());
-        self.latest
-            .as_ref()
-            .and_then(|(cached_offset, value)| (*cached_offset == offset).then_some(value))
-    }
-
-    fn invalidate(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        self.latest = None;
-    }
-}
-
-/// UI Automation을 기다리지 않고 마지막 작업 표시줄 배치를 제공하는 비동기 조회기입니다.
-pub(crate) struct AsyncTaskbarTargets {
-    refresh: BackgroundRefresh<Vec<TaskbarTarget>>,
-}
-
-impl AsyncTaskbarTargets {
-    /// 작업 표시줄 기하 조회를 전용 워커에서 수행하는 캐시를 만듭니다.
-    ///
-    /// UI 스레드는 `current`에서 마지막 완료 결과만 읽으며 UI Automation 완료를 기다리지 않습니다.
-    /// Explorer가 다시 시작되면 `invalidate`로 이전 HWND 결과를 폐기해야 합니다.
-    pub(crate) fn new() -> io::Result<Self> {
-        Ok(Self {
-            refresh: BackgroundRefresh::spawn(|offset| unsafe { taskbar_targets(offset) })?,
-        })
-    }
-
-    /// 현재 오프셋에 대한 마지막 완료 결과를 반환하고 다음 갱신을 예약합니다.
-    ///
-    /// 결과가 아직 없거나 오프셋이 바뀌었으면 빈 목록을 반환합니다. 반환된 HWND는 UI 스레드에서만
-    /// 사용해야 하며, 이 호출은 진행 중인 UI Automation을 기다리지 않습니다.
-    pub(crate) fn current(&mut self, offset: i32) -> Vec<TaskbarTarget> {
-        self.refresh.current(offset).cloned().unwrap_or_default()
     }
 
     /// Explorer 재시작 전에 시작된 조회와 캐시된 HWND를 모두 무효화합니다.
-    pub(crate) fn invalidate(&mut self) {
-        self.refresh.invalidate();
+    pub(crate) fn invalidate(&self) {
+        self.snapshot.invalidate();
+        self.refresh();
+    }
+}
+
+impl Drop for TaskbarObserver {
+    fn drop(&mut self) {
+        if self.thread_id != 0 {
+            unsafe {
+                let _ = PostThreadMessageW(self.thread_id, OBSERVER_STOP, WPARAM(0), LPARAM(0));
+            }
+        }
     }
 }
 
@@ -164,15 +207,15 @@ pub fn taskbar_available() -> bool {
     unsafe {
         taskbars()
             .into_iter()
-            .any(|taskbar| taskbar_target(taskbar, 0).is_some())
+            .filter_map(|taskbar| {
+                taskbar_geometry(taskbar, None).map(|(geometry, dpi)| ObservedTaskbar {
+                    parent: taskbar.0 as isize,
+                    geometry,
+                    dpi,
+                })
+            })
+            .any(|taskbar| target_from_observation(taskbar, 0).is_some())
     }
-}
-
-pub(crate) unsafe fn taskbar_targets(offset: i32) -> Vec<TaskbarTarget> {
-    taskbars()
-        .into_iter()
-        .filter_map(|taskbar| taskbar_target(taskbar, offset))
-        .collect()
 }
 
 pub(crate) unsafe fn attach_to_taskbar(hwnd: HWND, target: TaskbarTarget) -> io::Result<()> {
@@ -271,22 +314,24 @@ fn win_error(_: windows::core::Error) -> io::Error {
     io::Error::last_os_error()
 }
 
-unsafe fn taskbar_target(taskbar: HWND, offset: i32) -> Option<TaskbarTarget> {
-    let (geometry, dpi) = taskbar_geometry(taskbar)?;
-    let Ok(size) = taskbar_widget_size(geometry.taskbar.height(), dpi) else {
+fn target_from_observation(taskbar: ObservedTaskbar, offset: i32) -> Option<TaskbarTarget> {
+    let Ok(size) = taskbar_widget_size(taskbar.geometry.taskbar.height(), taskbar.dpi) else {
         return None;
     };
-    let minimum_width = taskbar_widget_minimum_width(dpi);
-    let offset = crate::windows::widget::logical_to_physical(offset, dpi);
-    let placement = place_taskbar_widget(geometry, size, minimum_width, offset).ok()?;
+    let minimum_width = taskbar_widget_minimum_width(taskbar.dpi);
+    let offset = crate::windows::widget::logical_to_physical(offset, taskbar.dpi);
+    let placement = place_taskbar_widget(taskbar.geometry, size, minimum_width, offset).ok()?;
     Some(TaskbarTarget {
-        parent: taskbar,
+        parent: HWND(taskbar.parent as *mut core::ffi::c_void),
         placement,
-        origin: (geometry.taskbar.left, geometry.taskbar.top),
+        origin: (taskbar.geometry.taskbar.left, taskbar.geometry.taskbar.top),
     })
 }
 
-unsafe fn taskbar_geometry(taskbar: HWND) -> Option<(TaskbarGeometry, u32)> {
+unsafe fn taskbar_geometry(
+    taskbar: HWND,
+    automation: Option<&IUIAutomation>,
+) -> Option<(TaskbarGeometry, u32)> {
     let mut taskbar_rect = RECT::default();
     if GetWindowRect(taskbar, &mut taskbar_rect).is_err() {
         return None;
@@ -301,16 +346,18 @@ unsafe fn taskbar_geometry(taskbar: HWND) -> Option<(TaskbarGeometry, u32)> {
                 .then(|| from_native(rect))
         })
         .unwrap_or_else(|| fallback_notification_area(taskbar_bounds, dpi));
-    let occupied = task_button_area(taskbar, taskbar_bounds).map(|mut occupied| {
-        occupied.right = occupied
-            .right
-            .saturating_add(crate::windows::widget::logical_to_physical(
-                TASK_BUTTON_GAP_LOGICAL,
-                dpi,
-            ))
-            .min(notification.left);
-        occupied
-    });
+    let occupied = automation
+        .and_then(|automation| task_button_area(taskbar, taskbar_bounds, automation))
+        .map(|mut occupied| {
+            occupied.right = occupied
+                .right
+                .saturating_add(crate::windows::widget::logical_to_physical(
+                    TASK_BUTTON_GAP_LOGICAL,
+                    dpi,
+                ))
+                .min(notification.left);
+            occupied
+        });
     Some((
         TaskbarGeometry {
             taskbar: taskbar_bounds,
@@ -321,41 +368,42 @@ unsafe fn taskbar_geometry(taskbar: HWND) -> Option<(TaskbarGeometry, u32)> {
     ))
 }
 
-unsafe fn task_button_area(taskbar: HWND, taskbar_bounds: Rect) -> Option<Rect> {
-    TASKBAR_AUTOMATION.with(|client| {
-        let automation = client.automation.as_ref()?;
-        let automation_root = taskbar_content_bridge(taskbar).unwrap_or(taskbar);
-        let root = automation.ElementFromHandle(automation_root).ok()?;
-        let class_name = VARIANT::from("Taskbar.TaskListButtonAutomationPeer");
-        let condition = automation
-            .CreatePropertyCondition(UIA_ClassNamePropertyId, &class_name)
-            .ok()?;
-        let elements = root.FindAll(TreeScope_Descendants, &condition).ok()?;
-        let length = elements.Length().ok()?;
-        let mut occupied: Option<Rect> = None;
-        for index in 0..length {
-            let Ok(element) = elements.GetElement(index) else {
-                continue;
-            };
-            let Ok(bounds) = element.CurrentBoundingRectangle() else {
-                continue;
-            };
-            let bounds = from_native(bounds);
-            if bounds.width() <= 0 || bounds.height() <= 0 || !bounds.intersects(taskbar_bounds) {
-                continue;
-            }
-            occupied = Some(match occupied {
-                Some(current) => Rect::new(
-                    current.left.min(bounds.left),
-                    current.top.min(bounds.top),
-                    current.right.max(bounds.right),
-                    current.bottom.max(bounds.bottom),
-                ),
-                None => bounds,
-            });
+unsafe fn task_button_area(
+    taskbar: HWND,
+    taskbar_bounds: Rect,
+    automation: &IUIAutomation,
+) -> Option<Rect> {
+    let automation_root = taskbar_content_bridge(taskbar).unwrap_or(taskbar);
+    let root = automation.ElementFromHandle(automation_root).ok()?;
+    let class_name = VARIANT::from("Taskbar.TaskListButtonAutomationPeer");
+    let condition = automation
+        .CreatePropertyCondition(UIA_ClassNamePropertyId, &class_name)
+        .ok()?;
+    let elements = root.FindAll(TreeScope_Descendants, &condition).ok()?;
+    let length = elements.Length().ok()?;
+    let mut occupied: Option<Rect> = None;
+    for index in 0..length {
+        let Ok(element) = elements.GetElement(index) else {
+            continue;
+        };
+        let Ok(bounds) = element.CurrentBoundingRectangle() else {
+            continue;
+        };
+        let bounds = from_native(bounds);
+        if bounds.width() <= 0 || bounds.height() <= 0 || !bounds.intersects(taskbar_bounds) {
+            continue;
         }
-        occupied
-    })
+        occupied = Some(match occupied {
+            Some(current) => Rect::new(
+                current.left.min(bounds.left),
+                current.top.min(bounds.top),
+                current.right.max(bounds.right),
+                current.bottom.max(bounds.bottom),
+            ),
+            None => bounds,
+        });
+    }
+    occupied
 }
 
 unsafe fn taskbar_content_bridge(taskbar: HWND) -> Option<HWND> {
@@ -414,8 +462,160 @@ impl Drop for TaskbarAutomation {
     }
 }
 
-thread_local! {
-    static TASKBAR_AUTOMATION: TaskbarAutomation = unsafe { TaskbarAutomation::new() };
+unsafe fn run_observer_thread(
+    owner: isize,
+    snapshot: Arc<GenerationCache<Vec<ObservedTaskbar>>>,
+    ready: mpsc::SyncSender<u32>,
+) {
+    let thread_id = GetCurrentThreadId();
+    let mut queue_message = MSG::default();
+    let _ = PeekMessageW(&mut queue_message, None, 0, 0, PM_NOREMOVE);
+    let _ = ready.send(thread_id);
+
+    let automation = TaskbarAutomation::new();
+    let mut explorer_process = 0;
+    let mut event_hook = None;
+    refresh_observer_snapshot(
+        owner,
+        &snapshot,
+        automation.automation.as_ref(),
+        &mut explorer_process,
+        &mut event_hook,
+    );
+
+    let mut message = MSG::default();
+    loop {
+        let result = GetMessageW(&mut message, None, 0, 0);
+        if result.0 <= 0 || message.message == OBSERVER_STOP {
+            break;
+        }
+        if message.message != OBSERVER_REFRESH {
+            continue;
+        }
+        while PeekMessageW(
+            &mut queue_message,
+            None,
+            OBSERVER_REFRESH,
+            OBSERVER_REFRESH,
+            PM_REMOVE,
+        )
+        .as_bool()
+        {}
+        OBSERVER_REFRESH_GATE.complete();
+        refresh_observer_snapshot(
+            owner,
+            &snapshot,
+            automation.automation.as_ref(),
+            &mut explorer_process,
+            &mut event_hook,
+        );
+    }
+    if let Some(hook) = event_hook {
+        let _ = UnhookWinEvent(hook);
+    }
+}
+
+unsafe fn refresh_observer_snapshot(
+    owner: isize,
+    snapshot: &GenerationCache<Vec<ObservedTaskbar>>,
+    automation: Option<&IUIAutomation>,
+    explorer_process: &mut u32,
+    event_hook: &mut Option<windows::Win32::UI::Accessibility::HWINEVENTHOOK>,
+) {
+    let generation = snapshot.generation();
+    let windows = taskbars();
+    let next_process = windows.first().map_or(0, |taskbar| {
+        let mut process = 0;
+        GetWindowThreadProcessId(*taskbar, Some(&mut process));
+        process
+    });
+    if next_process != *explorer_process {
+        if let Some(hook) = event_hook.take() {
+            let _ = UnhookWinEvent(hook);
+        }
+        *explorer_process = next_process;
+        if next_process != 0 {
+            let hook = SetWinEventHook(
+                EVENT_OBJECT_CREATE,
+                EVENT_OBJECT_LOCATIONCHANGE,
+                None,
+                Some(taskbar_event),
+                next_process,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+            );
+            if !hook.is_invalid() {
+                *event_hook = Some(hook);
+            }
+        }
+    }
+
+    let taskbars = windows
+        .into_iter()
+        .filter_map(|taskbar| {
+            taskbar_geometry(taskbar, automation).map(|(geometry, dpi)| ObservedTaskbar {
+                parent: taskbar.0 as isize,
+                geometry,
+                dpi,
+            })
+        })
+        .collect::<Vec<_>>();
+    let changed = snapshot.publish(generation, taskbars);
+    if changed {
+        let owner = HWND(owner as *mut core::ffi::c_void);
+        let _ = PostMessageW(Some(owner), TASKBAR_LAYOUT_CHANGED, WPARAM(0), LPARAM(0));
+    }
+}
+
+unsafe extern "system" fn taskbar_event(
+    _hook: windows::Win32::UI::Accessibility::HWINEVENTHOOK,
+    event: u32,
+    hwnd: HWND,
+    _object: i32,
+    _child: i32,
+    _event_thread: u32,
+    _event_time: u32,
+) {
+    if matches!(
+        event,
+        EVENT_OBJECT_CREATE
+            | EVENT_OBJECT_DESTROY
+            | EVENT_OBJECT_SHOW
+            | EVENT_OBJECT_HIDE
+            | EVENT_OBJECT_REORDER
+            | EVENT_OBJECT_LOCATIONCHANGE
+    ) && taskbar_event_window(hwnd)
+    {
+        request_observer_refresh(GetCurrentThreadId());
+    }
+}
+
+unsafe fn request_observer_refresh(thread_id: u32) {
+    if thread_id == 0 || !OBSERVER_REFRESH_GATE.request() {
+        return;
+    }
+    if PostThreadMessageW(thread_id, OBSERVER_REFRESH, WPARAM(0), LPARAM(0)).is_err() {
+        OBSERVER_REFRESH_GATE.complete();
+    }
+}
+
+unsafe fn taskbar_event_window(hwnd: HWND) -> bool {
+    if hwnd == HWND::default() {
+        return false;
+    }
+    let root = GetAncestor(hwnd, GA_ROOT);
+    if root == HWND::default() {
+        return false;
+    }
+    let mut class_name = [0_u16; 64];
+    let length = GetClassNameW(root, &mut class_name);
+    length > 0 && taskbar_root_class(&class_name[..length as usize])
+}
+
+fn taskbar_root_class(class_name: &[u16]) -> bool {
+    ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"]
+        .into_iter()
+        .any(|expected| expected.encode_utf16().eq(class_name.iter().copied()))
 }
 
 unsafe fn taskbars() -> Vec<HWND> {
@@ -457,76 +657,78 @@ fn fallback_notification_area(taskbar: Rect, dpi: u32) -> Rect {
 const fn from_native(rect: RECT) -> Rect {
     Rect::new(rect.left, rect.top, rect.right, rect.bottom)
 }
-
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{
-            atomic::{AtomicUsize, Ordering},
-            mpsc, Arc,
-        },
+        sync::{mpsc, Arc},
         thread,
         time::{Duration, Instant},
     };
 
-    use super::BackgroundRefresh;
+    use super::{taskbar_root_class, GenerationCache, RefreshGate};
 
     #[test]
-    fn background_refresh_never_waits_for_a_blocked_scanner() {
+    fn refresh_gate_coalesces_requests_until_the_worker_accepts_one() {
+        let gate = RefreshGate::new();
+        assert!(gate.request());
+        assert!(!gate.request());
+        assert!(!gate.request());
+        gate.complete();
+        assert!(gate.request());
+    }
+
+    #[test]
+    fn event_filter_accepts_only_taskbar_root_classes() {
+        assert!(taskbar_root_class(
+            &"Shell_TrayWnd".encode_utf16().collect::<Vec<_>>()
+        ));
+        assert!(taskbar_root_class(
+            &"Shell_SecondaryTrayWnd".encode_utf16().collect::<Vec<_>>()
+        ));
+        assert!(!taskbar_root_class(
+            &"CabinetWClass".encode_utf16().collect::<Vec<_>>()
+        ));
+    }
+
+    #[test]
+    fn observer_reads_never_wait_for_a_blocked_scanner() {
+        let cache = Arc::new(GenerationCache::new());
+        assert!(cache.publish(cache.generation(), vec![1_u32]));
+
+        let worker_cache = Arc::clone(&cache);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let mut refresh = BackgroundRefresh::spawn(move |_| {
+        let worker = thread::spawn(move || {
+            let generation = worker_cache.generation();
             entered_tx.send(()).unwrap();
             release_rx.recv().unwrap();
-            7_u32
-        })
-        .unwrap();
-        let release = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
-            release_tx.send(()).unwrap();
+            worker_cache.publish(generation, vec![2_u32])
         });
-
-        let started = Instant::now();
-        let current = refresh.current(0);
-        assert!(started.elapsed() < Duration::from_millis(100));
-        assert_eq!(current, None);
         entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
-        release.join().unwrap();
+        let started = Instant::now();
+        assert_eq!(cache.current(), vec![1]);
+        assert!(started.elapsed() < Duration::from_millis(100));
+
+        release_tx.send(()).unwrap();
+        assert!(worker.join().unwrap());
+        assert_eq!(cache.current(), vec![2]);
     }
 
     #[test]
     fn invalidation_ignores_a_result_from_before_explorer_restart() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let worker_calls = Arc::clone(&calls);
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let mut refresh = BackgroundRefresh::spawn(move |_| {
-            if worker_calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                entered_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-                1_u32
-            } else {
-                2_u32
-            }
-        })
-        .unwrap();
+        let cache = GenerationCache::new();
+        let stale_generation = cache.generation();
+        assert!(cache.publish(stale_generation, vec![1_u32]));
 
-        assert_eq!(refresh.current(0), None);
-        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        refresh.invalidate();
-        assert_eq!(refresh.current(0), None);
-        release_tx.send(()).unwrap();
+        cache.invalidate();
 
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            match refresh.current(0).copied() {
-                Some(1) => panic!("stale target survived Explorer restart"),
-                Some(2) => break,
-                None if Instant::now() < deadline => thread::yield_now(),
-                None => panic!("refreshed target was not published"),
-                Some(other) => panic!("unexpected target {other}"),
-            }
-        }
+        assert!(cache.current().is_empty());
+        assert!(!cache.publish(stale_generation, vec![2]));
+        assert!(cache.current().is_empty());
+
+        let current_generation = cache.generation();
+        assert!(cache.publish(current_generation, vec![3]));
+        assert_eq!(cache.current(), vec![3]);
     }
 }
