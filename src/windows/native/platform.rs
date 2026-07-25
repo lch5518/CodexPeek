@@ -503,7 +503,7 @@ unsafe extern "system" fn widget_proc(
 }
 
 unsafe fn widget_slot(state_pointer: *mut NativeState<'_>, hwnd: HWND) -> Option<*mut WidgetSlot> {
-    (&mut *state_pointer)
+    (*state_pointer)
         .widgets
         .iter_mut()
         .find(|widget| widget.hwnd == hwnd)
