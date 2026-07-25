@@ -26,6 +26,67 @@ pub enum UsageLevel {
     Limited,
 }
 
+/// Windows 현지 시간대로 변환된 초기화 날짜와 시각입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ResetDateTime {
+    year: u16,
+    month: u16,
+    day: u16,
+    weekday: u16,
+    hour: u16,
+    minute: u16,
+}
+
+impl ResetDateTime {
+    /// 검증된 달력 구성 요소로 초기화 시각을 만듭니다.
+    ///
+    /// `weekday`는 Windows `SYSTEMTIME`과 같은 일요일 0부터 토요일 6까지의 값입니다.
+    pub(crate) fn new(
+        year: u16,
+        month: u16,
+        day: u16,
+        weekday: u16,
+        hour: u16,
+        minute: u16,
+    ) -> Option<Self> {
+        if year == 0
+            || !(1..=12).contains(&month)
+            || day == 0
+            || day > days_in_month(year, month)
+            || weekday > 6
+            || hour > 23
+            || minute > 59
+        {
+            return None;
+        }
+
+        Some(Self {
+            year,
+            month,
+            day,
+            weekday,
+            hour,
+            minute,
+        })
+    }
+
+    /// 날짜, 현지화된 요일과 시각을 고정된 숫자 형식으로 반환합니다.
+    pub(crate) fn localized_label(self, language: Language) -> String {
+        const KOREAN_WEEKDAYS: [&str; 7] = ["일", "월", "화", "수", "목", "금", "토"];
+        const ENGLISH_WEEKDAYS: [&str; 7] =
+            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        let weekday = match language {
+            Language::Korean => KOREAN_WEEKDAYS[self.weekday as usize],
+            Language::English => ENGLISH_WEEKDAYS[self.weekday as usize],
+        };
+
+        format!(
+            "{:04}-{:02}-{:02} ({weekday}) {:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute
+        )
+    }
+}
+
 /// 하나의 사용량 제한 창과 다음 초기화 시각을 표현합니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UsageWindow {
@@ -136,10 +197,20 @@ fn fallback_period_label(kind: WindowKind, language: Language) -> &'static str {
     }
 }
 
-fn reset_unavailable_label(language: Language) -> &'static str {
+pub(crate) fn reset_unavailable_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "초기화 시각 없음",
         Language::English => "Reset unavailable",
+    }
+}
+
+fn days_in_month(year: u16, month: u16) -> u16 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => 0,
     }
 }
 
@@ -171,7 +242,7 @@ fn format_remaining_duration(remaining: Duration, language: Language) -> String 
 mod tests {
     use std::time::{Duration, UNIX_EPOCH};
 
-    use super::{UsageLevel, UsageWindow, WindowKind};
+    use super::{ResetDateTime, UsageLevel, UsageWindow, WindowKind};
     use crate::{Language, UsageError};
 
     fn window(used_percent: f64) -> UsageWindow {
@@ -306,5 +377,38 @@ mod tests {
             "초기화 시각 없음"
         );
         assert_eq!(elapsed.remaining_label(Language::Korean, now), "곧 초기화");
+    }
+
+    #[test]
+    fn reset_date_time_formats_local_weekdays_in_both_languages() {
+        let monday = ResetDateTime::new(2026, 7, 27, 1, 3, 4).unwrap();
+        let sunday = ResetDateTime::new(2026, 8, 2, 0, 13, 9).unwrap();
+
+        assert_eq!(
+            monday.localized_label(Language::Korean),
+            "2026-07-27 (월) 03:04"
+        );
+        assert_eq!(
+            monday.localized_label(Language::English),
+            "2026-07-27 (Mon) 03:04"
+        );
+        assert_eq!(
+            sunday.localized_label(Language::Korean),
+            "2026-08-02 (일) 13:09"
+        );
+        assert_eq!(
+            sunday.localized_label(Language::English),
+            "2026-08-02 (Sun) 13:09"
+        );
+    }
+
+    #[test]
+    fn reset_date_time_rejects_invalid_calendar_parts() {
+        assert!(ResetDateTime::new(2026, 0, 27, 1, 3, 4).is_none());
+        assert!(ResetDateTime::new(2026, 2, 29, 0, 3, 4).is_none());
+        assert!(ResetDateTime::new(2024, 2, 29, 4, 3, 4).is_some());
+        assert!(ResetDateTime::new(2026, 7, 27, 7, 3, 4).is_none());
+        assert!(ResetDateTime::new(2026, 7, 27, 1, 24, 4).is_none());
+        assert!(ResetDateTime::new(2026, 7, 27, 1, 3, 60).is_none());
     }
 }
