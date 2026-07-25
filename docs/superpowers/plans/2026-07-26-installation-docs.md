@@ -13,9 +13,9 @@
 - 대상은 Windows 10/11 x64이다.
 - 설치 전에 지원되는 Codex CLI가 설치되고 로그인돼 있어야 한다.
 - 최신 배포 위치는 `https://github.com/lch5518/CodexPeek/releases/latest`이다.
-- Installer 파일명은 `CodexUsageMonitor-Setup-v<version>-x64.exe`이다.
-- Portable 파일명은 `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`이다.
-- 설정은 `%APPDATA%\CodexUsageMonitor\settings.json`, 로그는 `%TEMP%\codex-usage-monitor.log`에 유지한다.
+- Installer 파일명은 `CodexPeek-Setup-v<version>-x64.exe`이다.
+- Portable 파일명은 `codex-peek-v<version>-windows-x86_64-portable.zip`이다.
+- 설정은 `%APPDATA%\CodexUsageMonitor\settings.json`, 로그는 `%TEMP%\codex-peek.log`에 유지한다.
 - 코드 서명 전에는 SmartScreen 경고 가능성과 `SHA256SUMS.txt` 검증 방법을 명시한다.
 - 동일한 상세 명령을 README와 설치 문서에 중복하지 않는다.
 
@@ -60,7 +60,7 @@ Expected: 사용자별 설치 경로, 관리자 권한 불필요, 자동 시작 
 Run:
 
 ```powershell
-rg -n "CodexUsageMonitor-Setup-v<version>-x64.exe|codex-usage-monitor-v<version>-windows-x86_64-portable.zip|SHA256SUMS.txt|%APPDATA%|%TEMP%|SmartScreen|--diagnose" docs/INSTALL.md
+rg -n "CodexPeek-Setup-v<version>-x64.exe|codex-peek-v<version>-windows-x86_64-portable.zip|SHA256SUMS.txt|%APPDATA%|%TEMP%|SmartScreen|--diagnose" docs/INSTALL.md
 ```
 
 Expected: 모든 필수 설치·검증·진단 항목이 검색된다.
@@ -120,7 +120,7 @@ Run:
 ```powershell
 if (-not (Test-Path -LiteralPath docs/INSTALL.md -PathType Leaf)) { throw "docs/INSTALL.md missing" }
 rg -n "docs/INSTALL.md" README.md README.ko.md
-rg -n "CodexUsageMonitor-Setup-v<version>-x64.exe|codex-usage-monitor-v<version>-windows-x86_64-portable.zip" README.md README.ko.md docs/INSTALL.md
+rg -n "CodexPeek-Setup-v<version>-x64.exe|codex-peek-v<version>-windows-x86_64-portable.zip" README.md README.ko.md docs/INSTALL.md
 ```
 
 Expected: 두 README의 링크와 세 문서의 동일한 배포 파일명이 확인된다.
