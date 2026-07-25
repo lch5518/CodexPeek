@@ -42,6 +42,7 @@ const ICON_ID: u32 = 1;
 struct CoalescingWorker<C> {
     pending: Arc<Mutex<C>>,
     trigger: SyncSender<()>,
+    shutdown: Arc<Mutex<Option<SyncSender<()>>>>,
 }
 
 impl<C: Clone + Send + 'static> CoalescingWorker<C> {
@@ -58,20 +59,35 @@ impl<C: Clone + Send + 'static> CoalescingWorker<C> {
     {
         let pending = Arc::new(Mutex::new(initial));
         let worker_pending = Arc::clone(&pending);
+        let shutdown = Arc::new(Mutex::new(None::<SyncSender<()>>));
+        let worker_shutdown = Arc::clone(&shutdown);
         let (trigger, commands) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name("tray-shell".to_string())
             .spawn(move || {
-                let mut handler = handler_factory();
+                let mut handler = Some(handler_factory());
                 while commands.recv().is_ok() {
+                    if let Some(completion) = worker_shutdown
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .take()
+                    {
+                        drop(handler.take());
+                        let _ = completion.send(());
+                        break;
+                    }
                     let command = worker_pending
                         .lock()
                         .unwrap_or_else(|error| error.into_inner())
                         .clone();
-                    handler(command);
+                    handler.as_mut().expect("handler exists before shutdown")(command);
                 }
             })?;
-        Ok(Self { pending, trigger })
+        Ok(Self {
+            pending,
+            trigger,
+            shutdown,
+        })
     }
 
     fn submit(&self, command: C) {
@@ -80,6 +96,17 @@ impl<C: Clone + Send + 'static> CoalescingWorker<C> {
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = command;
         let _ = self.trigger.try_send(());
+    }
+
+    /// 현재 셸 호출이 끝나고 워커가 보유 리소스를 해제했을 때 완료 신호를 반환합니다.
+    fn begin_shutdown(&self) -> mpsc::Receiver<()> {
+        let (completion, receiver) = mpsc::sync_channel(1);
+        *self
+            .shutdown
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(completion);
+        let _ = self.trigger.try_send(());
+        receiver
     }
 }
 
@@ -136,6 +163,14 @@ impl AsyncTrayIcon {
     /// Explorer 재시작 후 트레이 아이콘 복구를 예약하고 즉시 반환합니다.
     pub(crate) fn restore(&self, percent: Option<f64>, tip: &str) {
         self.submit(percent, tip, true);
+    }
+
+    /// 아이콘 삭제를 워커에서 완료한 뒤 수신기로 알립니다.
+    ///
+    /// 반환된 수신기는 `TrayIcon`의 drop이 끝난 후에만 값을 받습니다. 호출자는 owner 창을
+    /// 파괴하기 전에 이 신호를 확인해야 합니다.
+    pub(crate) fn begin_shutdown(&self) -> mpsc::Receiver<()> {
+        self.worker.begin_shutdown()
     }
 
     fn submit(&self, percent: Option<f64>, tip: &str, restore: bool) {
@@ -499,5 +534,26 @@ mod tests {
         entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         release_tx.send(()).unwrap();
         assert_eq!(handled_rx.recv_timeout(Duration::from_secs(1)), Ok(2));
+    }
+
+    #[test]
+    fn tray_worker_shutdown_acknowledges_only_after_the_active_shell_call_returns() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = CoalescingWorker::spawn(0_u32, move || {
+            move |_| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }
+        })
+        .unwrap();
+
+        worker.submit(1);
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let shutdown = worker.begin_shutdown();
+        assert!(shutdown.recv_timeout(Duration::from_millis(50)).is_err());
+
+        release_tx.send(()).unwrap();
+        shutdown.recv_timeout(Duration::from_secs(1)).unwrap();
     }
 }

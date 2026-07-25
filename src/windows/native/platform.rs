@@ -1,6 +1,7 @@
 use std::{
     io,
     sync::atomic::{AtomicU32, Ordering},
+    sync::mpsc::{Receiver, TryRecvError},
 };
 
 use windows::{
@@ -126,6 +127,8 @@ struct NativeState<'a> {
     widgets: Vec<WidgetSlot>,
     taskbar_observer: Option<TaskbarObserver>,
     tray: Option<AsyncTrayIcon>,
+    tray_shutdown: Option<Receiver<()>>,
+    shutting_down: bool,
     settings: UiSettings,
     lifecycle: NativeLifecycle,
     taskbar_refresh_schedule: TaskbarRefreshSchedule,
@@ -156,6 +159,8 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             widgets: Vec::new(),
             taskbar_observer: None,
             tray: None,
+            tray_shutdown: None,
+            shutting_down: false,
             settings,
             lifecycle: NativeLifecycle::default(),
             taskbar_refresh_schedule: TaskbarRefreshSchedule::new(),
@@ -322,6 +327,12 @@ unsafe extern "system" fn owner_proc(
 
     match message {
         WM_TIMER if wparam.0 == TIMER_ID => {
+            if (*pointer).shutting_down {
+                if tray_shutdown_complete(pointer) {
+                    PostQuitMessage(0);
+                }
+                return LRESULT(0);
+            }
             let settings = (*pointer).backend.settings();
             (*pointer).settings = settings;
             if (*pointer).taskbar_refresh_schedule.tick() {
@@ -367,7 +378,11 @@ unsafe extern "system" fn owner_proc(
             }
             LRESULT(0)
         }
-        WM_CLOSE | WM_DESTROY => {
+        WM_CLOSE => {
+            begin_exit(pointer);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -505,12 +520,41 @@ unsafe fn dispatch_menu(state_pointer: *mut NativeState<'_>, menu_id: u16) {
         return;
     };
     if action == UiAction::Exit {
-        PostQuitMessage(0);
+        begin_exit(state_pointer);
         return;
     }
     let settings = (*state_pointer).backend.dispatch(action);
     (*state_pointer).settings = settings;
     let _ = apply_window_policy(state_pointer);
+}
+
+/// 트레이 아이콘 삭제가 끝난 뒤에만 owner 창을 파괴하도록 비동기 종료를 시작합니다.
+///
+/// 셸 호출은 워커에서 계속 수행되므로 UI 스레드는 대기하지 않습니다. 트레이가 없으면 즉시
+/// 메시지 루프를 종료합니다.
+unsafe fn begin_exit(state_pointer: *mut NativeState<'_>) {
+    if (*state_pointer).shutting_down {
+        return;
+    }
+    (*state_pointer).shutting_down = true;
+    (*state_pointer).tray_shutdown = (*state_pointer)
+        .tray
+        .as_ref()
+        .map(AsyncTrayIcon::begin_shutdown);
+    if (*state_pointer).tray_shutdown.is_none() {
+        PostQuitMessage(0);
+    }
+}
+
+/// 트레이 워커가 아이콘을 삭제했거나 비정상 종료했으면 종료 정리를 진행할 수 있는지 반환합니다.
+unsafe fn tray_shutdown_complete(state_pointer: *mut NativeState<'_>) -> bool {
+    let Some(receiver) = (*state_pointer).tray_shutdown.as_ref() else {
+        return true;
+    };
+    matches!(
+        receiver.try_recv(),
+        Ok(()) | Err(TryRecvError::Disconnected)
+    )
 }
 
 unsafe fn create_widget(
