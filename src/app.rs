@@ -11,11 +11,14 @@ use std::{
 
 use crate::{
     codex::{locate_supported_cli, AppServerUsageProvider, UsageProvider},
+    domain::{reset_unavailable_label, ResetDateTime},
     inspect_settings_for_diagnostics, localized_text,
     windows::{
         autostart::{set_autostart, WindowsRegistry},
-        initial_widget_visible, native, resolve_windows_language, taskbar, LaunchMode, UiAction,
-        UiBackend, UiSettings, UsageRowView, WidgetDataState, WidgetViewModel,
+        initial_widget_visible, native, resolve_windows_language, taskbar,
+        time::local_reset_time,
+        LaunchMode, UiAction, UiBackend, UiSettings, UsageRowView, WidgetDataState,
+        WidgetViewModel,
     },
     AsyncSettingsWriter, DiagnosticCode, DiagnosticLogger, Language, LanguagePreference,
     LocalizationKey, PollSnapshot, PollingService, SafeDiagnostic, Settings, SettingsStore,
@@ -174,12 +177,12 @@ impl UiBackend for AppRuntime {
             .usage
             .as_ref()
             .and_then(|usage| usage.primary.as_ref())
-            .map(|window| row_view(window, language, now, self.settings.show_remaining_percent));
+            .map(|window| row_view(window, language, self.settings.show_remaining_percent));
         let secondary = snapshot
             .usage
             .as_ref()
             .and_then(|usage| usage.secondary.as_ref())
-            .map(|window| row_view(window, language, now, self.settings.show_remaining_percent));
+            .map(|window| row_view(window, language, self.settings.show_remaining_percent));
         let weekly = secondary.as_ref().or(primary.as_ref());
         let taskbar = taskbar_copy(
             weekly,
@@ -334,11 +337,18 @@ fn status_with_update(
     usage_status
 }
 
-fn row_view(
+fn row_view(window: &UsageWindow, language: Language, show_remaining: bool) -> UsageRowView {
+    let reset_time = window
+        .resets_at
+        .and_then(|reset_at| local_reset_time(reset_at).ok());
+    row_view_with_reset_time(window, language, show_remaining, reset_time)
+}
+
+fn row_view_with_reset_time(
     window: &UsageWindow,
     language: Language,
-    now: SystemTime,
     show_remaining: bool,
+    reset_time: Option<ResetDateTime>,
 ) -> UsageRowView {
     let display_percent = if show_remaining {
         (100.0 - window.used_percent).max(0.0)
@@ -350,7 +360,9 @@ fn row_view(
         used_percent: window.used_percent,
         display_percent,
         percent_text: format!("{:.0}%", display_percent),
-        reset_text: window.remaining_label(language, now),
+        reset_text: reset_time
+            .map(|value| value.localized_label(language))
+            .unwrap_or_else(|| reset_unavailable_label(language).to_owned()),
         level: window.level(),
     }
 }
@@ -612,10 +624,10 @@ fn safe_path_text(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{row_view, status_with_update, taskbar_copy};
+    use super::{row_view, row_view_with_reset_time, status_with_update, taskbar_copy};
     use crate::{
-        windows::UsageRowView, Language, UpdatePresentationStatus, UsageLevel, UsageWindow,
-        WindowKind,
+        domain::ResetDateTime, windows::UsageRowView, Language, UpdatePresentationStatus,
+        UsageLevel, UsageWindow, WindowKind,
     };
 
     #[test]
@@ -641,21 +653,14 @@ mod tests {
             level: UsageLevel::Stable,
         };
 
-        let korean = taskbar_copy(
-            Some(&korean_row),
-            Language::Korean,
-            "자동 갱신 중",
-            false,
-        );
+        let korean = taskbar_copy(Some(&korean_row), Language::Korean, "자동 갱신 중", false);
         assert_eq!(korean.label, "주간 사용량");
         assert!(korean.tooltip.starts_with("Codex 7일 사용량\n"));
         assert!(korean.tooltip.contains("현재 사용량: 8%"));
         assert!(korean.tooltip.contains("남은 사용량: 92%"));
-        assert!(
-            korean
-                .tooltip
-                .contains("초기화 시각: 2026-07-27 (월) 03:00")
-        );
+        assert!(korean
+            .tooltip
+            .contains("초기화 시각: 2026-07-27 (월) 03:00"));
         assert!(korean.tooltip.contains("상태: 안정"));
 
         let english_row = UsageRowView {
@@ -668,19 +673,10 @@ mod tests {
         assert!(english.tooltip.starts_with("Codex 7d usage\n"));
         assert!(english.tooltip.contains("Current usage: 8%"));
         assert!(english.tooltip.contains("Remaining: 92%"));
-        assert!(
-            english
-                .tooltip
-                .contains("Reset at: 2026-07-27 (Mon) 03:00")
-        );
+        assert!(english.tooltip.contains("Reset at: 2026-07-27 (Mon) 03:00"));
         assert!(english.tooltip.contains("Status: Healthy"));
 
-        let remaining = taskbar_copy(
-            Some(&korean_row),
-            Language::Korean,
-            "자동 갱신 중",
-            true,
-        );
+        let remaining = taskbar_copy(Some(&korean_row), Language::Korean, "자동 갱신 중", true);
         assert_eq!(remaining.label, "남은 사용량");
         assert!(remaining.tooltip.contains("현재 사용량: 8%"));
         assert!(remaining.tooltip.contains("남은 사용량: 92%"));
@@ -710,22 +706,43 @@ mod tests {
 
     #[test]
     fn row_view_shows_used_or_remaining_percent() {
-        let now = std::time::SystemTime::now();
         let window = UsageWindow::new(WindowKind::Primary, 8.0, None, None).unwrap();
 
-        let used = row_view(&window, Language::English, now, false);
+        let used = row_view(&window, Language::English, false);
         assert_eq!(used.percent_text, "8%");
         assert_eq!(used.used_percent, 8.0);
         assert_eq!(used.display_percent, 8.0);
 
-        let remaining = row_view(&window, Language::English, now, true);
+        let remaining = row_view(&window, Language::English, true);
         assert_eq!(remaining.percent_text, "92%");
         assert_eq!(remaining.used_percent, 8.0);
         assert_eq!(remaining.display_percent, 92.0);
 
         let over = UsageWindow::new(WindowKind::Primary, 125.0, None, None).unwrap();
-        let remaining_clamped = row_view(&over, Language::English, now, true);
+        let remaining_clamped = row_view(&over, Language::English, true);
         assert_eq!(remaining_clamped.percent_text, "0%");
         assert_eq!(remaining_clamped.display_percent, 0.0);
+    }
+
+    #[test]
+    fn row_view_uses_absolute_local_reset_time_and_unavailable_fallback() {
+        let window = UsageWindow::new(
+            WindowKind::Secondary,
+            8.0,
+            Some(10_080),
+            Some(std::time::UNIX_EPOCH),
+        )
+        .unwrap();
+        let local_reset = ResetDateTime::new(2026, 7, 27, 1, 3, 4).unwrap();
+
+        let korean = row_view_with_reset_time(&window, Language::Korean, false, Some(local_reset));
+        assert_eq!(korean.reset_text, "2026-07-27 (월) 03:04");
+
+        let english =
+            row_view_with_reset_time(&window, Language::English, false, Some(local_reset));
+        assert_eq!(english.reset_text, "2026-07-27 (Mon) 03:04");
+
+        let unavailable = row_view_with_reset_time(&window, Language::English, false, None);
+        assert_eq!(unavailable.reset_text, "Reset unavailable");
     }
 }

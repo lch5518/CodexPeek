@@ -5,6 +5,7 @@ pub mod lifecycle;
 pub mod native;
 pub mod taskbar;
 pub mod taskbar_widget;
+pub(crate) mod time;
 pub mod tray;
 pub mod widget;
 
@@ -255,7 +256,7 @@ pub struct UsageRowView {
     pub display_percent: f64,
     /// 사용자에게 표시할 퍼센트 문자열입니다.
     pub percent_text: String,
-    /// 초기화 시각 안내 문자열입니다.
+    /// Windows 현지 날짜·요일·시각으로 구성한 초기화 안내 문자열입니다.
     pub reset_text: String,
     /// 색상 외 형태 선택에 쓰는 수준입니다.
     pub level: crate::UsageLevel,

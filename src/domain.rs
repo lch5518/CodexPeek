@@ -73,8 +73,7 @@ impl ResetDateTime {
     /// 날짜, 현지화된 요일과 시각을 고정된 숫자 형식으로 반환합니다.
     pub(crate) fn localized_label(self, language: Language) -> String {
         const KOREAN_WEEKDAYS: [&str; 7] = ["일", "월", "화", "수", "목", "금", "토"];
-        const ENGLISH_WEEKDAYS: [&str; 7] =
-            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const ENGLISH_WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
         let weekday = match language {
             Language::Korean => KOREAN_WEEKDAYS[self.weekday as usize],
             Language::English => ENGLISH_WEEKDAYS[self.weekday as usize],
