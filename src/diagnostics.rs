@@ -76,7 +76,7 @@ pub struct DiagnosticLogger {
 impl DiagnosticLogger {
     /// 기본 임시 디렉터리의 진단 로그 기록기를 만듭니다.
     pub fn new() -> Self {
-        Self::for_path(std::env::temp_dir().join("codex-usage-monitor.log"))
+        Self::for_path(std::env::temp_dir().join("codex-peek.log"))
     }
 
     /// 지정 경로를 사용하는 진단 로그 기록기를 만듭니다.
@@ -254,7 +254,15 @@ fn sanitize(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize;
+    use super::{sanitize, DiagnosticLogger};
+
+    #[test]
+    fn default_logger_uses_codex_peek_log_name() {
+        assert_eq!(
+            DiagnosticLogger::new().path,
+            std::env::temp_dir().join("codex-peek.log")
+        );
+    }
 
     #[test]
     fn sanitizer_removes_json_camel_snake_colon_and_spaced_secrets() {

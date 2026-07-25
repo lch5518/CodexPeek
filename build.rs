@@ -8,7 +8,7 @@ fn main() -> std::io::Result<()> {
     use winres::{VersionInfo, WindowsResource};
 
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let icon_path = output_dir.join("codex-usage-monitor.ico");
+    let icon_path = output_dir.join("codex-peek.ico");
     fs::write(&icon_path, build_support::usage_meter_icon())?;
 
     let version = env!("CARGO_PKG_VERSION");
@@ -19,8 +19,8 @@ fn main() -> std::io::Result<()> {
         .set_icon(icon_path.to_string_lossy().as_ref())
         .set("ProductName", "Codex Usage Monitor")
         .set("FileDescription", "Codex Usage Monitor")
-        .set("InternalName", "codex-usage-monitor")
-        .set("OriginalFilename", "codex-usage-monitor.exe")
+        .set("InternalName", "codex-peek")
+        .set("OriginalFilename", "codex-peek.exe")
         .set("ProductVersion", version)
         .set("FileVersion", version)
         .set_version_info(VersionInfo::PRODUCTVERSION, packed_version)
