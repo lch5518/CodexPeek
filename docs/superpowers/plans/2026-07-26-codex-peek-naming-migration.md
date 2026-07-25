@@ -47,7 +47,7 @@ Portable 기대 파일은 `codex-peek.exe`로 바꾸고 다음 installer 문자�
 추가한다.
 
 ```powershell
-'"codex-usage-monitor.exe"'
+'"<legacy-executable-name>"'
 '"codex-peek.exe"'
 "CurStepChanged"
 "RegQueryStringValue"
@@ -85,7 +85,7 @@ Copy-Item -LiteralPath $executablePath `
 OutputBaseFilename=CodexPeek-Setup-v{#AppVersion}-x64
 ```
 
-`[InstallDelete]`로 `{app}\codex-usage-monitor.exe`만 삭제한다. `CurStepChanged`의
+`[InstallDelete]`로 이전 이름의 실행 파일만 삭제한다. `CurStepChanged`의
 `ssPostInstall` 처리에서 `CodexUsageMonitor` Run 값이 존재할 때만 다음 고정 명령으로
 갱신한다.
 
@@ -149,7 +149,7 @@ Run:
 cargo test --test diagnostics_runtime
 ```
 
-Expected: 구현이 아직 `codex-usage-monitor.log`를 사용해 FAIL한다.
+Expected: 구현이 아직 이전 이름의 로그를 사용해 FAIL한다.
 
 - [ ] **Step 3: Cargo 이름과 버전을 변경한다**
 
@@ -213,8 +213,8 @@ git commit -m "build: Rename package to codex-peek"
 
 ```powershell
 $installedExecutable = Join-Path $installDirectory "codex-peek.exe"
-$legacyExecutable = Join-Path $installDirectory "codex-usage-monitor.exe"
-Get-Process -Name "codex-peek","codex-usage-monitor"
+$legacyExecutable = Join-Path $installDirectory "<legacy-executable-name>"
+Get-Process -Name "codex-peek","<legacy-process-name>"
 ```
 
 설치 전 `$legacyExecutable` fixture와 다음 Run 값을 만든다.
@@ -321,7 +321,7 @@ CodexPeek-Setup-v<version>-x64.exe
 Run:
 
 ```powershell
-rg -n -F "codex-usage-monitor" . --glob "!target/**" --glob "!.git/**"
+rg -n -F "<legacy-public-name>" . --glob "!target/**" --glob "!.git/**"
 ```
 
 Expected: installer의 `[InstallDelete]`, installer smoke migration fixture, 이름

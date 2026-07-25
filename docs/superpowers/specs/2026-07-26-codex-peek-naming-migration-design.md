@@ -2,19 +2,19 @@
 
 ## 목적
 
-저장소 이름이 CodexPeek로 변경된 뒤 남아 있는 `codex-usage-monitor` 패키지·실행 파일·
-배포 자산 이름을 `codex-peek`로 통일한다. 기존 설치 사용자의 설정과 자동 시작 상태는
+저장소 이름이 CodexPeek로 변경된 뒤 남아 있는 기존 패키지·실행 파일·배포 자산 이름을
+`codex-peek`로 통일한다. 기존 설치 사용자의 설정과 자동 시작 상태는
 잃지 않도록 호환성을 유지한다.
 
 ## 공개 이름 변경
 
 | 대상 | 기존 이름 | 새 이름 |
 | --- | --- | --- |
-| Cargo 패키지 | `codex-usage-monitor` | `codex-peek` |
-| Windows 실행 파일 | `codex-usage-monitor.exe` | `codex-peek.exe` |
-| Portable ZIP | `codex-usage-monitor-v<version>-windows-x86_64-portable.zip` | `codex-peek-v<version>-windows-x86_64-portable.zip` |
-| 설치 프로그램 | `CodexUsageMonitor-Setup-v<version>-x64.exe` | `CodexPeek-Setup-v<version>-x64.exe` |
-| 진단 로그 | `%TEMP%\codex-usage-monitor.log` | `%TEMP%\codex-peek.log` |
+| Cargo 패키지 | 이전 패키지 이름 | `codex-peek` |
+| Windows 실행 파일 | 이전 실행 파일 이름 | `codex-peek.exe` |
+| Portable ZIP | 이전 Portable ZIP 이름 | `codex-peek-v<version>-windows-x86_64-portable.zip` |
+| 설치 프로그램 | 이전 설치 프로그램 이름 | `CodexPeek-Setup-v<version>-x64.exe` |
+| 진단 로그 | 이전 진단 로그 이름 | `%TEMP%\codex-peek.log` |
 | Inno Setup 소스 | `packaging/windows/CodexUsageMonitor.iss` | `packaging/windows/CodexPeek.iss` |
 
 `Cargo.toml` 버전과 `Cargo.lock`의 루트 패키지 버전은 `0.1.3`으로 올린다. 이미 공개된
@@ -41,7 +41,7 @@ Rust 통합 테스트와 `src/main.rs`가 사용하는 라이브러리 crate 이
 동일한 AppId를 사용하므로 새 installer는 기존 설치를 업그레이드한다.
 
 - 설치 전에 기존 mutex를 확인해 실행 중인 앱을 종료하도록 안내한다.
-- 설치 디렉터리에 남은 `codex-usage-monitor.exe`만 제거한다.
+- 설치 디렉터리에 남은 이전 이름의 실행 파일만 제거한다.
 - 새 `codex-peek.exe`와 문서를 설치하고 시작 메뉴 바로 가기를 새 실행 파일로 만든다.
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CodexUsageMonitor` 값이 존재하면
   새 설치 경로의 `"codex-peek.exe" --startup` 명령으로 갱신한다.
@@ -49,7 +49,7 @@ Rust 통합 테스트와 `src/main.rs`가 사용하는 라이브러리 crate 이
 - 제거 시 기존과 동일하게 자동 시작 값만 삭제하고 설정과 로그는 보존한다.
 
 Portable 업데이트에서는 앱을 종료하고 새 ZIP을 별도 폴더에 푸는 방식을 권장한다.
-기존 폴더에 덮어 푸는 경우 남은 `codex-usage-monitor.exe`를 사용자가 직접 제거해야
+기존 폴더에 덮어 푸는 경우 남은 이전 이름의 실행 파일을 사용자가 직접 제거해야
 함을 설치 문서에 명시한다.
 
 ## 빌드와 릴리스 계약
@@ -82,6 +82,6 @@ Portable ZIP에는 `codex-peek.exe`가 들어간다. 패키징 실패 시 부분
 - 전체 Rust 테스트, Clippy, release 빌드를 실행한다.
 - 실제 Inno Setup 컴파일과 격리된 installer 설치·업데이트·제거 smoke test를 실행한다.
 - 기존 실행 파일 제거와 자동 시작 값 마이그레이션을 테스트한다.
-- 저장소 전체에서 공개 legacy 이름 `codex-usage-monitor`가 호환 테스트·마이그레이션
-  코드 외에 남지 않았는지 검색한다.
+- 저장소 전체에서 공개 legacy 이름이 호환 테스트·마이그레이션 코드 외에 남지 않았는지
+  검색한다.
 - `git diff --check`로 공백 오류를 검사한다.
