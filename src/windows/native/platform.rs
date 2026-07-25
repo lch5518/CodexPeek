@@ -1130,34 +1130,36 @@ unsafe fn paint_compact_taskbar_content(
     let _ = DeleteObject(HGDIOBJ(background.0));
     let _ = SetBkMode(dc, TRANSPARENT);
 
-    if risk == TaskbarRisk::Error && layout.dot.is_some() {
-        let font = CreateFontW(
-            -logical_to_physical(11, dpi),
-            0,
-            0,
-            0,
-            FW_MEDIUM.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            PROOF_QUALITY,
-            u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-            w!("Segoe UI Variable"),
-        );
-        let old = SelectObject(dc, HGDIOBJ(font.0));
-        let mut dot = native_rect(layout.dot.expect("checked above"));
-        draw_text(
-            dc,
-            "!",
-            &mut dot,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            accent,
-        );
-        SelectObject(dc, old);
-        let _ = DeleteObject(HGDIOBJ(font.0));
+    if risk == TaskbarRisk::Error {
+        if let Some(dot) = layout.dot {
+            let font = CreateFontW(
+                -logical_to_physical(11, dpi),
+                0,
+                0,
+                0,
+                FW_MEDIUM.0 as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                PROOF_QUALITY,
+                u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+                w!("Segoe UI Variable"),
+            );
+            let old = SelectObject(dc, HGDIOBJ(font.0));
+            let mut dot = native_rect(dot);
+            draw_text(
+                dc,
+                "!",
+                &mut dot,
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+                accent,
+            );
+            SelectObject(dc, old);
+            let _ = DeleteObject(HGDIOBJ(font.0));
+        }
     } else if let Some(dot) = layout.dot {
         let brush = CreateSolidBrush(accent);
         let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
