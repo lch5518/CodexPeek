@@ -13,7 +13,7 @@ fn test_root(label: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("codex-usage-monitor-{label}-{nonce}"))
+    std::env::temp_dir().join(format!("codex-peek-{label}-{nonce}"))
 }
 
 #[test]

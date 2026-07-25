@@ -28,6 +28,9 @@ jobs:
         shell: pwsh
         run: |
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          if ($metadata.packages[0].name -ne "codex-peek") {
+            throw "Cargo package name must be codex-peek"
+          }
           $packageVersion = $metadata.packages[0].version
           if ($env:GITHUB_REF_NAME -notmatch "^v(?<version>(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$") {
             throw "Release tag must have the exact v<major>.<minor>.<patch> form"
@@ -66,7 +69,7 @@ jobs:
           }
           pwsh -NoProfile -File scripts/package-windows-release.ps1 `
             -Version $version `
-            -Executable target\release\codex-usage-monitor.exe `
+            -Executable target\release\codex-peek.exe `
             -OutputDirectory release-assets `
             -IsccPath $iscc
 
@@ -78,8 +81,8 @@ jobs:
             throw "SHA256SUMS.txt must contain exactly two entries"
           }
           $expectedNames = @(
-            "CodexUsageMonitor-Setup-v$($env:GITHUB_REF_NAME.Substring(1))-x64.exe"
-            "codex-usage-monitor-$env:GITHUB_REF_NAME-windows-x86_64-portable.zip"
+            "CodexPeek-Setup-v$($env:GITHUB_REF_NAME.Substring(1))-x64.exe"
+            "codex-peek-$env:GITHUB_REF_NAME-windows-x86_64-portable.zip"
           )
           $manifestNames = @()
           foreach ($line in $manifest) {
@@ -101,7 +104,7 @@ jobs:
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          $installer = "release-assets\CodexUsageMonitor-Setup-v$version-x64.exe"
+          $installer = "release-assets\CodexPeek-Setup-v$version-x64.exe"
           pwsh -NoProfile -File tests/installer_smoke.ps1 `
             -Version $version `
             -Installer $installer `
@@ -135,9 +138,9 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $expected = @(
-            "CodexUsageMonitor-Setup-v$version-x64.exe"
+            "CodexPeek-Setup-v$version-x64.exe"
             "SHA256SUMS.txt"
-            "codex-usage-monitor-v$version-windows-x86_64-portable.zip"
+            "codex-peek-v$version-windows-x86_64-portable.zip"
           )
           $actual = @(
             Get-ChildItem -LiteralPath release-assets -File |

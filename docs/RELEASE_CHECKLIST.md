@@ -7,14 +7,14 @@ The GitHub Actions release workflow runs only when a `v*` tag is pushed.
 
 Use Semantic Versioning and treat `Cargo.toml` as the single source of truth.
 The annotated Git tag must match the package version exactly, with a leading `v`.
-For example, package version `0.1.2` requires tag `v0.1.2`.
+For example, package version `0.1.3` requires tag `v0.1.3`.
 
 Never move a tag that has been pushed or replace files in a published release.
 If a published build needs correction, increment the patch version.
 
 ## Release Procedure
 
-Replace `0.1.2` below with the version being released.
+Replace `0.1.3` below with the version being released.
 
 1. Update `Cargo.toml` and the root package version in `Cargo.lock`.
 2. Run the automated checks from the repository root:
@@ -34,15 +34,15 @@ Replace `0.1.2` below with the version being released.
 
    ```powershell
    git add --all
-   git commit -m "build: Prepare v0.1.2 release"
+   git commit -m "build: Prepare v0.1.3 release"
    git push origin main
    ```
 
 5. Create and push the matching annotated tag:
 
    ```powershell
-   git tag -a v0.1.2 -m "Release v0.1.2"
-   git push origin v0.1.2
+   git tag -a v0.1.3 -m "Release v0.1.3"
+   git push origin v0.1.3
    ```
 
 ## Release Workflow Contract
@@ -52,15 +52,15 @@ the tag and official repository metadata, runs formatting/tests/Clippy, builds t
 release executable, and creates exactly these files:
 
 ```text
-CodexUsageMonitor-Setup-v<version>-x64.exe
+CodexPeek-Setup-v<version>-x64.exe
 SHA256SUMS.txt
-codex-usage-monitor-v<version>-windows-x86_64-portable.zip
+codex-peek-v<version>-windows-x86_64-portable.zip
 ```
 
 The portable ZIP contains:
 
 ```text
-codex-usage-monitor.exe
+codex-peek.exe
 LICENSE
 README.ko.md
 README.md
@@ -92,7 +92,7 @@ Confirm all of the following on a clean current-user profile:
 - Extract the ZIP to a writable directory and start the executable without setup.
 - Confirm settings remain under `%APPDATA%\CodexUsageMonitor` rather than beside
   the executable.
-- Run `codex-usage-monitor.exe --diagnose`.
+- Run `codex-peek.exe --diagnose`.
 - Compare both release files against `SHA256SUMS.txt`.
 - On an unsigned build, confirm the README SmartScreen warning matches the observed
   Windows experience.

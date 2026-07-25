@@ -49,16 +49,16 @@ codex login status
 ### 설치 프로그램(권장)
 
 1. [최신 GitHub Release](https://github.com/lch5518/CodexPeek/releases/latest)에서
-   `CodexUsageMonitor-Setup-v<version>-x64.exe`를 다운로드합니다.
+   `CodexPeek-Setup-v<version>-x64.exe`를 다운로드합니다.
 2. 설치 프로그램을 실행하고 안내에 따라 설치합니다. 관리자 권한은 필요하지 않습니다.
 3. 설치가 끝나면 시작 메뉴에서 **Codex Usage Monitor**를 실행합니다.
 
 ### Portable
 
 1. 최신 Release에서
-   `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`을 다운로드합니다.
+   `codex-peek-v<version>-windows-x86_64-portable.zip`을 다운로드합니다.
 2. ZIP을 쓰기 가능한 폴더에 완전히 압축 해제합니다.
-3. 압축을 푼 폴더에서 `codex-usage-monitor.exe`를 실행합니다.
+3. 압축을 푼 폴더에서 `codex-peek.exe`를 실행합니다.
 
 두 방식 모두 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도 설정을
 공유합니다. Installer는 시작 메뉴 바로 가기를 만들지만 Windows 자동 시작은 기본으로
@@ -93,7 +93,7 @@ Explorer 재시작이나 작업 표시줄 배치 변경으로 위젯을 붙이�
 토큰, 계정 ID, 이메일, 인증 파일 내용, 프록시 값은 저장하거나 로그에 기록하지 않습니다.
 
 설정은 `%APPDATA%\CodexUsageMonitor\settings.json`에 저장합니다.
-크기가 제한된 진단 로그는 `%TEMP%\codex-usage-monitor.log`에 저장합니다.
+크기가 제한된 진단 로그는 `%TEMP%\codex-peek.log`에 저장합니다.
 
 데이터 처리와 취약점 보고 안내는 [SECURITY.md](SECURITY.md)를 참고하세요.
 

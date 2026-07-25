@@ -609,8 +609,8 @@ impl RegistryBackend for MemoryRegistry {
 
 #[test]
 fn autostart_quotes_exact_executable_and_verifies_round_trip() {
-    let path = PathBuf::from(r"C:\Program Files\Codex Usage Monitor\codex-usage-monitor.exe");
-    let expected = r#""C:\Program Files\Codex Usage Monitor\codex-usage-monitor.exe" --startup"#;
+    let path = PathBuf::from(r"C:\Program Files\Codex Usage Monitor\codex-peek.exe");
+    let expected = r#""C:\Program Files\Codex Usage Monitor\codex-peek.exe" --startup"#;
     assert_eq!(autostart_command(&path).unwrap(), expected);
 
     let registry = MemoryRegistry::default();

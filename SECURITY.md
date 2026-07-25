@@ -30,7 +30,7 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
   environment variables exist; their contents and values are not read into diagnostics.
 - The UI consumes only the login kind and the primary/secondary rate-limit window fields
   needed for display. Settings are stored under `%APPDATA%\CodexUsageMonitor`; a bounded,
-  rotating diagnostic log is stored at `%TEMP%\codex-usage-monitor.log`.
+  rotating diagnostic log is stored at `%TEMP%\codex-peek.log`.
 - The program launches `codex app-server --stdio` hidden and exchanges bounded JSONL
   messages over local pipes. The child is assigned to a Windows Job Object so the child
   process tree is terminated on timeout or monitor shutdown. It never invokes

@@ -39,17 +39,17 @@ codex login status
 
 ### Installer (recommended)
 
-1. Download `CodexUsageMonitor-Setup-v<version>-x64.exe` from the
+1. Download `CodexPeek-Setup-v<version>-x64.exe` from the
    [latest GitHub Release](https://github.com/lch5518/CodexPeek/releases/latest).
 2. Run setup and follow the prompts. Administrator access is not required.
 3. Start **Codex Usage Monitor** from the Start Menu.
 
 ### Portable
 
-1. Download `codex-usage-monitor-v<version>-windows-x86_64-portable.zip` from the
+1. Download `codex-peek-v<version>-windows-x86_64-portable.zip` from the
    latest release.
 2. Extract the ZIP completely to a writable folder.
-3. Run `codex-usage-monitor.exe` from the extracted folder.
+3. Run `codex-peek.exe` from the extracted folder.
 
 Both editions use `%APPDATA%\CodexUsageMonitor\settings.json`, so settings are shared if
 you switch between them. The installer adds a Start Menu shortcut but does not enable
@@ -82,7 +82,7 @@ Raw RPC responses are processed only long enough to extract the login type and t
 Tokens, account IDs, email addresses, authentication-file contents, and proxy values are not stored or written to logs.
 
 Settings are stored in `%APPDATA%\CodexUsageMonitor\settings.json`.
-A bounded diagnostic log is stored in `%TEMP%\codex-usage-monitor.log`.
+A bounded diagnostic log is stored in `%TEMP%\codex-peek.log`.
 
 For the full data-handling and vulnerability-reporting guidance, see [SECURITY.md](SECURITY.md).
 

@@ -37,8 +37,8 @@ Codex Usage Monitor는 `%USERPROFILE%\.codex\auth.json` 내용을 직접 읽지 
 
 | 파일 | 용도 |
 | --- | --- |
-| `CodexUsageMonitor-Setup-v<version>-x64.exe` | 일반 사용자에게 권장하는 설치 프로그램 |
-| `codex-usage-monitor-v<version>-windows-x86_64-portable.zip` | 설치 없이 압축을 풀어 실행하는 Portable 버전 |
+| `CodexPeek-Setup-v<version>-x64.exe` | 일반 사용자에게 권장하는 설치 프로그램 |
+| `codex-peek-v<version>-windows-x86_64-portable.zip` | 설치 없이 압축을 풀어 실행하는 Portable 버전 |
 | `SHA256SUMS.txt` | 두 배포 파일의 SHA-256 무결성 확인 |
 
 `<version>`은 실제 릴리스 번호로 표시됩니다.
@@ -47,7 +47,7 @@ Codex Usage Monitor는 `%USERPROFILE%\.codex\auth.json` 내용을 직접 읽지 
 
 설치 프로그램은 관리자 권한 없이 현재 Windows 사용자 계정에 설치됩니다.
 
-1. `CodexUsageMonitor-Setup-v<version>-x64.exe`와 `SHA256SUMS.txt`를 같은 폴더에
+1. `CodexPeek-Setup-v<version>-x64.exe`와 `SHA256SUMS.txt`를 같은 폴더에
    다운로드합니다.
 2. 아래의 [SHA-256 확인](#5-sha-256-확인) 절차로 파일을 검증합니다.
 3. 설치 프로그램을 실행하고 안내에 따라 설치합니다.
@@ -79,16 +79,16 @@ Windows 자동 시작도 기본으로 활성화하지 않습니다.
 Portable 버전은 설치 권한이 없거나 원하는 폴더에서 직접 실행하려는 사용자에게
 적합합니다.
 
-1. `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`과
+1. `codex-peek-v<version>-windows-x86_64-portable.zip`과
    `SHA256SUMS.txt`를 다운로드합니다.
 2. 아래 절차로 ZIP의 SHA-256 해시를 검증합니다.
 3. ZIP을 쓰기 가능한 폴더에 완전히 압축 해제합니다.
-4. 압축을 푼 폴더에서 `codex-usage-monitor.exe`를 실행합니다.
+4. 압축을 푼 폴더에서 `codex-peek.exe`를 실행합니다.
 
 ZIP 안에서 실행하지 마세요. 예를 들어 다음과 같은 사용자 폴더에 압축을 풀 수 있습니다.
 
 ```text
-%LOCALAPPDATA%\Programs\CodexUsageMonitorPortable
+%LOCALAPPDATA%\Programs\CodexPeekPortable
 ```
 
 Portable은 앱 파일을 설치하거나 시작 메뉴 바로 가기를 만들지 않습니다. 다만 설정을
@@ -101,7 +101,7 @@ Portable은 앱 파일을 설치하거나 시작 메뉴 바로 가기를 만들�
 `<version>`을 다운로드한 파일의 실제 버전으로 바꿉니다.
 
 ```powershell
-$file = "CodexUsageMonitor-Setup-v<version>-x64.exe"
+$file = "CodexPeek-Setup-v<version>-x64.exe"
 $checksumLine = Get-Content .\SHA256SUMS.txt |
     Where-Object { $_ -match "  $([regex]::Escape($file))$" }
 
@@ -122,7 +122,7 @@ if ($actual -ne $expected) {
 Portable ZIP을 확인하려면 `$file` 값만 다음과 같이 바꿉니다.
 
 ```powershell
-$file = "codex-usage-monitor-v<version>-windows-x86_64-portable.zip"
+$file = "codex-peek-v<version>-windows-x86_64-portable.zip"
 ```
 
 해시가 일치하지 않으면 파일을 실행하지 말고 삭제한 뒤 공식 Release에서 다시
@@ -145,7 +145,7 @@ Installer와 Portable은 다음 설정과 로그를 공유합니다.
 
 ```text
 설정: %APPDATA%\CodexUsageMonitor\settings.json
-로그: %TEMP%\codex-usage-monitor.log
+로그: %TEMP%\codex-peek.log
 ```
 
 UI를 열지 않고 연결 상태를 확인하려면 다음 명령을 실행합니다.
@@ -153,13 +153,13 @@ UI를 열지 않고 연결 상태를 확인하려면 다음 명령을 실행합�
 Installer:
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\CodexUsageMonitor\codex-usage-monitor.exe" --diagnose
+& "$env:LOCALAPPDATA\Programs\CodexUsageMonitor\codex-peek.exe" --diagnose
 ```
 
 Portable:
 
 ```powershell
-.\codex-usage-monitor.exe --diagnose
+.\codex-peek.exe --diagnose
 ```
 
 ## 7. 업데이트
@@ -179,7 +179,7 @@ Portable:
 1. 트레이 메뉴에서 앱을 종료합니다.
 2. 새 Portable ZIP과 `SHA256SUMS.txt`를 다운로드하고 검증합니다.
 3. 새 폴더에 압축을 풀거나 기존 앱 파일을 새 파일로 교체합니다.
-4. `codex-usage-monitor.exe`를 다시 실행합니다.
+4. `codex-peek.exe`를 다시 실행합니다.
 
 두 방식 모두 `%APPDATA%\CodexUsageMonitor`의 기존 설정을 계속 사용합니다.
 
@@ -198,7 +198,7 @@ Installer 버전은 Windows **설정 → 앱 → 설치된 앱**에서 **Codex U
 보존되는 항목:
 
 - `%APPDATA%\CodexUsageMonitor`의 사용자 설정
-- `%TEMP%\codex-usage-monitor.log` 진단 로그
+- `%TEMP%\codex-peek.log` 진단 로그
 
 Portable 버전은 앱을 종료한 뒤 압축을 푼 폴더를 삭제하면 됩니다. 사용자 설정과 로그까지
 완전히 제거하려면 위 보존 경로를 별도로 확인한 뒤 직접 삭제해야 합니다.
