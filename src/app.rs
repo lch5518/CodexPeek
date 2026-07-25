@@ -375,7 +375,7 @@ fn taskbar_copy(
     .to_owned();
     let tooltip = match (row, language) {
         (Some(row), Language::Korean) => format!(
-            "{} 기준\n현재 사용량: {:.0}%\n남은 사용량: {:.0}%\n초기화: {}\n상태: {} · {status}",
+            "Codex {} 사용량\n현재 사용량: {:.0}%\n남은 사용량: {:.0}%\n초기화 시각: {}\n상태: {} · {status}",
             row.label,
             row.used_percent,
             (100.0 - row.used_percent).max(0.0),
@@ -383,15 +383,15 @@ fn taskbar_copy(
             taskbar_risk_text(row.used_percent, language),
         ),
         (Some(row), Language::English) => format!(
-            "{} window\nCurrent usage: {:.0}%\nRemaining: {:.0}%\nReset: {}\nStatus: {} · {status}",
+            "Codex {} usage\nCurrent usage: {:.0}%\nRemaining: {:.0}%\nReset at: {}\nStatus: {} · {status}",
             row.label,
             row.used_percent,
             (100.0 - row.used_percent).max(0.0),
             row.reset_text,
             taskbar_risk_text(row.used_percent, language),
         ),
-        (None, Language::Korean) => format!("{label}\n상태: {status}"),
-        (None, Language::English) => format!("{label}\nStatus: {status}"),
+        (None, Language::Korean) => format!("Codex 사용량\n상태: {status}"),
+        (None, Language::English) => format!("Codex usage\nStatus: {status}"),
     };
     TaskbarCopy { label, tooltip }
 }
@@ -632,33 +632,63 @@ mod tests {
 
     #[test]
     fn taskbar_copy_is_explicit_and_keeps_reset_details_in_the_tooltip() {
-        let row = UsageRowView {
+        let korean_row = UsageRowView {
             label: "7일".to_owned(),
             used_percent: 8.0,
             display_percent: 8.0,
             percent_text: "8%".to_owned(),
-            reset_text: "6일 22시간".to_owned(),
+            reset_text: "2026-07-27 (월) 03:00".to_owned(),
             level: UsageLevel::Stable,
         };
 
-        let korean = taskbar_copy(Some(&row), Language::Korean, "자동 갱신 중", false);
+        let korean = taskbar_copy(
+            Some(&korean_row),
+            Language::Korean,
+            "자동 갱신 중",
+            false,
+        );
         assert_eq!(korean.label, "주간 사용량");
-        assert!(korean.tooltip.contains("7일 기준"));
+        assert!(korean.tooltip.starts_with("Codex 7일 사용량\n"));
         assert!(korean.tooltip.contains("현재 사용량: 8%"));
         assert!(korean.tooltip.contains("남은 사용량: 92%"));
-        assert!(korean.tooltip.contains("초기화: 6일 22시간"));
+        assert!(
+            korean
+                .tooltip
+                .contains("초기화 시각: 2026-07-27 (월) 03:00")
+        );
         assert!(korean.tooltip.contains("상태: 안정"));
 
-        let english = taskbar_copy(Some(&row), Language::English, "Polling", false);
+        let english_row = UsageRowView {
+            label: "7d".to_owned(),
+            reset_text: "2026-07-27 (Mon) 03:00".to_owned(),
+            ..korean_row.clone()
+        };
+        let english = taskbar_copy(Some(&english_row), Language::English, "Polling", false);
         assert_eq!(english.label, "Weekly usage");
+        assert!(english.tooltip.starts_with("Codex 7d usage\n"));
         assert!(english.tooltip.contains("Current usage: 8%"));
         assert!(english.tooltip.contains("Remaining: 92%"));
+        assert!(
+            english
+                .tooltip
+                .contains("Reset at: 2026-07-27 (Mon) 03:00")
+        );
         assert!(english.tooltip.contains("Status: Healthy"));
 
-        let remaining = taskbar_copy(Some(&row), Language::Korean, "자동 갱신 중", true);
+        let remaining = taskbar_copy(
+            Some(&korean_row),
+            Language::Korean,
+            "자동 갱신 중",
+            true,
+        );
         assert_eq!(remaining.label, "남은 사용량");
         assert!(remaining.tooltip.contains("현재 사용량: 8%"));
         assert!(remaining.tooltip.contains("남은 사용량: 92%"));
+
+        let unavailable = taskbar_copy(None, Language::Korean, "정보 없음", false);
+        assert!(unavailable.tooltip.starts_with("Codex 사용량\n"));
+        let unavailable = taskbar_copy(None, Language::English, "Unavailable", false);
+        assert!(unavailable.tooltip.starts_with("Codex usage\n"));
     }
 
     #[test]
