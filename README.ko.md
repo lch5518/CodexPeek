@@ -39,37 +39,36 @@ Codex 작업을 시작하거나 `codex exec`를 호출하지 않습니다.
 
 ## 다운로드 및 실행
 
-[GitHub Releases](https://github.com/lch5518/CodexPeek/releases/latest)에서 최신 파일을
-다운로드하세요. Windows x64용 배포 방식은 두 가지입니다.
+먼저 PowerShell에서 Codex CLI 설치와 로그인 상태를 확인하세요.
 
-- **설치 프로그램(권장):** `CodexUsageMonitor-Setup-v<version>-x64.exe`를 다운로드합니다.
-  관리자 권한 없이 현재 사용자 계정에 설치하고 시작 메뉴 바로 가기를 만듭니다.
-  설치가 끝나면 실행할 수 있지만 Windows 자동 시작은 기본으로 켜지지 않습니다.
-- **Portable:** `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`을 다운로드해
-  쓰기 가능한 폴더에 압축을 풀고 `codex-usage-monitor.exe`를 실행합니다. 별도 설치는 없습니다.
+```powershell
+codex --version
+codex login status
+```
+
+### 설치 프로그램(권장)
+
+1. [최신 GitHub Release](https://github.com/lch5518/CodexPeek/releases/latest)에서
+   `CodexUsageMonitor-Setup-v<version>-x64.exe`를 다운로드합니다.
+2. 설치 프로그램을 실행하고 안내에 따라 설치합니다. 관리자 권한은 필요하지 않습니다.
+3. 설치가 끝나면 시작 메뉴에서 **Codex Usage Monitor**를 실행합니다.
+
+### Portable
+
+1. 최신 Release에서
+   `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`을 다운로드합니다.
+2. ZIP을 쓰기 가능한 폴더에 완전히 압축 해제합니다.
+3. 압축을 푼 폴더에서 `codex-usage-monitor.exe`를 실행합니다.
 
 두 방식 모두 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도 설정을
-공유합니다. 제거할 때 설정과 진단 로그는 보존하고, 이 앱이 등록한 Windows 자동 시작
-항목은 삭제합니다.
+공유합니다. Installer는 시작 메뉴 바로 가기를 만들지만 Windows 자동 시작은 기본으로
+활성화하지 않습니다.
 
-초기 릴리스는 코드 서명되지 않아 Microsoft Defender SmartScreen이 인식되지 않은 앱
-경고를 표시할 수 있습니다. 이 저장소에서만 다운로드하고 릴리스의 `SHA256SUMS.txt`와
-파일 해시를 비교하세요.
+초기 릴리스는 코드 서명되지 않아 Microsoft Defender SmartScreen 경고가 나타날 수
+있습니다. 공식 Release에서만 다운로드하고 `SHA256SUMS.txt`로 파일을 검증하세요.
 
-```powershell
-$file = ".\CodexUsageMonitor-Setup-v0.1.2-x64.exe"
-(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-Get-Content .\SHA256SUMS.txt
-```
-
-UI를 열지 않고 CLI, app-server 연결, 로컬 설정을 점검하려면 다음 명령을 실행합니다.
-
-```powershell
-& "$env:LOCALAPPDATA\Programs\CodexUsageMonitor\codex-usage-monitor.exe" --diagnose
-```
-
-Portable 버전은 압축을 푼 폴더에서 같은 `--diagnose` 옵션을 실행하세요.
-`--startup`은 트레이 메뉴에서 등록한 Windows 자동 시작 경로에서만 사용합니다.
+해시 확인, 업데이트, 제거와 문제 해결은 [상세 설치 가이드](docs/INSTALL.md)를
+참고하세요.
 
 ## 사용 방법
 

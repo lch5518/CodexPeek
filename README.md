@@ -30,38 +30,36 @@ It does not start a Codex task or call `codex exec`.
 
 ## Download and run
 
-Download the latest files from [GitHub Releases](https://github.com/lch5518/CodexPeek/releases/latest).
-The release provides two Windows x64 options:
+First verify that Codex CLI is installed and signed in:
 
-- **Installer (recommended):** Download `CodexUsageMonitor-Setup-v<version>-x64.exe`.
-  It installs for the current user without administrator access, adds a Start Menu shortcut,
-  and offers to launch the monitor when setup finishes. It does not enable Windows startup
-  automatically.
-- **Portable:** Download `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`,
-  extract it to a writable folder, and run `codex-usage-monitor.exe`. Nothing is installed.
+```powershell
+codex --version
+codex login status
+```
+
+### Installer (recommended)
+
+1. Download `CodexUsageMonitor-Setup-v<version>-x64.exe` from the
+   [latest GitHub Release](https://github.com/lch5518/CodexPeek/releases/latest).
+2. Run setup and follow the prompts. Administrator access is not required.
+3. Start **Codex Usage Monitor** from the Start Menu.
+
+### Portable
+
+1. Download `codex-usage-monitor-v<version>-windows-x86_64-portable.zip` from the
+   latest release.
+2. Extract the ZIP completely to a writable folder.
+3. Run `codex-usage-monitor.exe` from the extracted folder.
 
 Both editions use `%APPDATA%\CodexUsageMonitor\settings.json`, so settings are shared if
-you switch between them. Uninstalling preserves settings and diagnostics but removes the
-monitor's Windows autostart registration.
+you switch between them. The installer adds a Start Menu shortcut but does not enable
+Windows startup by default.
 
-The initial releases are not code-signed, so Microsoft Defender SmartScreen may show an
-unrecognized-app warning. Download only from this repository and compare the file with the
-release's `SHA256SUMS.txt`:
+Initial releases are not code-signed and may trigger Microsoft Defender SmartScreen.
+Download only from the official release and verify the file against `SHA256SUMS.txt`.
 
-```powershell
-$file = ".\CodexUsageMonitor-Setup-v0.1.2-x64.exe"
-(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-Get-Content .\SHA256SUMS.txt
-```
-
-Run the following command to check the CLI, app-server connection, and local settings without opening the UI:
-
-```powershell
-& "$env:LOCALAPPDATA\Programs\CodexUsageMonitor\codex-usage-monitor.exe" --diagnose
-```
-
-For the portable edition, run the same `--diagnose` option from its extracted directory.
-`--startup` is intended only for the Windows startup registration created through the tray menu.
+See the [detailed installation guide (Korean)](docs/INSTALL.md) for hash verification,
+updates, uninstall behavior, diagnostics, and troubleshooting.
 
 ## Using the monitor
 
