@@ -27,7 +27,8 @@ $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "codex-installer-smoke-$
 $installDirectory = Join-Path $testRoot "install"
 $installLog = Join-Path $testRoot "install.log"
 $uninstallLog = Join-Path $testRoot "uninstall.log"
-$installedExecutable = Join-Path $installDirectory "codex-usage-monitor.exe"
+$installedExecutable = Join-Path $installDirectory "codex-peek.exe"
+$legacyExecutable = Join-Path $installDirectory "codex-usage-monitor.exe"
 $uninstaller = Join-Path $installDirectory "unins000.exe"
 $startMenuDirectory = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Codex Usage Monitor"
 $startMenuShortcut = Join-Path $startMenuDirectory "Codex Usage Monitor.lnk"
@@ -60,7 +61,9 @@ if (Test-Path -LiteralPath $runKey) {
 }
 
 try {
-    if ($null -ne (Get-Process -Name "codex-usage-monitor" -ErrorAction SilentlyContinue)) {
+    if ($null -ne (
+        Get-Process -Name "codex-peek", "codex-usage-monitor" -ErrorAction SilentlyContinue
+    )) {
         throw "Codex Usage Monitor is running; stop it before the installer smoke test"
     }
     if ($null -ne (Find-CodexUninstallEntry)) {
@@ -70,6 +73,11 @@ try {
         throw "Codex Usage Monitor Start Menu group already exists"
     }
     New-Item -ItemType Directory -Path $testRoot | Out-Null
+    New-Item -ItemType Directory -Path $installDirectory | Out-Null
+    Set-Content -LiteralPath $legacyExecutable -Value "legacy executable" -NoNewline
+    New-Item -Path $runKey -Force | Out-Null
+    New-ItemProperty -LiteralPath $runKey -Name $runValueName `
+        -Value "`"$legacyExecutable`" --startup" -PropertyType String -Force | Out-Null
 
     $install = Start-Process -FilePath $installerPath -Wait -PassThru -ArgumentList @(
         "/VERYSILENT"
@@ -84,6 +92,9 @@ try {
     if (-not (Test-Path -LiteralPath $installedExecutable -PathType Leaf)) {
         throw "installed executable is missing"
     }
+    if (Test-Path -LiteralPath $legacyExecutable) {
+        throw "legacy executable remained after upgrade"
+    }
     $productVersion = (Get-Item -LiteralPath $installedExecutable).VersionInfo.ProductVersion
     if ($productVersion -ne $Version) {
         throw "installed ProductVersion $productVersion does not match $Version"
@@ -95,12 +106,14 @@ try {
     if ($null -eq $uninstallEntry -or $uninstallEntry.DisplayVersion -ne $Version) {
         throw "per-user uninstall registration is missing or has the wrong version"
     }
+    $runProperties = Get-ItemProperty -LiteralPath $runKey
+    $expectedRunValue = "`"$installedExecutable`" --startup"
+    if ($runProperties.$runValueName -ne $expectedRunValue) {
+        throw "autostart registry value was not migrated to the new executable"
+    }
 
     New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
     Set-Content -LiteralPath $settingsSentinel -Value "preserve on uninstall" -NoNewline
-    New-Item -Path $runKey -Force | Out-Null
-    New-ItemProperty -LiteralPath $runKey -Name $runValueName `
-        -Value "`"$installedExecutable`" --startup" -PropertyType String -Force | Out-Null
 
     $uninstall = Start-Process -FilePath $uninstaller -Wait -PassThru -ArgumentList @(
         "/VERYSILENT"
