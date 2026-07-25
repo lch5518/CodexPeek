@@ -10,9 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
-    outputs:
-      archive-name: ${{ steps.package.outputs.name }}
+    runs-on: windows-2022
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -31,10 +29,20 @@ jobs:
         run: |
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $packageVersion = $metadata.packages[0].version
-          $tagVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          if ($env:GITHUB_REF_NAME -notmatch "^v(?<version>(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$") {
+            throw "Release tag must have the exact v<major>.<minor>.<patch> form"
+          }
+          $tagVersion = $Matches.version
           if ($tagVersion -ne $packageVersion) {
             throw "Tag version $tagVersion does not match Cargo version $packageVersion"
           }
+          if ($metadata.packages[0].repository -ne "https://github.com/lch5518/CodexPeek") {
+            throw "Cargo repository metadata must identify the official HTTPS repository"
+          }
+
+      - name: Check release packaging contract
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/release_packaging.ps1
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -48,48 +56,107 @@ jobs:
       - name: Build release executable
         run: cargo build --release
 
-      - name: Create release archive
-        id: package
+      - name: Create portable and installer release assets
         shell: pwsh
         run: |
-          $archiveBase = "codex-usage-monitor-$env:GITHUB_REF_NAME-windows-x86_64"
-          $staging = Join-Path $env:RUNNER_TEMP $archiveBase
-          New-Item -ItemType Directory -Path $staging | Out-Null
-          Copy-Item target\release\codex-usage-monitor.exe $staging
-          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, SECURITY.md $staging
-          Copy-Item docs\RELEASE_CHECKLIST.md (Join-Path $staging "RELEASE_CHECKLIST.md")
-          $archive = Join-Path $env:GITHUB_WORKSPACE "$archiveBase.zip"
-          Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $archive
-          "archive=$archive" >> $env:GITHUB_OUTPUT
-          "name=$archiveBase.zip" >> $env:GITHUB_OUTPUT
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc -PathType Leaf)) {
+            throw "Inno Setup compiler is unavailable at $iscc"
+          }
+          pwsh -NoProfile -File scripts/package-windows-release.ps1 `
+            -Version $version `
+            -Executable target\release\codex-usage-monitor.exe `
+            -OutputDirectory release-assets `
+            -IsccPath $iscc
 
-      - name: Upload workflow artifact
+      - name: Verify release checksums
+        shell: pwsh
+        run: |
+          $manifest = Get-Content -LiteralPath release-assets\SHA256SUMS.txt
+          if ($manifest.Count -ne 2) {
+            throw "SHA256SUMS.txt must contain exactly two entries"
+          }
+          $expectedNames = @(
+            "CodexUsageMonitor-Setup-v$($env:GITHUB_REF_NAME.Substring(1))-x64.exe"
+            "codex-usage-monitor-$env:GITHUB_REF_NAME-windows-x86_64-portable.zip"
+          )
+          $manifestNames = @()
+          foreach ($line in $manifest) {
+            if ($line -notmatch "^(?<hash>[0-9a-f]{64})  (?<name>[^\\/]+)$") {
+              throw "Invalid checksum line: $line"
+            }
+            $path = Join-Path release-assets $Matches.name
+            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches.hash) {
+              throw "Checksum mismatch for $($Matches.name)"
+            }
+            $manifestNames += $Matches.name
+          }
+          if (Compare-Object $expectedNames $manifestNames) {
+            throw "SHA256SUMS.txt does not identify the exact release assets"
+          }
+
+      - name: Smoke test installer lifecycle
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $installer = "release-assets\CodexUsageMonitor-Setup-v$version-x64.exe"
+          pwsh -NoProfile -File tests/installer_smoke.ps1 `
+            -Version $version `
+            -Installer $installer `
+            -AllowUserProfileMutation
+
+      - name: Upload release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ steps.package.outputs.name }}
-          path: ${{ steps.package.outputs.archive }}
+          name: release-assets-${{ github.ref_name }}
+          path: release-assets/*
           if-no-files-found: error
+          retention-days: 7
 
   release:
     needs: build
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: write
     steps:
-      - name: Download release archive
+      - name: Download release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ${{ needs.build.outputs.archive-name }}
-          path: release-archive
+          name: release-assets-${{ github.ref_name }}
+          path: release-assets
 
-      - name: Attach archive to GitHub release
+      - name: Create GitHub release without replacing existing assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          ARCHIVE: ${{ github.workspace }}\release-archive\${{ needs.build.outputs.archive-name }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if (gh release view $env:GITHUB_REF_NAME) {
-            gh release upload $env:GITHUB_REF_NAME $env:ARCHIVE --clobber
-          } else {
-            gh release create $env:GITHUB_REF_NAME $env:ARCHIVE --verify-tag --generate-notes
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $expected = @(
+            "CodexUsageMonitor-Setup-v$version-x64.exe"
+            "SHA256SUMS.txt"
+            "codex-usage-monitor-v$version-windows-x86_64-portable.zip"
+          )
+          $actual = @(
+            Get-ChildItem -LiteralPath release-assets -File |
+              Sort-Object Name |
+              ForEach-Object Name
+          )
+          if (Compare-Object $expected $actual) {
+            throw "Downloaded release assets do not match the expected contract"
+          }
+
+          $null = gh release view $env:GITHUB_REF_NAME 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release $env:GITHUB_REF_NAME already exists; publish a new patch version"
+          }
+
+          [string[]] $assets = Get-ChildItem -LiteralPath release-assets -File |
+            Sort-Object Name |
+            ForEach-Object FullName
+          & gh release create $env:GITHUB_REF_NAME @assets --verify-tag --generate-notes
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub release creation failed"
           }

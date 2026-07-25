@@ -36,27 +36,39 @@ Codex 작업을 시작하거나 `codex exec`를 호출하지 않습니다.
 
 - Windows 10 또는 Windows 11, x64.
 - `account/read`, `account/rateLimits/read` RPC를 지원하는 로그인된 [Codex CLI](https://github.com/openai/codex).
-- 소스 빌드 시 Rust 1.85 이상, Visual Studio 2022 C++ Build Tools, Windows SDK.
 
-## 빌드 및 실행
+## 다운로드 및 실행
 
-현재 설치 프로그램과 WinGet 패키지는 제공하지 않습니다.
-Codex CLI를 설치하고 로그인한 뒤 소스에서 빌드하세요.
+[GitHub Releases](https://github.com/lch5518/CodexPeek/releases/latest)에서 최신 파일을
+다운로드하세요. Windows x64용 배포 방식은 두 가지입니다.
+
+- **설치 프로그램(권장):** `CodexUsageMonitor-Setup-v<version>-x64.exe`를 다운로드합니다.
+  관리자 권한 없이 현재 사용자 계정에 설치하고 시작 메뉴 바로 가기를 만듭니다.
+  설치가 끝나면 실행할 수 있지만 Windows 자동 시작은 기본으로 켜지지 않습니다.
+- **Portable:** `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`을 다운로드해
+  쓰기 가능한 폴더에 압축을 풀고 `codex-usage-monitor.exe`를 실행합니다. 별도 설치는 없습니다.
+
+두 방식 모두 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도 설정을
+공유합니다. 제거할 때 설정과 진단 로그는 보존하고, 이 앱이 등록한 Windows 자동 시작
+항목은 삭제합니다.
+
+초기 릴리스는 코드 서명되지 않아 Microsoft Defender SmartScreen이 인식되지 않은 앱
+경고를 표시할 수 있습니다. 이 저장소에서만 다운로드하고 릴리스의 `SHA256SUMS.txt`와
+파일 해시를 비교하세요.
 
 ```powershell
-git clone https://github.com/lch5518/CodexPeek.git
-Set-Location .\CodexPeek
-cargo build --release
-
-Start-Process .\target\release\codex-usage-monitor.exe
+$file = ".\CodexUsageMonitor-Setup-v0.1.2-x64.exe"
+(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+Get-Content .\SHA256SUMS.txt
 ```
 
 UI를 열지 않고 CLI, app-server 연결, 로컬 설정을 점검하려면 다음 명령을 실행합니다.
 
 ```powershell
-.\target\release\codex-usage-monitor.exe --diagnose
+& "$env:LOCALAPPDATA\Programs\CodexUsageMonitor\codex-usage-monitor.exe" --diagnose
 ```
 
+Portable 버전은 압축을 푼 폴더에서 같은 `--diagnose` 옵션을 실행하세요.
 `--startup`은 트레이 메뉴에서 등록한 Windows 자동 시작 경로에서만 사용합니다.
 
 ## 사용 방법
@@ -99,9 +111,12 @@ Explorer 재시작이나 작업 표시줄 배치 변경으로 위젯을 붙이�
 
 ## 개발
 
-소스 빌드를 공유하기 전에는 다음 검사를 실행하세요.
+소스 빌드에는 Rust 1.85 이상, Visual Studio 2022 C++ Build Tools, Windows SDK가
+필요합니다. 저장소 루트에서 빌드하고 검사하세요.
 
 ```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets

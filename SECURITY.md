@@ -10,18 +10,15 @@ and older releases may receive fixes at the maintainers' discretion.
 
 ## Reporting a vulnerability / 취약점 신고
 
-No official security-reporting address has been designated yet. Do not place tokens,
+No dedicated security-reporting address has been designated yet. Do not place tokens,
 `auth.json`, account details, logs containing private data, or exploit details in a
-public issue. Until an official repository and private reporting channel are published,
-contact the party that supplied the binary through an existing private channel. Once an
-official GitHub repository exists, this section will be updated with its private
-vulnerability-reporting procedure.
+public issue. Use GitHub private vulnerability reporting if it is available for this
+repository; otherwise contact the maintainer through an existing private channel.
 
-공식 보안 신고 주소는 아직 지정되지 않았습니다. 토큰, `auth.json`, 계정 정보, 개인
-정보가 포함된 로그 또는 악용 세부 정보를 공개 이슈에 올리지 마세요. 공식 저장소와
-비공개 신고 채널이 공개되기 전에는 실행 파일을 제공한 주체에게 기존 비공개 채널로
-연락하세요. 공식 GitHub 저장소가 정해지면 비공개 취약점 신고 절차를 이 문서에
-추가합니다.
+전용 보안 신고 주소는 아직 지정되지 않았습니다. 토큰, `auth.json`, 계정 정보, 개인
+정보가 포함된 로그 또는 악용 세부 정보를 공개 이슈에 올리지 마세요. 이 저장소에서
+GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 사용하고, 그렇지 않으면
+유지관리자에게 기존 비공개 채널로 연락하세요.
 
 ## Data handling / 데이터 처리
 
@@ -45,11 +42,26 @@ Codex account and usage access is delegated to the installed Codex CLI. The moni
 not send raw OpenAI HTTP requests itself; the CLI may contact OpenAI services according
 to the CLI's own authentication, configuration, and network policy.
 
-Update checking is disabled in official builds until an HTTPS GitHub `repository` value
-is added to Cargo package metadata. If enabled later, the monitor requests only
-`https://api.github.com/repos/<owner>/<repo>/releases/latest`, enforces HTTPS and response
-size/time limits, and can open only the exact validated
-`https://github.com/<owner>/<repo>/releases/tag/<tag>` page in the default browser. It
-does so only after an explicit user menu action and never from an automatic update worker.
-It does not download, replace, or execute an update. Proxy diagnostics report presence only;
-they never log proxy URLs, credentials, or environment-variable values.
+Official builds check release metadata at most once per day through
+`https://api.github.com/repos/lch5518/CodexPeek/releases/latest`. The request enforces
+HTTPS and response size/time limits. The monitor can open only an exact validated
+`https://github.com/lch5518/CodexPeek/releases/tag/<tag>` page, and only after an explicit
+user action. It never downloads, replaces, or executes an update. Proxy diagnostics report
+presence only; they never log proxy URLs, credentials, or environment-variable values.
+
+공식 빌드는 하루에 한 번 이하로 위 GitHub API에서 릴리스 메타데이터만 확인합니다.
+HTTPS와 응답 크기·시간 제한을 적용하며, 사용자가 명시적으로 선택한 경우에만 검증된
+정확한 GitHub 릴리스 페이지를 브라우저로 엽니다. 업데이트 파일을 다운로드·교체·실행하지
+않습니다.
+
+## Distribution integrity / 배포 파일 무결성
+
+Initial Windows release files are not code-signed and may trigger Microsoft Defender
+SmartScreen. Official GitHub Releases include `SHA256SUMS.txt` for the portable ZIP and
+installer. Verify the SHA-256 hash after downloading; published assets are never silently
+replaced. A correction is issued as a new patch version.
+
+초기 Windows 릴리스 파일은 코드 서명되지 않아 Microsoft Defender SmartScreen 경고가
+나타날 수 있습니다. 공식 GitHub Release에는 Portable ZIP과 설치 프로그램의 SHA-256
+해시를 담은 `SHA256SUMS.txt`가 포함됩니다. 다운로드 후 해시를 확인하세요. 공개한 파일을
+조용히 교체하지 않으며 수정은 새 패치 버전으로 배포합니다.

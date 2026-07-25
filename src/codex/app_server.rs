@@ -541,6 +541,12 @@ mod tests {
     };
     use crate::{CodexUsage, UsageError};
 
+    const INITIALIZE_REQUEST: &str = concat!(
+        r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":""#,
+        env!("CARGO_PKG_VERSION"),
+        r#""}}}"#
+    );
+
     #[test]
     fn session_ignores_sensitive_extra_fields_and_interleaved_notifications() {
         let mut transport = ScriptedTransport::new([
@@ -565,7 +571,7 @@ mod tests {
         assert_eq!(
             transport.requests(),
             [
-                r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":"0.1.0"}}}"#,
+                INITIALIZE_REQUEST,
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
                 r#"{"id":3,"method":"account/rateLimits/read","params":{}}"#,
@@ -667,7 +673,7 @@ mod tests {
         assert_eq!(
             transport.requests(),
             [
-                r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":"0.1.0"}}}"#,
+                INITIALIZE_REQUEST,
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
             ]
@@ -785,7 +791,7 @@ mod tests {
             assert_eq!(
                 transport.requests(),
                 [
-                    r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":"0.1.0"}}}"#,
+                    INITIALIZE_REQUEST,
                     r#"{"method":"initialized","params":{}}"#,
                     r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
                     r#"{"id":3,"method":"account/rateLimits/read","params":{}}"#,
@@ -810,7 +816,7 @@ mod tests {
         assert_eq!(
             transport.requests(),
             [
-                r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":"0.1.0"}}}"#,
+                INITIALIZE_REQUEST,
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
                 r#"{"id":3,"method":"account/rateLimits/read","params":{}}"#,

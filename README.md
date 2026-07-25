@@ -27,32 +27,40 @@ It does not start a Codex task or call `codex exec`.
 
 - Windows 10 or Windows 11, x64.
 - A signed-in [Codex CLI](https://github.com/openai/codex) with support for `account/read` and `account/rateLimits/read`.
-- For source builds: Rust 1.85 or later, Visual Studio 2022 C++ Build Tools, and a Windows SDK.
 
-## Build and run
+## Download and run
 
-There is no installer or WinGet package yet. Build the application from source after installing and signing in to Codex CLI.
+Download the latest files from [GitHub Releases](https://github.com/lch5518/CodexPeek/releases/latest).
+The release provides two Windows x64 options:
 
-If Rust is not installed, download the Rust installer first, run the downloaded file, and then open a new PowerShell window:
+- **Installer (recommended):** Download `CodexUsageMonitor-Setup-v<version>-x64.exe`.
+  It installs for the current user without administrator access, adds a Start Menu shortcut,
+  and offers to launch the monitor when setup finishes. It does not enable Windows startup
+  automatically.
+- **Portable:** Download `codex-usage-monitor-v<version>-windows-x86_64-portable.zip`,
+  extract it to a writable folder, and run `codex-usage-monitor.exe`. Nothing is installed.
+
+Both editions use `%APPDATA%\CodexUsageMonitor\settings.json`, so settings are shared if
+you switch between them. Uninstalling preserves settings and diagnostics but removes the
+monitor's Windows autostart registration.
+
+The initial releases are not code-signed, so Microsoft Defender SmartScreen may show an
+unrecognized-app warning. Download only from this repository and compare the file with the
+release's `SHA256SUMS.txt`:
 
 ```powershell
-Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile "$env:TEMP\rustup-init.exe"
-```
-
-```powershell
-git clone https://github.com/lch5518/CodexPeek.git
-Set-Location .\CodexPeek
-cargo build --release
-
-Start-Process .\target\release\codex-usage-monitor.exe
+$file = ".\CodexUsageMonitor-Setup-v0.1.2-x64.exe"
+(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+Get-Content .\SHA256SUMS.txt
 ```
 
 Run the following command to check the CLI, app-server connection, and local settings without opening the UI:
 
 ```powershell
-.\target\release\codex-usage-monitor.exe --diagnose
+& "$env:LOCALAPPDATA\Programs\CodexUsageMonitor\codex-usage-monitor.exe" --diagnose
 ```
 
+For the portable edition, run the same `--diagnose` option from its extracted directory.
 `--startup` is intended only for the Windows startup registration created through the tray menu.
 
 ## Using the monitor
@@ -93,9 +101,12 @@ For the full data-handling and vulnerability-reporting guidance, see [SECURITY.m
 
 ## Development
 
-Run these checks before sharing a source build:
+Source builds require Rust 1.85 or later, Visual Studio 2022 C++ Build Tools, and a
+Windows SDK. Build and validate from the repository root:
 
 ```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets
