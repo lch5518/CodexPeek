@@ -60,9 +60,58 @@ codex login status
 2. ZIP을 쓰기 가능한 폴더에 완전히 압축 해제합니다.
 3. 압축을 푼 폴더에서 `codex-peek.exe`를 실행합니다.
 
-두 방식 모두 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도 설정을
-공유합니다. Installer는 시작 메뉴 바로 가기를 만들지만 Windows 자동 시작은 기본으로
-활성화하지 않습니다.
+### 소스에서 직접 빌드
+
+Rust 1.85 이상, Visual Studio 2022 C++ Build Tools, Windows SDK가 필요합니다.
+이 방법은 복제한 저장소에서 앱을 실행하며 시작 메뉴 바로 가기와 제거 프로그램을
+만들지 않습니다.
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo build --release
+.\target\release\codex-peek.exe
+```
+
+UI를 열지 않고 빌드 결과와 Codex CLI 연결을 확인하려면 다음을 실행합니다.
+
+```powershell
+.\target\release\codex-peek.exe --diagnose
+```
+
+### Codex에 설치 요청
+
+아래 프롬프트를 그대로 Codex에 복사하세요. 검증된 Installer를 우선 사용하고, 호환되는
+Release 파일이 없을 때만 소스 빌드로 전환합니다.
+
+```text
+이 Windows x64 컴퓨터에 CodexPeek를 설치하고 검증까지 완료해줘.
+
+1. Windows x64 환경인지 확인하고 `codex --version`과 `codex login status`를 실행해줘.
+2. 다음 공식 저장소와 그 Releases만 사용해줘.
+   https://github.com/lch5518/CodexPeek
+3. 최신 `CodexPeek-Setup-v<version>-x64.exe`를 우선 사용해줘. Installer와
+   `SHA256SUMS.txt`를 함께 다운로드하고, 체크섬 파일에서 Installer의 정확한 항목을
+   찾은 다음 직접 계산한 SHA-256과 비교해줘. 해시가 일치할 때만 진행하고, 보안 기능을
+   끄거나 체크섬이 없거나 다른 파일을 실행하지 마.
+4. 관리자 권한을 요청하지 말고 현재 사용자용으로 설치해줘. 기존 CodexPeek 설정은
+   보존하고, 실행 중인 앱이나 관련 없는 프로세스를 임의로 종료하지 말아줘. 앱을
+   종료해야 한다면 내가 직접 종료할 수 있도록 먼저 알려줘.
+5. 호환되는 Release 파일을 사용할 수 없을 때만 공식 저장소를 쓰기 가능한 새 사용자
+   폴더에 clone하고 `cargo build --release`를 실행해줘. Git, Rust 1.85 이상,
+   Visual Studio 2022 C++ Build Tools 또는 Windows SDK 설치가 필요하면 무엇이
+   변경되는지 먼저 설명하고 내 승인을 받아줘.
+6. `%USERPROFILE%\.codex\auth.json`의 내용을 읽거나 출력하지 마. 인증은 설치된
+   Codex CLI를 통해서만 처리해줘.
+7. 설치 또는 빌드 후 생성된 `codex-peek.exe --diagnose`를 실행해줘. 진단에 성공하면
+   CodexPeek를 실행해줘.
+8. 사용한 설치 방식, 설치된 버전, 실행 파일 위치, 체크섬 결과와 진단 결과를 알려줘.
+   실패하면 민감 정보를 노출하지 말고 안전하게 중단한 뒤 정확한 원인을 설명해줘.
+```
+
+Installer와 Portable은 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도
+설정을 공유합니다. Installer는 시작 메뉴 바로 가기를 만들지만 Windows 자동 시작은
+기본으로 활성화하지 않습니다.
 
 초기 릴리스는 코드 서명되지 않아 Microsoft Defender SmartScreen 경고가 나타날 수
 있습니다. 공식 Release에서만 다운로드하고 `SHA256SUMS.txt`로 파일을 검증하세요.

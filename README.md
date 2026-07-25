@@ -51,9 +51,59 @@ codex login status
 2. Extract the ZIP completely to a writable folder.
 3. Run `codex-peek.exe` from the extracted folder.
 
-Both editions use `%APPDATA%\CodexUsageMonitor\settings.json`, so settings are shared if
-you switch between them. The installer adds a Start Menu shortcut but does not enable
-Windows startup by default.
+### Build from source
+
+This option requires Rust 1.85 or later, Visual Studio 2022 C++ Build Tools, and a
+Windows SDK. It runs the app from the cloned repository and does not create a Start
+Menu shortcut or an uninstaller.
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo build --release
+.\target\release\codex-peek.exe
+```
+
+To check the build and Codex CLI connection without opening the UI:
+
+```powershell
+.\target\release\codex-peek.exe --diagnose
+```
+
+### Ask Codex to install it
+
+Copy the prompt below into Codex. It prefers the verified Installer and falls back to a
+source build only when compatible Release assets are unavailable.
+
+```text
+Install CodexPeek on this Windows x64 computer and complete the verification for me.
+
+1. Confirm that this is Windows x64, then run `codex --version` and `codex login status`.
+2. Use only the official repository and its Releases:
+   https://github.com/lch5518/CodexPeek
+3. Prefer the latest `CodexPeek-Setup-v<version>-x64.exe`. Download it together with
+   `SHA256SUMS.txt`, find the exact Installer entry in that file, calculate the
+   Installer's SHA-256, and continue only if the hashes match. Do not disable security
+   controls or run a file whose checksum is missing or different.
+4. Install it for the current user without requesting administrator access. Preserve
+   existing CodexPeek settings and do not stop a running app or unrelated process;
+   tell me if I need to close the app myself.
+5. Only if compatible Release assets are unavailable, clone the official repository
+   into a new user-writable directory and run `cargo build --release`. If Git, Rust
+   1.85+, Visual Studio 2022 C++ Build Tools, or a Windows SDK must be installed, first
+   explain exactly what will change and ask for my approval.
+6. Never read or print the contents of `%USERPROFILE%\.codex\auth.json`. Authentication
+   must be handled only through the installed Codex CLI.
+7. After installation or build, run the resulting `codex-peek.exe --diagnose`. If it
+   succeeds, launch CodexPeek.
+8. Report the selected installation method, installed version, executable location,
+   checksum result, and diagnostic result. If anything fails, stop safely and explain
+   the exact blocker without exposing sensitive information.
+```
+
+The Installer and Portable editions use `%APPDATA%\CodexUsageMonitor\settings.json`, so
+settings are shared if you switch between them. The installer adds a Start Menu shortcut
+but does not enable Windows startup by default.
 
 Initial releases are not code-signed and may trigger Microsoft Defender SmartScreen.
 Download only from the official release and verify the file against `SHA256SUMS.txt`.
