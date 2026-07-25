@@ -21,7 +21,7 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $executablePath = [System.IO.Path]::GetFullPath($Executable)
 $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
 $compilerPath = [System.IO.Path]::GetFullPath($IsccPath)
-$installerScript = Join-Path $repositoryRoot "packaging/windows/CodexUsageMonitor.iss"
+$installerScript = Join-Path $repositoryRoot "packaging/windows/CodexPeek.iss"
 
 foreach ($requiredFile in @(
     $executablePath
@@ -39,8 +39,8 @@ foreach ($requiredFile in @(
 }
 
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
-$portableName = "codex-usage-monitor-v$Version-windows-x86_64-portable.zip"
-$installerName = "CodexUsageMonitor-Setup-v$Version-x64.exe"
+$portableName = "codex-peek-v$Version-windows-x86_64-portable.zip"
+$installerName = "CodexPeek-Setup-v$Version-x64.exe"
 $checksumName = "SHA256SUMS.txt"
 $portableArchive = Join-Path $outputPath $portableName
 $installer = Join-Path $outputPath $installerName
@@ -58,7 +58,7 @@ $completed = $false
 try {
     New-Item -ItemType Directory -Path $stagingRoot | Out-Null
     Copy-Item -LiteralPath $executablePath `
-        -Destination (Join-Path $stagingRoot "codex-usage-monitor.exe")
+        -Destination (Join-Path $stagingRoot "codex-peek.exe")
     foreach ($document in @(
         "README.md"
         "README.ko.md"

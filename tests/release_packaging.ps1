@@ -4,11 +4,11 @@ $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "codex-release-packaging-{0}" -f [guid]::NewGuid().ToString("N")
 )
-$fixtureExe = Join-Path $testRoot "codex-usage-monitor.exe"
+$fixtureExe = Join-Path $testRoot "codex-peek.exe"
 $outputDirectory = Join-Path $testRoot "output"
 $fakeIscc = Join-Path $testRoot "fake-iscc.ps1"
 $expandedArchive = Join-Path $testRoot "expanded"
-$installerDefinition = Join-Path $repositoryRoot "packaging/windows/CodexUsageMonitor.iss"
+$installerDefinition = Join-Path $repositoryRoot "packaging/windows/CodexPeek.iss"
 
 try {
     New-Item -ItemType Directory -Path $testRoot | Out-Null
@@ -35,7 +35,7 @@ if ([string]::IsNullOrWhiteSpace($version) -or [string]::IsNullOrWhiteSpace($out
 if ($version -eq "9.9.9") {
     throw "fixture compiler failure"
 }
-$installer = Join-Path $outputDirectory "CodexUsageMonitor-Setup-v$version-x64.exe"
+$installer = Join-Path $outputDirectory "CodexPeek-Setup-v$version-x64.exe"
 Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
 '@ | Set-Content -LiteralPath $fakeIscc
 
@@ -45,8 +45,8 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
         -OutputDirectory $outputDirectory `
         -IsccPath $fakeIscc
 
-    $portableName = "codex-usage-monitor-v1.2.3-windows-x86_64-portable.zip"
-    $installerName = "CodexUsageMonitor-Setup-v1.2.3-x64.exe"
+    $portableName = "codex-peek-v1.2.3-windows-x86_64-portable.zip"
+    $installerName = "CodexPeek-Setup-v1.2.3-x64.exe"
     $checksumName = "SHA256SUMS.txt"
     foreach ($name in @($portableName, $installerName, $checksumName)) {
         $path = Join-Path $outputDirectory $name
@@ -61,7 +61,7 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
         ForEach-Object Name |
         Sort-Object
     $expectedArchiveFiles = @(
-        "codex-usage-monitor.exe"
+        "codex-peek.exe"
         "LICENSE"
         "README.ko.md"
         "README.md"
@@ -97,6 +97,11 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
         "DefaultDirName={localappdata}\Programs\CodexUsageMonitor"
         "PrivilegesRequired=lowest"
         "RegDeleteValue("
+        "CurStepChanged"
+        "RegQueryStringValue"
+        "RegWriteStringValue"
+        "codex-usage-monitor.exe"
+        "codex-peek.exe"
         "'CodexUsageMonitor'"
     )) {
         if (-not $installerText.Contains($requiredDirective)) {

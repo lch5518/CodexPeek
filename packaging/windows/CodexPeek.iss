@@ -9,7 +9,7 @@
 #endif
 
 #define AppName "Codex Usage Monitor"
-#define AppExeName "codex-usage-monitor.exe"
+#define AppExeName "codex-peek.exe"
 #define AppRepository "https://github.com/lch5518/CodexPeek"
 
 [Setup]
@@ -31,7 +31,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 LicenseFile=LICENSE
 MinVersion=10.0
-OutputBaseFilename=CodexUsageMonitor-Setup-v{#AppVersion}-x64
+OutputBaseFilename=CodexPeek-Setup-v{#AppVersion}-x64
 OutputDir={#OutputDir}
 PrivilegesRequired=lowest
 RestartApplications=no
@@ -55,6 +55,9 @@ Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "SECURITY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
+[InstallDelete]
+Type: files; Name: "{app}\codex-usage-monitor.exe"
+
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
 
@@ -62,6 +65,27 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ExistingCommand: string;
+begin
+  if
+    (CurStep = ssPostInstall) and
+    RegQueryStringValue(
+      HKCU,
+      'Software\Microsoft\Windows\CurrentVersion\Run',
+      'CodexUsageMonitor',
+      ExistingCommand
+    )
+  then
+    RegWriteStringValue(
+      HKCU,
+      'Software\Microsoft\Windows\CurrentVersion\Run',
+      'CodexUsageMonitor',
+      ExpandConstant('"{app}\{#AppExeName}" --startup')
+    );
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
