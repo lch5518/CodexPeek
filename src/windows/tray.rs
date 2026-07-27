@@ -24,8 +24,19 @@ use super::{
 pub enum TrayMenuEntry {
     /// 선택 가능한 명령 항목입니다.
     Command(TrayMenuCommand),
+    /// 한 단계 아래에 표시할 하위 메뉴입니다.
+    Submenu(TraySubmenu),
     /// 메뉴 구획을 나누는 구분선입니다.
     Separator,
+}
+
+/// Win32 팝업 메뉴에 연결할 하위 메뉴의 표시 정보입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TraySubmenu {
+    /// 상위 메뉴에 표시할 지역화 문구입니다.
+    pub label: String,
+    /// 하위 메뉴에 순서대로 표시할 항목입니다.
+    pub entries: Vec<TrayMenuEntry>,
 }
 
 /// Win32 메뉴에 추가할 명령 항목의 표시 정보입니다.
@@ -57,7 +68,7 @@ pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
         crate::localized_text(crate::LocalizationKey::MenuRefreshNow, language),
         false,
     );
-    entries.push(TrayMenuEntry::Separator);
+    let mut refresh_interval_entries = Vec::new();
     for (id, minutes) in [
         (MENU_INTERVAL_1, 1),
         (MENU_INTERVAL_5, 5),
@@ -66,12 +77,17 @@ pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
         (MENU_INTERVAL_30, 30),
     ] {
         push_command(
-            &mut entries,
+            &mut refresh_interval_entries,
             id,
-            crate::localization::localized_refresh_interval_menu_text(minutes, language),
+            crate::localization::localized_refresh_interval_choice_text(minutes, language),
             settings.refresh_interval_minutes == minutes,
         );
     }
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuRefreshInterval, language),
+        refresh_interval_entries,
+    );
     entries.push(TrayMenuEntry::Separator);
     push_command(
         &mut entries,
@@ -79,17 +95,23 @@ pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
         crate::localized_text(crate::LocalizationKey::MenuAutostart, language),
         settings.start_with_windows,
     );
+    let mut startup_view_entries = Vec::new();
     push_command(
-        &mut entries,
+        &mut startup_view_entries,
         MENU_STARTUP_WIDGET,
-        crate::localized_text(crate::LocalizationKey::MenuStartupWidgetChoice, language),
+        crate::localized_text(crate::LocalizationKey::MenuStartupWidget, language),
         settings.startup_view == StartupView::Widget,
     );
     push_command(
-        &mut entries,
+        &mut startup_view_entries,
         MENU_STARTUP_TRAY,
-        crate::localized_text(crate::LocalizationKey::MenuStartupTrayOnlyChoice, language),
+        crate::localized_text(crate::LocalizationKey::MenuStartupTrayOnly, language),
         settings.startup_view == StartupView::TrayOnly,
+    );
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuStartupView, language),
+        startup_view_entries,
     );
     if !settings.login_required {
         push_command(
@@ -105,20 +127,29 @@ pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
         crate::localized_text(crate::LocalizationKey::MenuAuthRefresh, language),
         settings.auto_auth_refresh,
     );
+    let mut language_entries = Vec::new();
     push_command(
-        &mut entries,
+        &mut language_entries,
         MENU_LANGUAGE_AUTO,
-        language_menu_label(LanguagePreference::Auto, language),
+        crate::localized_text(
+            crate::LocalizationKey::MenuLanguageAutomaticChoice,
+            language,
+        ),
         settings.language == LanguagePreference::Auto,
     );
     for (id, preference) in LANGUAGE_MENU_OPTIONS {
         push_command(
-            &mut entries,
+            &mut language_entries,
             *id,
-            language_menu_label(*preference, language),
+            language_menu_choice_label(*preference, language),
             settings.language == *preference,
         );
     }
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuLanguage, language),
+        language_entries,
+    );
     push_command(
         &mut entries,
         MENU_SHOW_REMAINING,
@@ -149,17 +180,23 @@ pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
         crate::localized_text(widget_key, language),
         settings.widget_visible,
     );
+    let mut widget_placement_entries = Vec::new();
     push_command(
-        &mut entries,
+        &mut widget_placement_entries,
         MENU_TASKBAR_ALL,
-        crate::localized_text(crate::LocalizationKey::MenuTaskbarAll, language),
+        crate::localized_text(crate::LocalizationKey::MenuTaskbarAllChoice, language),
         settings.taskbar_display_mode == TaskbarDisplayMode::All,
     );
     push_command(
-        &mut entries,
+        &mut widget_placement_entries,
         MENU_TASKBAR_PRIMARY,
-        crate::localized_text(crate::LocalizationKey::MenuTaskbarPrimary, language),
+        crate::localized_text(crate::LocalizationKey::MenuTaskbarPrimaryChoice, language),
         settings.taskbar_display_mode == TaskbarDisplayMode::Primary,
+    );
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuWidgetPlacement, language),
+        widget_placement_entries,
     );
     entries.push(TrayMenuEntry::Separator);
     push_command(
@@ -181,6 +218,17 @@ fn push_command(
         id,
         label: label.into(),
         checked,
+    }));
+}
+
+fn push_submenu(
+    entries: &mut Vec<TrayMenuEntry>,
+    label: impl Into<String>,
+    submenu_entries: Vec<TrayMenuEntry>,
+) {
+    entries.push(TrayMenuEntry::Submenu(TraySubmenu {
+        label: label.into(),
+        entries: submenu_entries,
     }));
 }
 
@@ -236,6 +284,27 @@ pub fn language_menu_label(option: LanguagePreference, resolved: Language) -> St
         LanguagePreference::Vietnamese => language_menu_endonym_label(resolved, "Tiếng Việt"),
         LanguagePreference::Turkish => language_menu_endonym_label(resolved, "Türkçe"),
         LanguagePreference::Arabic => language_menu_endonym_label(resolved, "العربية"),
+    }
+}
+
+fn language_menu_choice_label(option: LanguagePreference, resolved: Language) -> &'static str {
+    match option {
+        LanguagePreference::Auto => crate::localized_text(
+            crate::LocalizationKey::MenuLanguageAutomaticChoice,
+            resolved,
+        ),
+        LanguagePreference::Korean => "한국어",
+        LanguagePreference::English => "English",
+        LanguagePreference::Spanish => "Español",
+        LanguagePreference::PortugueseBrazil => "Português (Brasil)",
+        LanguagePreference::Indonesian => "Bahasa Indonesia",
+        LanguagePreference::Japanese => "日本語",
+        LanguagePreference::Hindi => "हिन्दी",
+        LanguagePreference::German => "Deutsch",
+        LanguagePreference::French => "Français",
+        LanguagePreference::Vietnamese => "Tiếng Việt",
+        LanguagePreference::Turkish => "Türkçe",
+        LanguagePreference::Arabic => "العربية",
     }
 }
 
@@ -351,19 +420,19 @@ mod tests {
                 .map(|command| command.1.as_str())
                 .collect::<Vec<_>>(),
             [
-                "Language: automatic",
-                "Language: 한국어",
-                "Language: English",
-                "Language: Español",
-                "Language: Português (Brasil)",
-                "Language: Bahasa Indonesia",
-                "Language: 日本語",
-                "Language: हिन्दी",
-                "Language: Deutsch",
-                "Language: Français",
-                "Language: Tiếng Việt",
-                "Language: Türkçe",
-                "Language: العربية",
+                "Automatic",
+                "한국어",
+                "English",
+                "Español",
+                "Português (Brasil)",
+                "Bahasa Indonesia",
+                "日本語",
+                "हिन्दी",
+                "Deutsch",
+                "Français",
+                "Tiếng Việt",
+                "Türkçe",
+                "العربية",
             ]
         );
         assert_eq!(
@@ -458,14 +527,27 @@ mod tests {
             .map(|option| option.0)
             .collect::<Vec<_>>();
 
-        tray_menu_entries(settings)
-            .into_iter()
-            .filter_map(|entry| match entry {
-                TrayMenuEntry::Command(command) if ids.contains(&command.id) => {
-                    Some((command.id, command.label, command.checked))
+        fn collect(
+            entries: &[TrayMenuEntry],
+            ids: &[u16],
+            commands: &mut Vec<(u16, String, bool)>,
+        ) {
+            for entry in entries {
+                match entry {
+                    TrayMenuEntry::Command(command) if ids.contains(&command.id) => {
+                        commands.push((command.id, command.label.clone(), command.checked));
+                    }
+                    TrayMenuEntry::Submenu(submenu) => {
+                        collect(&submenu.entries, ids, commands);
+                    }
+                    _ => {}
                 }
-                _ => None,
-            })
-            .collect()
+            }
+        }
+
+        let entries = tray_menu_entries(settings);
+        let mut commands = Vec::new();
+        collect(&entries, &ids, &mut commands);
+        commands
     }
 }

@@ -18,6 +18,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::MenuLogin,
         LocalizationKey::MenuAuthRefreshNow,
         LocalizationKey::MenuLanguage,
+        LocalizationKey::MenuLanguageAutomaticChoice,
         LocalizationKey::MenuDiagnostics,
         LocalizationKey::MenuUpdateCheck,
         LocalizationKey::MenuSettings,
@@ -28,6 +29,9 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::MenuStartupTrayOnlyChoice,
         LocalizationKey::MenuTaskbarAll,
         LocalizationKey::MenuTaskbarPrimary,
+        LocalizationKey::MenuWidgetPlacement,
+        LocalizationKey::MenuTaskbarAllChoice,
+        LocalizationKey::MenuTaskbarPrimaryChoice,
         LocalizationKey::UpdateAvailable,
         LocalizationKey::UpdateCurrent,
         LocalizationKey::UpdateChecking,
@@ -109,5 +113,27 @@ fn korean_and_english_contracts_stay_stable() {
     assert_eq!(
         localized_text(LocalizationKey::MenuShowWeekly, Language::English),
         "Show weekly usage"
+    );
+    assert_eq!(
+        localized_text(
+            LocalizationKey::MenuLanguageAutomaticChoice,
+            Language::Korean
+        ),
+        "자동"
+    );
+    assert_eq!(
+        localized_text(
+            LocalizationKey::MenuLanguageAutomaticChoice,
+            Language::English
+        ),
+        "Automatic"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::MenuWidgetPlacement, Language::Korean),
+        "위젯 위치"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::MenuWidgetPlacement, Language::English),
+        "Widget placement"
     );
 }

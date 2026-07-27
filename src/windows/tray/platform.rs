@@ -18,9 +18,9 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
-                PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_DISABLED,
-                MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-                WM_APP, WM_NULL,
+                PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, HMENU, MF_CHECKED,
+                MF_DISABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, TPM_NONOTIFY,
+                TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
             },
         },
     },
@@ -221,14 +221,8 @@ impl TrayIcon {
                 add_info_banner(menu, text)?;
                 separator(menu)?;
             }
-            for entry in super::tray_menu_entries(settings) {
-                match entry {
-                    TrayMenuEntry::Command(command) => {
-                        add(menu, command.id, &command.label, command.checked)?;
-                    }
-                    TrayMenuEntry::Separator => separator(menu)?,
-                }
-            }
+            let entries = super::tray_menu_entries(settings);
+            append_entries(menu, &entries)?;
             let mut point = POINT::default();
             GetCursorPos(&mut point).ok()?;
             let _ = SetForegroundWindow(owner);
@@ -324,12 +318,47 @@ unsafe fn meter_icon(percent: Option<f64>) -> io::Result<HICON> {
     .map_err(|_| io::Error::last_os_error())
 }
 
-unsafe fn add(
-    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
-    id: u16,
-    text: &str,
-    checked: bool,
-) -> Option<()> {
+/// 검증된 순수 메뉴 트리를 지정한 Win32 팝업 메뉴에 재귀적으로 추가합니다.
+///
+/// `menu`는 호출자가 소유한 유효한 팝업 메뉴여야 합니다. 성공적으로 연결된 하위 메뉴의
+/// 소유권은 `menu`로 이전되며, 연결 전에 실패한 하위 메뉴는 이 함수가 정리합니다.
+unsafe fn append_entries(menu: HMENU, entries: &[TrayMenuEntry]) -> Option<()> {
+    for entry in entries {
+        match entry {
+            TrayMenuEntry::Command(command) => {
+                add(menu, command.id, &command.label, command.checked)?;
+            }
+            TrayMenuEntry::Submenu(submenu) => {
+                add_submenu(menu, &submenu.label, &submenu.entries)?;
+            }
+            TrayMenuEntry::Separator => separator(menu)?,
+        }
+    }
+    Some(())
+}
+
+unsafe fn add_submenu(parent: HMENU, text: &str, entries: &[TrayMenuEntry]) -> Option<()> {
+    let submenu = CreatePopupMenu().ok()?;
+    if append_entries(submenu, entries).is_none() {
+        let _ = DestroyMenu(submenu);
+        return None;
+    }
+    let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    if AppendMenuW(
+        parent,
+        MF_STRING | MF_POPUP,
+        submenu.0 as usize,
+        PCWSTR(wide.as_ptr()),
+    )
+    .is_err()
+    {
+        let _ = DestroyMenu(submenu);
+        return None;
+    }
+    Some(())
+}
+
+unsafe fn add(menu: HMENU, id: u16, text: &str, checked: bool) -> Option<()> {
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     let flags = MF_STRING
         | if checked {
@@ -342,7 +371,7 @@ unsafe fn add(
         .map(|_| ())
 }
 
-unsafe fn separator(menu: windows::Win32::UI::WindowsAndMessaging::HMENU) -> Option<()> {
+unsafe fn separator(menu: HMENU) -> Option<()> {
     AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())
         .ok()
         .map(|_| ())
@@ -351,10 +380,7 @@ unsafe fn separator(menu: windows::Win32::UI::WindowsAndMessaging::HMENU) -> Opt
 /// 클릭할 수 없는 정보 배너 항목을 메뉴에 추가합니다.
 ///
 /// 명령 식별자로 0을 사용하므로 선택되어도 어떤 동작도 발생하지 않습니다.
-unsafe fn add_info_banner(
-    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
-    text: &str,
-) -> Option<()> {
+unsafe fn add_info_banner(menu: HMENU, text: &str) -> Option<()> {
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
     AppendMenuW(
         menu,

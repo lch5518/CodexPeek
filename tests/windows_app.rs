@@ -79,47 +79,84 @@ fn language_menu_labels_always_show_endonyms() {
 }
 
 #[test]
+fn tray_menu_groups_major_settings_into_submenus() {
+    let entries = tray_menu_entries(&tray_settings(Language::English));
+    let submenus = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            TrayMenuEntry::Submenu(submenu) => Some(submenu),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        submenus
+            .iter()
+            .map(|submenu| submenu.label.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Refresh interval",
+            "Startup view",
+            "Language",
+            "Widget placement"
+        ]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[0]),
+        [
+            MENU_INTERVAL_1,
+            MENU_INTERVAL_5,
+            MENU_INTERVAL_10,
+            MENU_INTERVAL_15,
+            MENU_INTERVAL_30
+        ]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[1]),
+        [MENU_STARTUP_WIDGET, MENU_STARTUP_TRAY]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[2]),
+        [
+            MENU_LANGUAGE_AUTO,
+            MENU_LANGUAGE_KOREAN,
+            MENU_LANGUAGE_ENGLISH,
+            MENU_LANGUAGE_SPANISH,
+            MENU_LANGUAGE_PORTUGUESE_BRAZIL,
+            MENU_LANGUAGE_INDONESIAN,
+            MENU_LANGUAGE_JAPANESE,
+            MENU_LANGUAGE_HINDI,
+            MENU_LANGUAGE_GERMAN,
+            MENU_LANGUAGE_FRENCH,
+            MENU_LANGUAGE_VIETNAMESE,
+            MENU_LANGUAGE_TURKISH,
+            MENU_LANGUAGE_ARABIC,
+        ]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[3]),
+        [MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY]
+    );
+}
+
+#[test]
 fn tray_menu_entries_localize_english_labels_and_preserve_state() {
     let settings = tray_settings(Language::English);
     let commands = tray_commands(&settings);
 
-    assert_eq!(separator_count(&settings), 4);
+    assert_eq!(separator_count(&settings), 3);
     assert_eq!(
         commands,
         vec![
             (MENU_REFRESH, "Refresh now".to_string(), false),
-            (
-                MENU_INTERVAL_1,
-                "Refresh interval: 1 min".to_string(),
-                false
-            ),
-            (
-                MENU_INTERVAL_5,
-                "Refresh interval: 5 min".to_string(),
-                false
-            ),
-            (
-                MENU_INTERVAL_10,
-                "Refresh interval: 10 min".to_string(),
-                false
-            ),
-            (
-                MENU_INTERVAL_15,
-                "Refresh interval: 15 min".to_string(),
-                true
-            ),
-            (
-                MENU_INTERVAL_30,
-                "Refresh interval: 30 min".to_string(),
-                false
-            ),
+            (MENU_INTERVAL_1, "1 min".to_string(), false),
+            (MENU_INTERVAL_5, "5 min".to_string(), false),
+            (MENU_INTERVAL_10, "10 min".to_string(), false),
+            (MENU_INTERVAL_15, "15 min".to_string(), true),
+            (MENU_INTERVAL_30, "30 min".to_string(), false),
             (MENU_AUTOSTART, "Start with Windows".to_string(), true),
-            (
-                MENU_STARTUP_WIDGET,
-                "Startup: show widget".to_string(),
-                false
-            ),
-            (MENU_STARTUP_TRAY, "Startup: tray only".to_string(), true),
+            (MENU_STARTUP_WIDGET, "Show widget".to_string(), false),
+            (MENU_STARTUP_TRAY, "Tray only".to_string(), true),
             (
                 MENU_AUTH_REFRESH,
                 "Refresh authentication".to_string(),
@@ -130,52 +167,36 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
                 "Automatic authentication refresh".to_string(),
                 true,
             ),
-            (MENU_LANGUAGE_AUTO, "Language: automatic".to_string(), false),
-            (MENU_LANGUAGE_KOREAN, "Language: 한국어".to_string(), false),
-            (MENU_LANGUAGE_ENGLISH, "Language: English".to_string(), true),
-            (
-                MENU_LANGUAGE_SPANISH,
-                "Language: Español".to_string(),
-                false,
-            ),
+            (MENU_LANGUAGE_AUTO, "Automatic".to_string(), false),
+            (MENU_LANGUAGE_KOREAN, "한국어".to_string(), false),
+            (MENU_LANGUAGE_ENGLISH, "English".to_string(), true),
+            (MENU_LANGUAGE_SPANISH, "Español".to_string(), false),
             (
                 MENU_LANGUAGE_PORTUGUESE_BRAZIL,
-                "Language: Português (Brasil)".to_string(),
+                "Português (Brasil)".to_string(),
                 false,
             ),
             (
                 MENU_LANGUAGE_INDONESIAN,
-                "Language: Bahasa Indonesia".to_string(),
+                "Bahasa Indonesia".to_string(),
                 false,
             ),
-            (
-                MENU_LANGUAGE_JAPANESE,
-                "Language: 日本語".to_string(),
-                false,
-            ),
-            (MENU_LANGUAGE_HINDI, "Language: हिन्दी".to_string(), false,),
-            (MENU_LANGUAGE_GERMAN, "Language: Deutsch".to_string(), false,),
-            (
-                MENU_LANGUAGE_FRENCH,
-                "Language: Français".to_string(),
-                false,
-            ),
-            (
-                MENU_LANGUAGE_VIETNAMESE,
-                "Language: Tiếng Việt".to_string(),
-                false,
-            ),
-            (MENU_LANGUAGE_TURKISH, "Language: Türkçe".to_string(), false,),
-            (MENU_LANGUAGE_ARABIC, "Language: العربية".to_string(), false,),
+            (MENU_LANGUAGE_JAPANESE, "日本語".to_string(), false),
+            (MENU_LANGUAGE_HINDI, "हिन्दी".to_string(), false),
+            (MENU_LANGUAGE_GERMAN, "Deutsch".to_string(), false),
+            (MENU_LANGUAGE_FRENCH, "Français".to_string(), false),
+            (MENU_LANGUAGE_VIETNAMESE, "Tiếng Việt".to_string(), false),
+            (MENU_LANGUAGE_TURKISH, "Türkçe".to_string(), false),
+            (MENU_LANGUAGE_ARABIC, "العربية".to_string(), false),
             (MENU_SHOW_REMAINING, "Show weekly usage".to_string(), false),
             (MENU_DIAGNOSTICS, "Diagnostics".to_string(), false),
             (MENU_UPDATE_CHECK, "Update check failed".to_string(), false),
             (MENU_WIDGET_VISIBLE, "Show widget".to_string(), false),
-            (MENU_TASKBAR_ALL, "Widget: all monitors".to_string(), false),
+            (MENU_TASKBAR_ALL, "All monitors".to_string(), false),
             (
                 MENU_TASKBAR_PRIMARY,
-                "Widget: primary monitor only".to_string(),
-                true,
+                "Primary monitor only".to_string(),
+                true
             ),
             (MENU_EXIT, "Exit".to_string(), false),
         ]
@@ -193,16 +214,16 @@ fn tray_menu_entries_localize_korean_labels_and_preserve_endonyms() {
     let commands = tray_commands(&settings);
 
     assert_eq!(commands[0], (MENU_REFRESH, "지금 갱신".to_string(), false));
-    assert!(commands.contains(&(MENU_INTERVAL_15, "갱신 간격: 15분".to_string(), true)));
+    assert!(commands.contains(&(MENU_INTERVAL_15, "15분".to_string(), true)));
     assert!(commands.contains(&(MENU_AUTOSTART, "Windows 시작 시 실행".to_string(), true)));
-    assert!(commands.contains(&(MENU_STARTUP_TRAY, "시작: 트레이만".to_string(), true)));
+    assert!(commands.contains(&(MENU_STARTUP_TRAY, "트레이에만 표시".to_string(), true)));
     assert!(commands.contains(&(MENU_AUTH_REFRESH, "인증 갱신".to_string(), false)));
-    assert!(commands.contains(&(MENU_LANGUAGE_AUTO, "언어: 자동".to_string(), true)));
-    assert!(commands.contains(&(MENU_LANGUAGE_KOREAN, "언어: 한국어".to_string(), false)));
-    assert!(commands.contains(&(MENU_LANGUAGE_ENGLISH, "언어: English".to_string(), false)));
+    assert!(commands.contains(&(MENU_LANGUAGE_AUTO, "자동".to_string(), true)));
+    assert!(commands.contains(&(MENU_LANGUAGE_KOREAN, "한국어".to_string(), false)));
+    assert!(commands.contains(&(MENU_LANGUAGE_ENGLISH, "English".to_string(), false)));
     assert!(commands.contains(&(MENU_SHOW_REMAINING, "남은 사용량 표시".to_string(), false)));
     assert!(commands.contains(&(MENU_WIDGET_VISIBLE, "위젯 숨기기".to_string(), true)));
-    assert!(commands.contains(&(MENU_TASKBAR_ALL, "위젯: 모든 모니터".to_string(), true)));
+    assert!(commands.contains(&(MENU_TASKBAR_ALL, "모든 모니터".to_string(), true)));
     assert!(commands.contains(&(MENU_EXIT, "종료".to_string(), false)));
 }
 
@@ -238,13 +259,22 @@ fn tray_settings(language: Language) -> UiSettings {
 }
 
 fn tray_commands(settings: &UiSettings) -> Vec<(u16, String, bool)> {
-    tray_menu_entries(settings)
-        .into_iter()
-        .filter_map(|entry| match entry {
-            TrayMenuEntry::Command(command) => Some((command.id, command.label, command.checked)),
-            TrayMenuEntry::Separator => None,
-        })
-        .collect()
+    fn collect(entries: &[TrayMenuEntry], commands: &mut Vec<(u16, String, bool)>) {
+        for entry in entries {
+            match entry {
+                TrayMenuEntry::Command(command) => {
+                    commands.push((command.id, command.label.clone(), command.checked));
+                }
+                TrayMenuEntry::Submenu(submenu) => collect(&submenu.entries, commands),
+                TrayMenuEntry::Separator => {}
+            }
+        }
+    }
+
+    let entries = tray_menu_entries(settings);
+    let mut commands = Vec::new();
+    collect(&entries, &mut commands);
+    commands
 }
 
 fn separator_count(settings: &UiSettings) -> usize {
@@ -252,6 +282,17 @@ fn separator_count(settings: &UiSettings) -> usize {
         .into_iter()
         .filter(|entry| matches!(entry, TrayMenuEntry::Separator))
         .count()
+}
+
+fn submenu_command_ids(submenu: &codex_usage_monitor::windows::tray::TraySubmenu) -> Vec<u16> {
+    submenu
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            TrayMenuEntry::Command(command) => command.id,
+            _ => panic!("settings submenus must contain commands only"),
+        })
+        .collect()
 }
 
 #[test]
