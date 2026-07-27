@@ -1,15 +1,6 @@
 # Codex 사용량 모니터
 
-[English version](README.md)
-
-## ❤️ 후원
-
-CodexPeek가 시간을 절약해 드린다면 개발을 후원해 주세요.
-
-- ⭐ 이 저장소에 Star 남기기
-- ❤️ [GitHub에서 후원하기](https://github.com/sponsors/lch5518)
-
-후원해 주실 때마다 프로젝트를 활발하게 유지하는 데 큰 도움이 됩니다.
+**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows 네이티브 위젯입니다.
 기본·보조 사용량 기간을 작업 표시줄, 플로팅 위젯, 시스템 트레이에 표시합니다.
@@ -22,7 +13,7 @@ Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows �
 - 인증 파일을 직접 파싱하지 않고, 설치된 Codex CLI의 `app-server` 인터페이스를 사용합니다.
 - 다중 모니터 Windows 환경에서 모든 작업 표시줄 또는 주 모니터에만 위젯을 표시할 수 있습니다.
 - 작업 표시줄에 안전하게 붙일 수 없을 때는 플로팅 위젯과 트레이 아이콘으로 동작합니다.
-- 수동·자동 갱신, Windows 시작 시 실행, 진단, 한국어·영어 UI를 지원합니다.
+- 수동·자동 갱신, Windows 시작 시 실행, 진단, 지역화된 UI를 지원합니다.
 
 ## 작동 방식
 
@@ -125,6 +116,8 @@ Installer와 Portable은 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용�
 Windows 시작, 시작 화면, 인증 갱신, 자동 인증 갱신, 언어, 진단도 여기서 설정합니다.
 **위젯: 모든 모니터** 또는 **위젯: 주 모니터만**을 선택해 다중 모니터 표시 범위를 정할 수 있으며, 선택은 다시 시작해도 유지됩니다.
 
+기본값에서는 Windows 로캘이 지원 언어와 일치할 때 UI 언어를 자동으로 따릅니다. 트레이 메뉴에서 언어를 직접 선택할 수도 있습니다. 지원 언어는 한국어, 영어, 스페인어, 브라질 포르투갈어, 인도네시아어, 일본어, 힌디어, 독일어, 프랑스어, 베트남어, 터키어, 아랍어입니다.
+
 작업 표시줄 위젯의 글자색은 Windows의 밝은/어두운 시스템 테마를 따르고, 배경에는 실제 작업 표시줄 재질이 그대로 비칩니다.
 
 사용량 요청은 한 번에 하나만 실행됩니다.
@@ -172,6 +165,15 @@ cargo build --release
 ```
 
 자동화된 검사는 [릴리스 체크리스트](docs/RELEASE_CHECKLIST.md)의 Windows, DPI, 다중 모니터, Explorer 복구 검증을 대체하지 않습니다.
+
+## ❤️ 후원
+
+CodexPeek가 시간을 절약해 드린다면 개발을 후원해 주세요.
+
+- ⭐ 이 저장소에 Star 남기기
+- ❤️ [GitHub에서 후원하기](https://github.com/sponsors/lch5518)
+
+후원해 주실 때마다 프로젝트를 활발하게 유지하는 데 큰 도움이 됩니다.
 
 ## 라이선스
 

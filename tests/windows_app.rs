@@ -17,15 +17,17 @@ use codex_usage_monitor::{
         taskbar_widget::{
             select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
         },
-        tray::language_menu_label,
-        tray::update_menu_text,
+        tray::{language_menu_label, tray_menu_entries, update_menu_text, TrayMenuEntry},
         widget::{logical_to_physical, Rect},
-        LaunchMode, StartupStep, UiAction, MENU_AUTH_REFRESH, MENU_AUTOSTART,
+        LaunchMode, StartupStep, UiAction, UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART,
         MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
-        MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_AUTO,
-        MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_LOGIN, MENU_REFRESH, MENU_STARTUP_TRAY,
-        MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
-        MENU_WIDGET_VISIBLE,
+        MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC,
+        MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN,
+        MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE,
+        MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH,
+        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_REFRESH,
+        MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
+        MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
 };
@@ -50,16 +52,206 @@ fn update_menu_labels_surface_every_presentation_status() {
 
 #[test]
 fn language_menu_labels_always_show_endonyms() {
-    // 언어 이름은 현재 UI 언어와 무관하게 항상 고유 표기로 표시한다.
-    // 그래야 반대 언어 사용자도 자기 항목을 찾아 전환할 수 있다.
-    for resolved in [Language::Korean, Language::English] {
-        assert!(language_menu_label(LanguagePreference::Korean, resolved).contains("한국어"));
-        assert!(language_menu_label(LanguagePreference::English, resolved).contains("English"));
-    }
+    assert_eq!(
+        language_menu_label(LanguagePreference::Auto, Language::Korean),
+        "언어: 자동"
+    );
+    assert_eq!(
+        language_menu_label(LanguagePreference::Korean, Language::Korean),
+        "언어: 한국어"
+    );
+    assert_eq!(
+        language_menu_label(LanguagePreference::English, Language::Korean),
+        "언어: English"
+    );
+    assert_eq!(
+        language_menu_label(LanguagePreference::Auto, Language::English),
+        "Language: automatic"
+    );
+    assert_eq!(
+        language_menu_label(LanguagePreference::Korean, Language::English),
+        "Language: 한국어"
+    );
+    assert_eq!(
+        language_menu_label(LanguagePreference::English, Language::English),
+        "Language: English"
+    );
+}
 
-    // "자동" 항목은 특정 언어가 아니라 동작이므로 현재 UI 언어를 따른다.
-    assert!(language_menu_label(LanguagePreference::Auto, Language::Korean).contains("자동"));
-    assert!(language_menu_label(LanguagePreference::Auto, Language::English).contains("automatic"));
+#[test]
+fn tray_menu_entries_localize_english_labels_and_preserve_state() {
+    let settings = tray_settings(Language::English);
+    let commands = tray_commands(&settings);
+
+    assert_eq!(separator_count(&settings), 4);
+    assert_eq!(
+        commands,
+        vec![
+            (MENU_REFRESH, "Refresh now".to_string(), false),
+            (
+                MENU_INTERVAL_1,
+                "Refresh interval: 1 min".to_string(),
+                false
+            ),
+            (
+                MENU_INTERVAL_5,
+                "Refresh interval: 5 min".to_string(),
+                false
+            ),
+            (
+                MENU_INTERVAL_10,
+                "Refresh interval: 10 min".to_string(),
+                false
+            ),
+            (
+                MENU_INTERVAL_15,
+                "Refresh interval: 15 min".to_string(),
+                true
+            ),
+            (
+                MENU_INTERVAL_30,
+                "Refresh interval: 30 min".to_string(),
+                false
+            ),
+            (MENU_AUTOSTART, "Start with Windows".to_string(), true),
+            (
+                MENU_STARTUP_WIDGET,
+                "Startup: show widget".to_string(),
+                false
+            ),
+            (MENU_STARTUP_TRAY, "Startup: tray only".to_string(), true),
+            (
+                MENU_AUTH_REFRESH,
+                "Refresh authentication".to_string(),
+                false
+            ),
+            (
+                MENU_AUTO_AUTH_REFRESH,
+                "Automatic authentication refresh".to_string(),
+                true,
+            ),
+            (MENU_LANGUAGE_AUTO, "Language: automatic".to_string(), false),
+            (MENU_LANGUAGE_KOREAN, "Language: 한국어".to_string(), false),
+            (MENU_LANGUAGE_ENGLISH, "Language: English".to_string(), true),
+            (
+                MENU_LANGUAGE_SPANISH,
+                "Language: Español".to_string(),
+                false,
+            ),
+            (
+                MENU_LANGUAGE_PORTUGUESE_BRAZIL,
+                "Language: Português (Brasil)".to_string(),
+                false,
+            ),
+            (
+                MENU_LANGUAGE_INDONESIAN,
+                "Language: Bahasa Indonesia".to_string(),
+                false,
+            ),
+            (
+                MENU_LANGUAGE_JAPANESE,
+                "Language: 日本語".to_string(),
+                false,
+            ),
+            (MENU_LANGUAGE_HINDI, "Language: हिन्दी".to_string(), false,),
+            (MENU_LANGUAGE_GERMAN, "Language: Deutsch".to_string(), false,),
+            (
+                MENU_LANGUAGE_FRENCH,
+                "Language: Français".to_string(),
+                false,
+            ),
+            (
+                MENU_LANGUAGE_VIETNAMESE,
+                "Language: Tiếng Việt".to_string(),
+                false,
+            ),
+            (MENU_LANGUAGE_TURKISH, "Language: Türkçe".to_string(), false,),
+            (MENU_LANGUAGE_ARABIC, "Language: العربية".to_string(), false,),
+            (MENU_SHOW_REMAINING, "Show weekly usage".to_string(), false),
+            (MENU_DIAGNOSTICS, "Diagnostics".to_string(), false),
+            (MENU_UPDATE_CHECK, "Update check failed".to_string(), false),
+            (MENU_WIDGET_VISIBLE, "Show widget".to_string(), false),
+            (MENU_TASKBAR_ALL, "Widget: all monitors".to_string(), false),
+            (
+                MENU_TASKBAR_PRIMARY,
+                "Widget: primary monitor only".to_string(),
+                true,
+            ),
+            (MENU_EXIT, "Exit".to_string(), false),
+        ]
+    );
+}
+
+#[test]
+fn tray_menu_entries_localize_korean_labels_and_preserve_endonyms() {
+    let mut settings = tray_settings(Language::Korean);
+    settings.language = LanguagePreference::Auto;
+    settings.widget_visible = true;
+    settings.show_remaining_percent = false;
+    settings.taskbar_display_mode = TaskbarDisplayMode::All;
+
+    let commands = tray_commands(&settings);
+
+    assert_eq!(commands[0], (MENU_REFRESH, "지금 갱신".to_string(), false));
+    assert!(commands.contains(&(MENU_INTERVAL_15, "갱신 간격: 15분".to_string(), true)));
+    assert!(commands.contains(&(MENU_AUTOSTART, "Windows 시작 시 실행".to_string(), true)));
+    assert!(commands.contains(&(MENU_STARTUP_TRAY, "시작: 트레이만".to_string(), true)));
+    assert!(commands.contains(&(MENU_AUTH_REFRESH, "인증 갱신".to_string(), false)));
+    assert!(commands.contains(&(MENU_LANGUAGE_AUTO, "언어: 자동".to_string(), true)));
+    assert!(commands.contains(&(MENU_LANGUAGE_KOREAN, "언어: 한국어".to_string(), false)));
+    assert!(commands.contains(&(MENU_LANGUAGE_ENGLISH, "언어: English".to_string(), false)));
+    assert!(commands.contains(&(MENU_SHOW_REMAINING, "남은 사용량 표시".to_string(), false)));
+    assert!(commands.contains(&(MENU_WIDGET_VISIBLE, "위젯 숨기기".to_string(), true)));
+    assert!(commands.contains(&(MENU_TASKBAR_ALL, "위젯: 모든 모니터".to_string(), true)));
+    assert!(commands.contains(&(MENU_EXIT, "종료".to_string(), false)));
+}
+
+#[test]
+fn tray_menu_entries_offer_login_instead_of_auth_refresh_when_signed_out() {
+    let mut settings = tray_settings(Language::English);
+    settings.login_required = true;
+
+    let commands = tray_commands(&settings);
+
+    assert_eq!(
+        commands[0],
+        (MENU_LOGIN, "Sign in to Codex".to_string(), false)
+    );
+    assert!(!commands.iter().any(|(id, _, _)| *id == MENU_AUTH_REFRESH));
+}
+
+fn tray_settings(language: Language) -> UiSettings {
+    UiSettings {
+        widget_visible: false,
+        refresh_interval_minutes: 15,
+        start_with_windows: true,
+        startup_view: StartupView::TrayOnly,
+        auto_auth_refresh: true,
+        language: LanguagePreference::English,
+        resolved_language: language,
+        taskbar_offset: 0,
+        taskbar_display_mode: TaskbarDisplayMode::Primary,
+        update_status: UpdatePresentationStatus::Failed,
+        show_remaining_percent: true,
+        login_required: false,
+    }
+}
+
+fn tray_commands(settings: &UiSettings) -> Vec<(u16, String, bool)> {
+    tray_menu_entries(settings)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            TrayMenuEntry::Command(command) => Some((command.id, command.label, command.checked)),
+            TrayMenuEntry::Separator => None,
+        })
+        .collect()
+}
+
+fn separator_count(settings: &UiSettings) -> usize {
+    tray_menu_entries(settings)
+        .into_iter()
+        .filter(|entry| matches!(entry, TrayMenuEntry::Separator))
+        .count()
 }
 
 #[test]
@@ -95,9 +287,50 @@ fn every_menu_command_maps_to_a_typed_action() {
             MENU_LANGUAGE_ENGLISH,
             UiAction::SetLanguage(LanguagePreference::English),
         ),
+        (
+            MENU_LANGUAGE_SPANISH,
+            UiAction::SetLanguage(LanguagePreference::Spanish),
+        ),
+        (
+            MENU_LANGUAGE_PORTUGUESE_BRAZIL,
+            UiAction::SetLanguage(LanguagePreference::PortugueseBrazil),
+        ),
+        (
+            MENU_LANGUAGE_INDONESIAN,
+            UiAction::SetLanguage(LanguagePreference::Indonesian),
+        ),
+        (
+            MENU_LANGUAGE_JAPANESE,
+            UiAction::SetLanguage(LanguagePreference::Japanese),
+        ),
+        (
+            MENU_LANGUAGE_HINDI,
+            UiAction::SetLanguage(LanguagePreference::Hindi),
+        ),
+        (
+            MENU_LANGUAGE_GERMAN,
+            UiAction::SetLanguage(LanguagePreference::German),
+        ),
+        (
+            MENU_LANGUAGE_FRENCH,
+            UiAction::SetLanguage(LanguagePreference::French),
+        ),
+        (
+            MENU_LANGUAGE_VIETNAMESE,
+            UiAction::SetLanguage(LanguagePreference::Vietnamese),
+        ),
+        (
+            MENU_LANGUAGE_TURKISH,
+            UiAction::SetLanguage(LanguagePreference::Turkish),
+        ),
+        (
+            MENU_LANGUAGE_ARABIC,
+            UiAction::SetLanguage(LanguagePreference::Arabic),
+        ),
         (MENU_DIAGNOSTICS, UiAction::RunDiagnostics),
         (MENU_UPDATE_CHECK, UiAction::CheckForUpdates),
         (MENU_WIDGET_VISIBLE, UiAction::ToggleWidget),
+        (MENU_SHOW_REMAINING, UiAction::ToggleShowRemaining),
         (
             MENU_TASKBAR_ALL,
             UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::All),
@@ -167,21 +400,74 @@ fn normal_startup_acquires_instance_before_any_side_effect() {
 
 #[test]
 fn windows_ui_language_resolves_auto_without_process_environment() {
+    let langid_cases = [
+        (0x0412, Language::Korean),
+        (0x0409, Language::English),
+        (0x0c0a, Language::Spanish),
+        (0x0416, Language::PortugueseBrazil),
+        (0x0421, Language::Indonesian),
+        (0x0411, Language::Japanese),
+        (0x0439, Language::Hindi),
+        (0x0407, Language::German),
+        (0x040c, Language::French),
+        (0x042a, Language::Vietnamese),
+        (0x041f, Language::Turkish),
+        (0x0401, Language::Arabic),
+    ];
+    for (langid, expected) in langid_cases {
+        assert_eq!(
+            resolve_windows_language(LanguagePreference::Auto, Some(langid), None),
+            expected,
+            "LANGID {langid:#06x}"
+        );
+    }
+
+    let locale_cases = [
+        ("ko_KR", Language::Korean),
+        ("EN-us", Language::English),
+        ("es-MX", Language::Spanish),
+        ("pt-BR", Language::PortugueseBrazil),
+        ("pt_br", Language::PortugueseBrazil),
+        ("id-ID", Language::Indonesian),
+        ("ja-JP", Language::Japanese),
+        ("hi-IN", Language::Hindi),
+        ("de-DE", Language::German),
+        ("fr-CA", Language::French),
+        ("vi-VN", Language::Vietnamese),
+        ("tr-TR", Language::Turkish),
+        ("ar-SA", Language::Arabic),
+    ];
+    for (locale, expected) in locale_cases {
+        assert_eq!(
+            resolve_windows_language(LanguagePreference::Auto, None, Some(locale)),
+            expected,
+            "locale {locale}"
+        );
+    }
+
     assert_eq!(
-        resolve_windows_language(LanguagePreference::Auto, Some(0x0412), Some("en-US")),
-        codex_usage_monitor::Language::Korean
+        resolve_windows_language(LanguagePreference::Auto, Some(0x0816), Some("pt-PT")),
+        Language::English
     );
     assert_eq!(
-        resolve_windows_language(LanguagePreference::Auto, None, Some("ko-KR")),
-        codex_usage_monitor::Language::Korean
-    );
-    assert_eq!(
-        resolve_windows_language(LanguagePreference::Auto, Some(0x0409), Some("en-US")),
-        codex_usage_monitor::Language::English
+        resolve_windows_language(LanguagePreference::Auto, None, Some("pt")),
+        Language::English
     );
     assert_eq!(
         resolve_windows_language(LanguagePreference::Korean, Some(0x0409), Some("en-US")),
-        codex_usage_monitor::Language::Korean
+        Language::Korean
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::English, Some(0x0412), Some("ko-KR")),
+        Language::English
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Arabic, Some(0x0409), Some("en-US")),
+        Language::Arabic
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Auto, None, None),
+        Language::English
     );
 }
 

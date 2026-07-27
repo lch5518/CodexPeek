@@ -70,19 +70,36 @@ impl ResetDateTime {
         })
     }
 
-    /// 날짜, 현지화된 요일과 시각을 고정된 숫자 형식으로 반환합니다.
+    /// 날짜 순서와 현지화된 요일을 적용해 초기화 시각을 반환합니다.
     pub(crate) fn localized_label(self, language: Language) -> String {
-        const KOREAN_WEEKDAYS: [&str; 7] = ["일", "월", "화", "수", "목", "금", "토"];
-        const ENGLISH_WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        let weekday = match language {
-            Language::Korean => KOREAN_WEEKDAYS[self.weekday as usize],
-            Language::English => ENGLISH_WEEKDAYS[self.weekday as usize],
-        };
-
-        format!(
-            "{:04}-{:02}-{:02} ({weekday}) {:02}:{:02}",
-            self.year, self.month, self.day, self.hour, self.minute
-        )
+        let weekday = localized_weekday(language, self.weekday as usize);
+        match language {
+            Language::Korean | Language::English => format!(
+                "{:04}-{:02}-{:02} ({weekday}) {:02}:{:02}",
+                self.year, self.month, self.day, self.hour, self.minute
+            ),
+            Language::Spanish
+            | Language::PortugueseBrazil
+            | Language::Indonesian
+            | Language::French
+            | Language::Vietnamese
+            | Language::Arabic => format!(
+                "{:02}/{:02}/{:04} ({weekday}) {:02}:{:02}",
+                self.day, self.month, self.year, self.hour, self.minute
+            ),
+            Language::Japanese => format!(
+                "{:04}年{:02}月{:02}日 ({weekday}) {:02}:{:02}",
+                self.year, self.month, self.day, self.hour, self.minute
+            ),
+            Language::Hindi => format!(
+                "{:02}-{:02}-{:04} ({weekday}) {:02}:{:02}",
+                self.day, self.month, self.year, self.hour, self.minute
+            ),
+            Language::German | Language::Turkish => format!(
+                "{:02}.{:02}.{:04} ({weekday}) {:02}:{:02}",
+                self.day, self.month, self.year, self.hour, self.minute
+            ),
+        }
     }
 }
 
@@ -144,23 +161,14 @@ impl UsageWindow {
         };
 
         if duration_mins % (24 * 60) == 0 {
-            return match language {
-                Language::Korean => format!("{}일", duration_mins / (24 * 60)),
-                Language::English => format!("{}d", duration_mins / (24 * 60)),
-            };
+            return format_duration_unit(duration_mins / (24 * 60), DurationUnit::Day, language);
         }
 
         if duration_mins % 60 == 0 {
-            return match language {
-                Language::Korean => format!("{}시간", duration_mins / 60),
-                Language::English => format!("{}h", duration_mins / 60),
-            };
+            return format_duration_unit(duration_mins / 60, DurationUnit::Hour, language);
         }
 
-        match language {
-            Language::Korean => format!("{duration_mins}분"),
-            Language::English => format!("{duration_mins}m"),
-        }
+        format_duration_unit(duration_mins, DurationUnit::Minute, language)
     }
 
     /// 현재 시각을 기준으로 다음 초기화까지 남은 시간을 반환합니다.
@@ -190,11 +198,23 @@ pub struct CodexUsage {
 }
 
 fn fallback_period_label(kind: WindowKind, language: Language) -> &'static str {
-    match (kind, language) {
-        (WindowKind::Primary, Language::Korean) => "단기",
-        (WindowKind::Primary, Language::English) => "Short",
-        (WindowKind::Secondary, Language::Korean) => "주간",
-        (WindowKind::Secondary, Language::English) => "Weekly",
+    let (primary, secondary) = match language {
+        Language::Korean => ("단기", "주간"),
+        Language::English => ("Short", "Weekly"),
+        Language::Spanish => ("Corto", "Semanal"),
+        Language::PortugueseBrazil => ("Curto", "Semanal"),
+        Language::Indonesian => ("Singkat", "Mingguan"),
+        Language::Japanese => ("短期", "週間"),
+        Language::Hindi => ("अल्पकालिक", "साप्ताहिक"),
+        Language::German => ("Kurz", "Wöchentlich"),
+        Language::French => ("Court", "Hebdomadaire"),
+        Language::Vietnamese => ("Ngắn hạn", "Hàng tuần"),
+        Language::Turkish => ("Kısa", "Haftalık"),
+        Language::Arabic => ("قصير", "أسبوعي"),
+    };
+    match kind {
+        WindowKind::Primary => primary,
+        WindowKind::Secondary => secondary,
     }
 }
 
@@ -202,6 +222,16 @@ pub(crate) fn reset_unavailable_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "초기화 시각 없음",
         Language::English => "Reset unavailable",
+        Language::Spanish => "Restablecimiento no disponible",
+        Language::PortugueseBrazil => "Redefinição indisponível",
+        Language::Indonesian => "Waktu reset tidak tersedia",
+        Language::Japanese => "リセット時刻なし",
+        Language::Hindi => "रीसेट समय उपलब्ध नहीं",
+        Language::German => "Zurücksetzen nicht verfügbar",
+        Language::French => "Réinitialisation indisponible",
+        Language::Vietnamese => "Không có thời gian đặt lại",
+        Language::Turkish => "Sıfırlama zamanı yok",
+        Language::Arabic => "وقت إعادة التعيين غير متاح",
     }
 }
 
@@ -219,6 +249,16 @@ fn reset_soon_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "곧 초기화",
         Language::English => "Reset soon",
+        Language::Spanish => "Se restablece pronto",
+        Language::PortugueseBrazil => "Redefinição em breve",
+        Language::Indonesian => "Segera direset",
+        Language::Japanese => "まもなくリセット",
+        Language::Hindi => "जल्द रीसेट होगा",
+        Language::German => "Bald zurückgesetzt",
+        Language::French => "Réinitialisation imminente",
+        Language::Vietnamese => "Sắp đặt lại",
+        Language::Turkish => "Yakında sıfırlanır",
+        Language::Arabic => "ستتم إعادة التعيين قريبًا",
     }
 }
 
@@ -254,6 +294,56 @@ pub(crate) fn reset_credits_label(
             format!("Full reset: {available_count} (expires {expiry})")
         }
         (Language::English, None) => format!("Full reset: {available_count}"),
+        (Language::Spanish, Some(expiry)) => {
+            format!("Restablecimiento completo: {available_count} (vence {expiry})")
+        }
+        (Language::Spanish, None) => {
+            format!("Restablecimiento completo: {available_count}")
+        }
+        (Language::PortugueseBrazil, Some(expiry)) => {
+            format!("Redefinição completa: {available_count} (expira em {expiry})")
+        }
+        (Language::PortugueseBrazil, None) => {
+            format!("Redefinição completa: {available_count}")
+        }
+        (Language::Indonesian, Some(expiry)) => {
+            format!("Reset penuh: {available_count} (kedaluwarsa {expiry})")
+        }
+        (Language::Indonesian, None) => format!("Reset penuh: {available_count}"),
+        (Language::Japanese, Some(expiry)) => {
+            format!("フルリセット: {available_count}（有効期限 {expiry}）")
+        }
+        (Language::Japanese, None) => format!("フルリセット: {available_count}"),
+        (Language::Hindi, Some(expiry)) => {
+            format!("पूर्ण रीसेट: {available_count} (समाप्ति {expiry})")
+        }
+        (Language::Hindi, None) => format!("पूर्ण रीसेट: {available_count}"),
+        (Language::German, Some(expiry)) => {
+            format!("Vollständige Zurücksetzung: {available_count} (läuft am {expiry} ab)")
+        }
+        (Language::German, None) => {
+            format!("Vollständige Zurücksetzung: {available_count}")
+        }
+        (Language::French, Some(expiry)) => {
+            format!("Réinitialisation complète : {available_count} (expire le {expiry})")
+        }
+        (Language::French, None) => {
+            format!("Réinitialisation complète : {available_count}")
+        }
+        (Language::Vietnamese, Some(expiry)) => {
+            format!("Đặt lại toàn bộ: {available_count} (hết hạn {expiry})")
+        }
+        (Language::Vietnamese, None) => {
+            format!("Đặt lại toàn bộ: {available_count}")
+        }
+        (Language::Turkish, Some(expiry)) => {
+            format!("Tam sıfırlama: {available_count} (sona erme {expiry})")
+        }
+        (Language::Turkish, None) => format!("Tam sıfırlama: {available_count}"),
+        (Language::Arabic, Some(expiry)) => {
+            format!("إعادة ضبط كاملة: {available_count} (تنتهي في {expiry})")
+        }
+        (Language::Arabic, None) => format!("إعادة ضبط كاملة: {available_count}"),
     })
 }
 
@@ -264,13 +354,139 @@ fn format_remaining_duration(remaining: Duration, language: Language) -> String 
     let hours = (minutes % (24 * 60)) / 60;
     let minutes = minutes % 60;
 
-    match (days, hours, language) {
-        (days, hours, Language::Korean) if days > 0 => format!("{days}일 {hours}시간"),
-        (days, hours, Language::English) if days > 0 => format!("{days}d {hours}h"),
-        (_, hours, Language::Korean) if hours > 0 => format!("{hours}시간 {minutes}분"),
-        (_, hours, Language::English) if hours > 0 => format!("{hours}h {minutes}m"),
-        (_, _, Language::Korean) => format!("{minutes}분"),
-        (_, _, Language::English) => format!("{minutes}m"),
+    if days > 0 {
+        return format!(
+            "{} {}",
+            format_duration_unit(days, DurationUnit::Day, language),
+            format_duration_unit(hours, DurationUnit::Hour, language)
+        );
+    }
+    if hours > 0 {
+        return format!(
+            "{} {}",
+            format_duration_unit(hours, DurationUnit::Hour, language),
+            format_duration_unit(minutes, DurationUnit::Minute, language)
+        );
+    }
+    format_duration_unit(minutes, DurationUnit::Minute, language)
+}
+
+#[derive(Clone, Copy)]
+enum DurationUnit {
+    Day,
+    Hour,
+    Minute,
+}
+
+fn localized_weekday(language: Language, weekday: usize) -> &'static str {
+    const KOREAN: [&str; 7] = ["일", "월", "화", "수", "목", "금", "토"];
+    const ENGLISH: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const SPANISH: [&str; 7] = ["dom.", "lun.", "mar.", "mié.", "jue.", "vie.", "sáb."];
+    const PORTUGUESE_BRAZIL: [&str; 7] = ["dom.", "seg.", "ter.", "qua.", "qui.", "sex.", "sáb."];
+    const INDONESIAN: [&str; 7] = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+    const JAPANESE: [&str; 7] = ["日", "月", "火", "水", "木", "金", "土"];
+    const HINDI: [&str; 7] = ["रवि", "सोम", "मंगल", "बुध", "गुरु", "शुक्र", "शनि"];
+    const GERMAN: [&str; 7] = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+    const FRENCH: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+    const VIETNAMESE: [&str; 7] = ["CN", "Th 2", "Th 3", "Th 4", "Th 5", "Th 6", "Th 7"];
+    const TURKISH: [&str; 7] = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+    const ARABIC: [&str; 7] = [
+        "الأحد",
+        "الاثنين",
+        "الثلاثاء",
+        "الأربعاء",
+        "الخميس",
+        "الجمعة",
+        "السبت",
+    ];
+
+    match language {
+        Language::Korean => KOREAN[weekday],
+        Language::English => ENGLISH[weekday],
+        Language::Spanish => SPANISH[weekday],
+        Language::PortugueseBrazil => PORTUGUESE_BRAZIL[weekday],
+        Language::Indonesian => INDONESIAN[weekday],
+        Language::Japanese => JAPANESE[weekday],
+        Language::Hindi => HINDI[weekday],
+        Language::German => GERMAN[weekday],
+        Language::French => FRENCH[weekday],
+        Language::Vietnamese => VIETNAMESE[weekday],
+        Language::Turkish => TURKISH[weekday],
+        Language::Arabic => ARABIC[weekday],
+    }
+}
+
+fn format_duration_unit(value: u64, unit: DurationUnit, language: Language) -> String {
+    match (unit, language) {
+        (DurationUnit::Day, Language::Korean) => format!("{value}일"),
+        (DurationUnit::Day, Language::English) => format!("{value}d"),
+        (DurationUnit::Day, Language::Spanish) => {
+            format!("{value} {}", if value == 1 { "día" } else { "días" })
+        }
+        (DurationUnit::Day, Language::PortugueseBrazil) => {
+            format!("{value} {}", if value == 1 { "dia" } else { "dias" })
+        }
+        (DurationUnit::Day, Language::Indonesian) => format!("{value} hari"),
+        (DurationUnit::Day, Language::Japanese) => format!("{value}日"),
+        (DurationUnit::Day, Language::Hindi) => format!("{value} दिन"),
+        (DurationUnit::Day, Language::German) => {
+            format!("{value} {}", if value == 1 { "Tag" } else { "Tage" })
+        }
+        (DurationUnit::Day, Language::French) => {
+            format!("{value} {}", if value == 1 { "jour" } else { "jours" })
+        }
+        (DurationUnit::Day, Language::Vietnamese) => format!("{value} ngày"),
+        (DurationUnit::Day, Language::Turkish) => format!("{value} gün"),
+        (DurationUnit::Day, Language::Arabic) => format!("{value} يوم"),
+        (DurationUnit::Hour, Language::Korean) => format!("{value}시간"),
+        (DurationUnit::Hour, Language::English) => format!("{value}h"),
+        (DurationUnit::Hour, Language::Spanish) => {
+            format!("{value} {}", if value == 1 { "hora" } else { "horas" })
+        }
+        (DurationUnit::Hour, Language::PortugueseBrazil) => {
+            format!("{value} {}", if value == 1 { "hora" } else { "horas" })
+        }
+        (DurationUnit::Hour, Language::Indonesian) => format!("{value} jam"),
+        (DurationUnit::Hour, Language::Japanese) => format!("{value}時間"),
+        (DurationUnit::Hour, Language::Hindi) => {
+            format!(
+                "{value} {}",
+                if value == 1 {
+                    "घंटा"
+                } else {
+                    "घंटे"
+                }
+            )
+        }
+        (DurationUnit::Hour, Language::German) => {
+            format!("{value} {}", if value == 1 { "Stunde" } else { "Stunden" })
+        }
+        (DurationUnit::Hour, Language::French) => {
+            format!("{value} {}", if value == 1 { "heure" } else { "heures" })
+        }
+        (DurationUnit::Hour, Language::Vietnamese) => format!("{value} giờ"),
+        (DurationUnit::Hour, Language::Turkish) => format!("{value} saat"),
+        (DurationUnit::Hour, Language::Arabic) => format!("{value} ساعة"),
+        (DurationUnit::Minute, Language::Korean) => format!("{value}분"),
+        (DurationUnit::Minute, Language::English) => format!("{value}m"),
+        (DurationUnit::Minute, Language::Spanish) => {
+            format!("{value} {}", if value == 1 { "minuto" } else { "minutos" })
+        }
+        (DurationUnit::Minute, Language::PortugueseBrazil) => {
+            format!("{value} {}", if value == 1 { "minuto" } else { "minutos" })
+        }
+        (DurationUnit::Minute, Language::Indonesian) => format!("{value} menit"),
+        (DurationUnit::Minute, Language::Japanese) => format!("{value}分"),
+        (DurationUnit::Minute, Language::Hindi) => format!("{value} मिनट"),
+        (DurationUnit::Minute, Language::German) => {
+            format!("{value} {}", if value == 1 { "Minute" } else { "Minuten" })
+        }
+        (DurationUnit::Minute, Language::French) => {
+            format!("{value} {}", if value == 1 { "minute" } else { "minutes" })
+        }
+        (DurationUnit::Minute, Language::Vietnamese) => format!("{value} phút"),
+        (DurationUnit::Minute, Language::Turkish) => format!("{value} dakika"),
+        (DurationUnit::Minute, Language::Arabic) => format!("{value} دقيقة"),
     }
 }
 
@@ -439,6 +655,81 @@ mod tests {
     }
 
     #[test]
+    fn every_supported_language_has_complete_dynamic_domain_copy() {
+        let now = UNIX_EPOCH + Duration::from_secs(10_000);
+        let reset = ResetDateTime::new(2026, 7, 27, 1, 3, 4).unwrap();
+        let day_period = UsageWindow::new(WindowKind::Primary, 1.0, Some(1_440), None).unwrap();
+        let hour_period = UsageWindow::new(WindowKind::Primary, 1.0, Some(120), None).unwrap();
+        let minute_period = UsageWindow::new(WindowKind::Primary, 1.0, Some(1), None).unwrap();
+        let primary_fallback = UsageWindow::new(WindowKind::Primary, 1.0, None, None).unwrap();
+        let secondary_fallback = UsageWindow::new(WindowKind::Secondary, 1.0, None, None).unwrap();
+        let days_remaining = UsageWindow::new(
+            WindowKind::Primary,
+            1.0,
+            None,
+            Some(now + Duration::from_secs(26 * 60 * 60)),
+        )
+        .unwrap();
+        let hours_remaining = UsageWindow::new(
+            WindowKind::Primary,
+            1.0,
+            None,
+            Some(now + Duration::from_secs(2 * 60 * 60 + 61)),
+        )
+        .unwrap();
+        let minutes_remaining = UsageWindow::new(
+            WindowKind::Primary,
+            1.0,
+            None,
+            Some(now + Duration::from_secs(1)),
+        )
+        .unwrap();
+        let elapsed = UsageWindow::new(
+            WindowKind::Primary,
+            1.0,
+            None,
+            Some(now - Duration::from_secs(1)),
+        )
+        .unwrap();
+
+        for &language in Language::ALL {
+            for text in [
+                reset.localized_label(language),
+                day_period.period_label(language),
+                hour_period.period_label(language),
+                minute_period.period_label(language),
+                primary_fallback.period_label(language),
+                secondary_fallback.period_label(language),
+                days_remaining.remaining_label(language, now),
+                hours_remaining.remaining_label(language, now),
+                minutes_remaining.remaining_label(language, now),
+                primary_fallback.remaining_label(language, now),
+                elapsed.remaining_label(language, now),
+            ] {
+                assert!(!text.trim().is_empty(), "{language:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn dynamic_domain_copy_uses_representative_local_scripts_and_formats() {
+        let monday = ResetDateTime::new(2026, 7, 27, 1, 3, 4).unwrap();
+        let day = UsageWindow::new(WindowKind::Primary, 1.0, Some(1_440), None).unwrap();
+        let hours = UsageWindow::new(WindowKind::Primary, 1.0, Some(120), None).unwrap();
+
+        assert_eq!(
+            monday.localized_label(Language::Japanese),
+            "2026年07月27日 (月) 03:04"
+        );
+        assert_eq!(
+            monday.localized_label(Language::Arabic),
+            "27/07/2026 (الاثنين) 03:04"
+        );
+        assert_eq!(day.period_label(Language::Spanish), "1 día");
+        assert_eq!(hours.period_label(Language::German), "2 Stunden");
+    }
+
+    #[test]
     fn reset_date_time_rejects_invalid_calendar_parts() {
         assert!(ResetDateTime::new(2026, 0, 27, 1, 3, 4).is_none());
         assert!(ResetDateTime::new(2026, 2, 29, 0, 3, 4).is_none());
@@ -466,6 +757,20 @@ mod tests {
             super::reset_credits_label(2, None, Language::English),
             Some("Full reset: 2".to_owned())
         );
+        for &language in Language::ALL {
+            let with_expiry =
+                super::reset_credits_label(2, Some("2026-07-31 23:59"), language).unwrap();
+            let without_expiry = super::reset_credits_label(2, None, language).unwrap();
+            assert!(with_expiry.contains('2'), "{language:?}: {with_expiry}");
+            assert!(
+                with_expiry.contains("2026-07-31 23:59"),
+                "{language:?}: {with_expiry}"
+            );
+            assert!(
+                without_expiry.contains('2'),
+                "{language:?}: {without_expiry}"
+            );
+        }
     }
 
     #[test]

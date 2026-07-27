@@ -1,0 +1,180 @@
+# Trình giám sát mức sử dụng Codex
+
+**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+
+Codex Usage Monitor là một widget Windows gốc nhỏ giúp bạn xem nhanh mức sử dụng Codex.
+Ứng dụng hiển thị các cửa sổ giới hạn tốc độ chính và phụ trên thanh tác vụ, trong widget nổi và trong khay hệ thống.
+
+![Widget Codex Usage Monitor trên thanh tác vụ](docs/images/taskbar-widget-en.png)
+
+## Điểm nổi bật
+
+- Hiển thị các cửa sổ mức sử dụng Codex chính và phụ, bao gồm thời điểm đặt lại.
+- Dùng giao diện `app-server` của Codex CLI đã cài đặt thay vì phân tích các tệp xác thực.
+- Hỗ trợ hiển thị widget trên mọi thanh tác vụ hoặc chỉ trên màn hình chính.
+- Tự động chuyển an toàn sang widget nổi và biểu tượng khay khi không thể gắn vào thanh tác vụ.
+- Hỗ trợ làm mới thủ công, khoảng thời gian làm mới tự động, khởi động cùng Windows, chẩn đoán và giao diện đã bản địa hóa.
+
+## Cách hoạt động
+
+Trình giám sát khởi chạy `codex app-server --stdio` dưới dạng tiến trình con cục bộ và trao đổi thông điệp JSONL qua đầu vào và đầu ra chuẩn.
+Codex CLI đã cài đặt tự xử lý xác thực của nó và có thể liên hệ với OpenAI theo cấu hình và chính sách mạng hiện có.
+
+Trình giám sát chỉ yêu cầu trạng thái đăng nhập và các cửa sổ mức sử dụng cần thiết để hiển thị.
+Ứng dụng không bắt đầu tác vụ Codex và không gọi `codex exec`.
+
+## Yêu cầu
+
+- Windows 10 hoặc Windows 11, x64.
+- [Codex CLI](https://github.com/openai/codex) đã đăng nhập và hỗ trợ `account/read` cùng `account/rateLimits/read`.
+
+## Tải xuống và chạy
+
+Trước tiên hãy xác minh rằng Codex CLI đã được cài đặt và đã đăng nhập:
+
+```powershell
+codex --version
+codex login status
+```
+
+### Trình cài đặt (khuyến nghị)
+
+1. Tải `CodexPeek-Setup-v<version>-x64.exe` từ
+   [GitHub Release mới nhất](https://github.com/lch5518/CodexPeek/releases/latest).
+2. Chạy trình cài đặt và làm theo các lời nhắc. Không cần quyền quản trị viên.
+3. Mở **Codex Usage Monitor** từ Start Menu.
+
+### Bản portable
+
+1. Tải `codex-peek-v<version>-windows-x86_64-portable.zip` từ
+   release mới nhất.
+2. Giải nén toàn bộ ZIP vào một thư mục có quyền ghi.
+3. Chạy `codex-peek.exe` từ thư mục đã giải nén.
+
+### Build từ mã nguồn
+
+Tùy chọn này yêu cầu Rust 1.85 trở lên, Visual Studio 2022 C++ Build Tools và
+Windows SDK. Nó chạy ứng dụng từ repository đã clone và không tạo lối tắt Start
+Menu hoặc trình gỡ cài đặt.
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo build --release
+.\target\release\codex-peek.exe
+```
+
+Để kiểm tra bản build và kết nối Codex CLI mà không mở giao diện:
+
+```powershell
+.\target\release\codex-peek.exe --diagnose
+```
+
+### Yêu cầu Codex cài đặt
+
+Sao chép prompt bên dưới vào Codex. Prompt này ưu tiên Trình cài đặt đã xác minh và chỉ chuyển sang
+build từ mã nguồn khi không có artefact Release tương thích.
+
+```text
+Cài đặt CodexPeek trên máy tính Windows x64 này và hoàn tất phần xác minh giúp tôi.
+
+1. Xác nhận đây là Windows x64, rồi chạy `codex --version` và `codex login status`.
+2. Chỉ dùng repository chính thức và các Releases của repository đó:
+   https://github.com/lch5518/CodexPeek
+3. Ưu tiên `CodexPeek-Setup-v<version>-x64.exe` mới nhất. Tải nó cùng với
+   `SHA256SUMS.txt`, tìm đúng mục Installer trong tệp đó, tính SHA-256 của
+   Installer và chỉ tiếp tục nếu các hash khớp nhau. Không tắt các biện pháp
+   bảo mật và không chạy tệp có checksum bị thiếu hoặc khác.
+4. Cài đặt cho người dùng hiện tại mà không yêu cầu quyền quản trị viên. Giữ nguyên
+   các cài đặt CodexPeek hiện có và không dừng ứng dụng đang chạy hoặc tiến trình
+   không liên quan; hãy cho tôi biết nếu tôi cần tự đóng ứng dụng.
+5. Chỉ khi không có artefact Release tương thích, clone repository chính thức
+   vào một thư mục mới mà người dùng có quyền ghi và chạy `cargo build --release`.
+   Nếu cần cài Git, Rust 1.85+, Visual Studio 2022 C++ Build Tools hoặc Windows SDK,
+   trước tiên hãy giải thích chính xác điều gì sẽ thay đổi và xin tôi phê duyệt.
+6. Không bao giờ đọc hoặc in nội dung của `%USERPROFILE%\.codex\auth.json`. Việc xác thực
+   chỉ được xử lý thông qua Codex CLI đã cài đặt.
+7. Sau khi cài đặt hoặc build, chạy `codex-peek.exe --diagnose` thu được. Nếu lệnh
+   thành công, hãy khởi chạy CodexPeek.
+8. Báo cáo phương thức cài đặt đã chọn, phiên bản đã cài, vị trí tệp thực thi,
+   kết quả checksum và kết quả chẩn đoán. Nếu có lỗi, hãy dừng an toàn và giải thích
+   đúng điểm bị chặn mà không để lộ thông tin nhạy cảm.
+```
+
+Các bản Installer và Portable dùng `%APPDATA%\CodexUsageMonitor\settings.json`, nên
+cài đặt sẽ được chia sẻ nếu bạn chuyển đổi giữa hai bản. Trình cài đặt thêm lối tắt Start Menu
+nhưng không bật khởi động cùng Windows theo mặc định.
+
+Các release ban đầu chưa được ký mã và có thể kích hoạt Microsoft Defender SmartScreen.
+Chỉ tải xuống từ release chính thức và xác minh tệp với `SHA256SUMS.txt`.
+
+Xem [hướng dẫn cài đặt chi tiết (tiếng Hàn)](docs/INSTALL.md) để biết cách xác minh hash,
+cập nhật, hành vi gỡ cài đặt, chẩn đoán và khắc phục sự cố.
+
+## Sử dụng trình giám sát
+
+Dùng menu khay để làm mới mức sử dụng, chọn khoảng thời gian làm mới 1/5/10/15/30 phút, và hiển thị hoặc ẩn widget.
+Menu này cũng cung cấp cài đặt khởi động cùng Windows, chế độ xem khi khởi động, làm mới xác thực, tự động làm mới xác thực, ngôn ngữ và chẩn đoán.
+Chọn **Widget: all monitors** hoặc **Widget: primary monitor only** để kiểm soát vị trí trên nhiều màn hình; lựa chọn này được ghi nhớ qua các lần khởi động lại.
+
+Theo mặc định, ngôn ngữ giao diện đi theo locale của Windows khi locale đó khớp với một ngôn ngữ được hỗ trợ. Bạn cũng có thể chọn ngôn ngữ thủ công từ menu khay. Các ngôn ngữ được hỗ trợ gồm tiếng Hàn, tiếng Anh, tiếng Tây Ban Nha, tiếng Bồ Đào Nha Brazil, tiếng Indonesia, tiếng Nhật, tiếng Hindi, tiếng Đức, tiếng Pháp, tiếng Việt, tiếng Thổ Nhĩ Kỳ và tiếng Ả Rập.
+
+Widget trên thanh tác vụ dùng theme sáng/tối của hệ thống Windows cho phần chữ và để vật liệu gốc của thanh tác vụ hiện qua nền.
+
+Mỗi lần chỉ có một yêu cầu mức sử dụng được chạy. Các yêu cầu thất bại sẽ được thử lại với độ trễ tăng dần trong khi các giá trị thành công gần nhất vẫn hiển thị.
+
+Nếu widget thanh tác vụ không thể gắn lại sau khi Explorer khởi động lại hoặc bố cục thanh tác vụ thay đổi, biểu tượng khay vẫn khả dụng và trình giám sát sẽ thử lại an toàn.
+
+## Quyền riêng tư và bảo mật
+
+Trình giám sát không bao giờ đọc hoặc phân tích nội dung của `%USERPROFILE%\.codex\auth.json`.
+Chẩn đoán chỉ kiểm tra xem đường dẫn đó có tồn tại hay không.
+
+Phản hồi RPC thô chỉ được xử lý đủ lâu để trích xuất loại đăng nhập và các trường giới hạn tốc độ được hiển thị.
+Token, ID tài khoản, địa chỉ email, nội dung tệp xác thực và giá trị proxy không được lưu trữ hoặc ghi vào log.
+
+Cài đặt được lưu trong `%APPDATA%\CodexUsageMonitor\settings.json`.
+Log chẩn đoán có giới hạn được lưu trong `%TEMP%\codex-peek.log`.
+
+Để xem hướng dẫn đầy đủ về xử lý dữ liệu và báo cáo lỗ hổng, hãy xem [SECURITY.md](SECURITY.md).
+
+## Khắc phục sự cố
+
+| Vấn đề | Cách xử lý |
+| --- | --- |
+| Không tìm thấy Codex CLI | Chạy `codex --version` và `where.exe codex`, rồi bảo đảm Codex CLI có trong `PATH`. |
+| CLI không được hỗ trợ | Cập nhật Codex CLI. Hỗ trợ RPC bắt buộc quan trọng hơn số phiên bản được hiển thị. |
+| Đã đăng xuất hoặc xác thực hết hạn | Hoàn tất luồng đăng nhập thông thường trong Codex CLI, rồi chọn **Refresh authentication** trong menu khay. |
+| Widget thanh tác vụ nằm trên sai màn hình | Chọn **Widget: all monitors** hoặc **Widget: primary monitor only** từ menu khay. |
+| Thiếu widget thanh tác vụ | Dùng widget nổi hoặc biểu tượng khay, khởi động lại Explorer nếu cần, rồi chọn chế độ màn hình widget mong muốn. |
+| Cần thêm chi tiết | Chạy `--diagnose` hoặc mở **Diagnostics** từ menu khay. |
+
+## Phát triển
+
+Build từ mã nguồn yêu cầu Rust 1.85 trở lên, Visual Studio 2022 C++ Build Tools và
+Windows SDK. Build và xác thực từ thư mục gốc của repository:
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo build --release
+```
+
+Các kiểm tra tự động không thay thế các kịch bản Windows, DPI, nhiều màn hình và phục hồi Explorer trong [release checklist](docs/RELEASE_CHECKLIST.md).
+
+## ❤️ Hỗ trợ
+
+Nếu CodexPeek giúp bạn tiết kiệm thời gian, hãy cân nhắc hỗ trợ quá trình phát triển.
+
+- ⭐ Star repository này
+- ❤️ [Tài trợ trên GitHub](https://github.com/sponsors/lch5518)
+
+Mỗi lượt tài trợ giúp dự án tiếp tục được duy trì tích cực.
+
+## Giấy phép
+
+Dự án này được cung cấp theo [Giấy phép MIT](LICENSE).
+Xem [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) để biết các thông báo của bên thứ ba.

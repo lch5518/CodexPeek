@@ -17,9 +17,9 @@ use windows::{
             DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetStockObject,
             InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
             BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
-            DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_SINGLELINE,
-            DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN, OUT_DEFAULT_PRECIS,
-            PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
+            DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_RTLREADING,
+            DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN,
+            OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
@@ -42,9 +42,9 @@ use windows::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
                 GetMessageW, GetParent, GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW,
                 MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-                SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-                TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-                CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
+                SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+                ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
+                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
                 MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
                 SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
                 WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE,
@@ -167,10 +167,11 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
         });
         let state_pointer = (&mut *state as *mut NativeState<'_>).cast();
         let result = (|| {
+            let owner_title = localized_window_title(state.settings.resolved_language);
             let owner = CreateWindowExW(
                 WS_EX_TOOLWINDOW,
                 OWNER_CLASS,
-                w!("Codex Usage Monitor"),
+                PCWSTR(owner_title.as_ptr()),
                 WS_POPUP,
                 0,
                 0,
@@ -334,7 +335,12 @@ unsafe extern "system" fn owner_proc(
                 return LRESULT(0);
             }
             let settings = (*pointer).backend.settings();
+            let language_changed =
+                settings.resolved_language != (*pointer).settings.resolved_language;
             (*pointer).settings = settings;
+            if language_changed {
+                update_window_titles(pointer);
+            }
             if (*pointer).taskbar_refresh_schedule.tick() {
                 if let Some(observer) = &(*pointer).taskbar_observer {
                     observer.refresh();
@@ -346,8 +352,9 @@ unsafe extern "system" fn owner_proc(
             let state = &*pointer;
             if state.settings.widget_visible {
                 let snapshot = state.backend.snapshot();
+                let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
                 for widget in &state.widgets {
-                    let _ = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value());
+                    let _ = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value(), rtl);
                 }
             }
             LRESULT(0)
@@ -478,8 +485,12 @@ unsafe extern "system" fn widget_proc(
             let hover = widget_slot(pointer, hwnd)
                 .map(|widget| (*widget).hover.value())
                 .unwrap_or_default();
+            let rtl = matches!(
+                (*pointer).settings.resolved_language,
+                crate::Language::Arabic
+            );
             validate_paint(hwnd);
-            let _ = paint_taskbar_widget(hwnd, &snapshot, hover);
+            let _ = paint_taskbar_widget(hwnd, &snapshot, hover, rtl);
             LRESULT(0)
         }
         WM_DPICHANGED => {
@@ -527,7 +538,10 @@ unsafe fn dispatch_menu(state_pointer: *mut NativeState<'_>, menu_id: u16) {
     }
     let settings = (*state_pointer).backend.dispatch(action);
     (*state_pointer).settings = settings;
+    update_window_titles(state_pointer);
     let _ = apply_window_policy(state_pointer);
+    let _ = refresh_tray(state_pointer, false);
+    update_tooltips(state_pointer);
 }
 
 /// 트레이 아이콘 삭제가 끝난 뒤에만 owner 창을 파괴하도록 비동기 종료를 시작합니다.
@@ -570,10 +584,11 @@ unsafe fn create_widget(
     // 작업표시줄 위젯의 기본 논리 크기. 실제 물리 크기는 작업표시줄 부착 시 보정됩니다.
     let width = logical_to_physical(TASKBAR_WIDTH_LOGICAL, 96);
     let height = logical_to_physical(48, 96);
+    let widget_title = localized_window_title((*state_pointer).settings.resolved_language);
     let widget = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         WIDGET_CLASS,
-        w!("Codex Usage Monitor"),
+        PCWSTR(widget_title.as_ptr()),
         WS_POPUP | WS_CLIPSIBLINGS,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
@@ -763,9 +778,12 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         reposition_widgets(&(*state_pointer).widgets, &targets);
         let state = &*state_pointer;
         let snapshot = state.backend.snapshot();
+        let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
         for widget in &state.widgets {
             let _ = ShowWindow(widget.hwnd, SW_SHOWNA);
-            if let Err(error) = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value()) {
+            if let Err(error) =
+                paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value(), rtl)
+            {
                 log_taskbar_render_error("compose", &error);
             }
         }
@@ -773,11 +791,15 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
     }
     destroy_all_widgets(state_pointer);
     let snapshot = (*state_pointer).backend.snapshot();
+    let rtl = matches!(
+        (*state_pointer).settings.resolved_language,
+        crate::Language::Arabic
+    );
     for target in targets {
         match create_widget(state_pointer, target) {
             Ok(widget) => {
                 let _ = ShowWindow(widget, SW_SHOWNA);
-                if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0) {
+                if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0, rtl) {
                     log_taskbar_render_error("compose", &error);
                 }
             }
@@ -866,7 +888,12 @@ unsafe fn validate_paint(hwnd: HWND) {
     let _ = EndPaint(hwnd, &paint);
 }
 
-unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) -> io::Result<()> {
+unsafe fn paint_taskbar_widget(
+    hwnd: HWND,
+    view: &WidgetViewModel,
+    hover: u8,
+    rtl: bool,
+) -> io::Result<()> {
     let mut client = RECT::default();
     GetClientRect(hwnd, &mut client).map_err(win_error)?;
     let width = client.right - client.left;
@@ -940,6 +967,7 @@ unsafe fn paint_taskbar_widget(hwnd: HWND, view: &WidgetViewModel, hover: u8) ->
         dpi,
         view,
         palette,
+        rtl,
     );
     apply_glass_alpha(
         std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
@@ -1113,6 +1141,7 @@ unsafe fn paint_compact_taskbar_content(
     dpi: u32,
     view: &WidgetViewModel,
     palette: TaskbarPalette,
+    rtl: bool,
 ) {
     let width = client.right - client.left;
     let height = client.bottom - client.top;
@@ -1192,11 +1221,16 @@ unsafe fn paint_compact_taskbar_content(
         );
         let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
         let mut label = native_rect(label);
+        let alignment = if rtl {
+            DT_RIGHT | DT_RTLREADING
+        } else {
+            DT_LEFT
+        };
         draw_text(
             dc,
             &view.taskbar_label,
             &mut label,
-            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            alignment | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
             COLORREF(palette.label),
         );
         SelectObject(dc, old_font);
@@ -1298,6 +1332,24 @@ unsafe fn draw_text(
     let _ = SetTextColor(dc, color);
     let mut text: Vec<u16> = value.encode_utf16().collect();
     let _ = DrawTextW(dc, &mut text, rect, format);
+}
+
+fn localized_window_title(language: crate::Language) -> Vec<u16> {
+    crate::localized_text(crate::LocalizationKey::WindowTitle, language)
+        .encode_utf16()
+        .chain(Some(0))
+        .collect()
+}
+
+unsafe fn update_window_titles(state_pointer: *mut NativeState<'_>) {
+    let title = localized_window_title((*state_pointer).settings.resolved_language);
+    let title = PCWSTR(title.as_ptr());
+    if (*state_pointer).owner != HWND::default() {
+        let _ = SetWindowTextW((*state_pointer).owner, title);
+    }
+    for widget in &(*state_pointer).widgets {
+        let _ = SetWindowTextW(widget.hwnd, title);
+    }
 }
 
 const fn native_rect(rect: Rect) -> RECT {

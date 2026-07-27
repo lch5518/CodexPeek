@@ -1,6 +1,6 @@
 # Codex Usage Monitor
 
-[한국어 버전](README.ko.md)
+**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor is a small native Windows widget for checking your Codex usage at a glance.
 It shows the primary and secondary rate-limit windows in the taskbar, a floating widget, and the system tray.
@@ -13,7 +13,7 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 - Uses the installed Codex CLI's `app-server` interface instead of parsing authentication files.
 - Supports showing the widget on every taskbar or only on the primary monitor.
 - Falls back safely to a floating widget and tray icon when taskbar attachment is unavailable.
-- Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and Korean or English UI.
+- Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and localized UI.
 
 ## How it works
 
@@ -116,6 +116,8 @@ updates, uninstall behavior, diagnostics, and troubleshooting.
 Use the tray menu to refresh usage, choose a 1/5/10/15/30-minute refresh interval, and show or hide the widget.
 It also provides Windows startup, startup view, authentication refresh, automatic authentication refresh, language, and diagnostics settings.
 Choose **Widget: all monitors** or **Widget: primary monitor only** to control multi-monitor placement; the selection is remembered across restarts.
+
+By default, the UI language follows the Windows locale when it matches a supported language. You can also choose a language manually from the tray menu. Supported languages are Korean, English, Spanish, Brazilian Portuguese, Indonesian, Japanese, Hindi, German, French, Vietnamese, Turkish, and Arabic.
 
 The taskbar widget uses the Windows light/dark system theme for its text and lets the native taskbar material show through its background.
 

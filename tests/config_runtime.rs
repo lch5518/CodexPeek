@@ -52,19 +52,148 @@ fn settings_defaults_match_product_policy() {
 }
 
 #[test]
+fn language_preferences_round_trip_all_persisted_variants() {
+    let cases = [
+        (LanguagePreference::Auto, "auto"),
+        (LanguagePreference::Korean, "korean"),
+        (LanguagePreference::English, "english"),
+        (LanguagePreference::Spanish, "spanish"),
+        (LanguagePreference::PortugueseBrazil, "portuguese_brazil"),
+        (LanguagePreference::Indonesian, "indonesian"),
+        (LanguagePreference::Japanese, "japanese"),
+        (LanguagePreference::Hindi, "hindi"),
+        (LanguagePreference::German, "german"),
+        (LanguagePreference::French, "french"),
+        (LanguagePreference::Vietnamese, "vietnamese"),
+        (LanguagePreference::Turkish, "turkish"),
+        (LanguagePreference::Arabic, "arabic"),
+    ];
+    for (preference, persisted) in cases {
+        let root = test_root(persisted);
+        let store = SettingsStore::for_root(&root);
+        let settings = Settings {
+            language: preference,
+            ..Settings::default()
+        };
+
+        store.save(&settings).unwrap();
+        assert_eq!(store.load().unwrap().language, preference);
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["language"], persisted);
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn settings_without_show_remaining_field_loads_with_default() {
     let root = test_root("missing-show-remaining");
     fs::create_dir_all(&root).unwrap();
     fs::write(
         root.join("settings.json"),
-        r#"{"schema_version":1,"refresh_interval_minutes":5}"#,
+        r#"{
+  "schema_version": 1,
+  "refresh_interval_minutes": 5,
+  "widget_visible": true,
+  "taskbar_offset": 0,
+  "start_with_windows": false,
+  "startup_view": "widget",
+  "auto_auth_refresh": true,
+  "language": "auto",
+  "last_update_check_unix": null
+}"#,
     )
     .unwrap();
     let store = SettingsStore::for_root(&root);
 
+    assert!(store.inspect_validity().unwrap());
     let settings = store.load().unwrap();
     assert!(!settings.show_remaining_percent);
     assert_eq!(settings.taskbar_display_mode, TaskbarDisplayMode::All);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn settings_without_language_preserve_existing_preferences() {
+    let root = test_root("missing-language");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("settings.json"),
+        r#"{
+  "schema_version": 1,
+  "refresh_interval_minutes": 15,
+  "widget_visible": false,
+  "taskbar_offset": 24,
+  "taskbar_display_mode": "primary",
+  "start_with_windows": true,
+  "startup_view": "tray_only",
+  "auto_auth_refresh": false,
+  "last_update_check_unix": 1234,
+  "show_remaining_percent": true
+}"#,
+    )
+    .unwrap();
+    let store = SettingsStore::for_root(&root);
+
+    assert!(store.inspect_validity().unwrap());
+    let settings = store.load().unwrap();
+
+    assert_eq!(settings.language, LanguagePreference::Auto);
+    assert_eq!(settings.refresh_interval_minutes, 15);
+    assert!(!settings.widget_visible);
+    assert_eq!(settings.taskbar_offset, 24);
+    assert_eq!(settings.taskbar_display_mode, TaskbarDisplayMode::Primary);
+    assert!(settings.start_with_windows);
+    assert_eq!(settings.startup_view, StartupView::TrayOnly);
+    assert!(!settings.auto_auth_refresh);
+    assert_eq!(settings.last_update_check_unix, Some(1234));
+    assert!(settings.show_remaining_percent);
+    assert!(store.path().exists());
+    assert!(fs::read_dir(&root).unwrap().all(|entry| !entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("settings.corrupt-")));
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn invalid_language_is_backed_up_and_resets_to_defaults() {
+    let root = test_root("invalid-language");
+    fs::create_dir_all(&root).unwrap();
+    let invalid = r#"{
+  "schema_version": 1,
+  "refresh_interval_minutes": 5,
+  "widget_visible": true,
+  "taskbar_offset": 0,
+  "taskbar_display_mode": "all",
+  "start_with_windows": false,
+  "startup_view": "widget",
+  "auto_auth_refresh": true,
+  "language": "unsupported",
+  "last_update_check_unix": null,
+  "show_remaining_percent": false
+}"#;
+    fs::write(root.join("settings.json"), invalid).unwrap();
+    let store = SettingsStore::for_root(&root);
+
+    assert_eq!(store.load().unwrap(), Settings::default());
+    assert!(!store.path().exists());
+    let backup = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("settings.corrupt-")
+        })
+        .unwrap();
+    assert_eq!(fs::read_to_string(backup).unwrap(), invalid);
 
     let _ = fs::remove_dir_all(root);
 }
