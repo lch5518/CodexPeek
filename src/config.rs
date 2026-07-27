@@ -71,6 +71,7 @@ pub struct Settings {
     /// 자동 인증 갱신 허용 여부입니다.
     pub auto_auth_refresh: bool,
     /// 사용자 언어 선택입니다.
+    #[serde(default = "default_language_preference")]
     pub language: LanguagePreference,
     /// 마지막 업데이트 확인의 UNIX 초입니다.
     pub last_update_check_unix: Option<u64>,
@@ -79,6 +80,10 @@ pub struct Settings {
     /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
     #[serde(default)]
     pub show_remaining_percent: bool,
+}
+
+const fn default_language_preference() -> LanguagePreference {
+    LanguagePreference::Auto
 }
 
 impl Default for Settings {
@@ -92,7 +97,7 @@ impl Default for Settings {
             start_with_windows: false,
             startup_view: StartupView::Widget,
             auto_auth_refresh: true,
-            language: LanguagePreference::Auto,
+            language: default_language_preference(),
             last_update_check_unix: None,
             show_remaining_percent: false,
         }
