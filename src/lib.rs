@@ -16,7 +16,7 @@ pub use config::{
 pub use diagnostics::{
     inspect_settings_for_diagnostics, DiagnosticCode, DiagnosticLogger, SafeDiagnostic,
 };
-pub use domain::{CodexUsage, UsageLevel, UsageWindow, WindowKind};
+pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
 pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};

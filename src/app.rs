@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     codex::{locate_supported_cli, AppServerUsageProvider, UsageProvider},
-    domain::{reset_unavailable_label, ResetDateTime},
+    domain::{reset_credits_label, reset_unavailable_label, ResetDateTime},
     inspect_settings_for_diagnostics, localized_text,
     windows::{
         autostart::{set_autostart, WindowsRegistry},
@@ -21,8 +21,8 @@ use crate::{
         WidgetViewModel,
     },
     AsyncSettingsWriter, DiagnosticCode, DiagnosticLogger, Language, LanguagePreference,
-    LocalizationKey, PollSnapshot, PollingService, SafeDiagnostic, Settings, SettingsStore,
-    UpdateCheckIntent, UpdateCheckStart, UpdateChecker, UpdatePresentation,
+    LocalizationKey, PollSnapshot, PollingService, ResetCredits, SafeDiagnostic, Settings,
+    SettingsStore, UpdateCheckIntent, UpdateCheckStart, UpdateChecker, UpdatePresentation,
     UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError, UsageWindow,
 };
 
@@ -184,11 +184,16 @@ impl UiBackend for AppRuntime {
             .and_then(|usage| usage.secondary.as_ref())
             .map(|window| row_view(window, language, self.settings.show_remaining_percent));
         let weekly = secondary.as_ref().or(primary.as_ref());
+        let reset_credits_text = snapshot
+            .usage
+            .as_ref()
+            .and_then(|usage| reset_credits_text(usage.reset_credits.as_ref(), language));
         let taskbar = taskbar_copy(
             weekly,
             language,
             &status,
             self.settings.show_remaining_percent,
+            reset_credits_text.as_deref(),
         );
         let data_state = if snapshot.last_error.is_some() {
             WidgetDataState::Error
@@ -205,6 +210,7 @@ impl UiBackend for AppRuntime {
             is_stale: snapshot.is_stale,
             taskbar_label: taskbar.label,
             taskbar_tooltip: taskbar.tooltip,
+            reset_credits_text,
             data_state,
         }
     }
@@ -372,11 +378,25 @@ struct TaskbarCopy {
     tooltip: String,
 }
 
+/// 리셋권 정보를 현지화된 표시 문구로 변환합니다.
+///
+/// 만료 시각은 Windows 현지 시간대로 변환하여 표시하며, 변환에 실패하면 개수만 표시합니다.
+/// 개수가 0이거나 정보가 없으면 `None`을 반환합니다.
+fn reset_credits_text(credits: Option<&ResetCredits>, language: Language) -> Option<String> {
+    let credits = credits?;
+    let expiry_text = credits
+        .nearest_expiry
+        .and_then(|value| local_reset_time(value).ok())
+        .map(|datetime| datetime.localized_label(language));
+    reset_credits_label(credits.available_count, expiry_text.as_deref(), language)
+}
+
 fn taskbar_copy(
     row: Option<&UsageRowView>,
     language: Language,
     status: &str,
     show_remaining: bool,
+    reset_credits: Option<&str>,
 ) -> TaskbarCopy {
     let label = match (show_remaining, language) {
         (true, Language::Korean) => "남은 사용량",
@@ -385,9 +405,12 @@ fn taskbar_copy(
         (false, Language::English) => "Weekly usage",
     }
     .to_owned();
+    let reset_line = reset_credits
+        .map(|text| format!("\n{text}"))
+        .unwrap_or_default();
     let tooltip = match (row, language) {
         (Some(row), Language::Korean) => format!(
-            "Codex {} 사용량\n현재 사용량: {:.0}%\n남은 사용량: {:.0}%\n초기화 시각: {}\n상태: {} · {status}",
+            "Codex {} 사용량\n현재 사용량: {:.0}%\n남은 사용량: {:.0}%\n초기화 시각: {}{reset_line}\n상태: {} · {status}",
             row.label,
             row.used_percent,
             (100.0 - row.used_percent).max(0.0),
@@ -395,15 +418,15 @@ fn taskbar_copy(
             taskbar_risk_text(row.used_percent, language),
         ),
         (Some(row), Language::English) => format!(
-            "Codex {} usage\nCurrent usage: {:.0}%\nRemaining: {:.0}%\nReset at: {}\nStatus: {} · {status}",
+            "Codex {} usage\nCurrent usage: {:.0}%\nRemaining: {:.0}%\nReset at: {}{reset_line}\nStatus: {} · {status}",
             row.label,
             row.used_percent,
             (100.0 - row.used_percent).max(0.0),
             row.reset_text,
             taskbar_risk_text(row.used_percent, language),
         ),
-        (None, Language::Korean) => format!("Codex 사용량\n상태: {status}"),
-        (None, Language::English) => format!("Codex usage\nStatus: {status}"),
+        (None, Language::Korean) => format!("Codex 사용량{reset_line}\n상태: {status}"),
+        (None, Language::English) => format!("Codex usage{reset_line}\nStatus: {status}"),
     };
     TaskbarCopy { label, tooltip }
 }
@@ -653,7 +676,13 @@ mod tests {
             level: UsageLevel::Stable,
         };
 
-        let korean = taskbar_copy(Some(&korean_row), Language::Korean, "자동 갱신 중", false);
+        let korean = taskbar_copy(
+            Some(&korean_row),
+            Language::Korean,
+            "자동 갱신 중",
+            false,
+            None,
+        );
         assert_eq!(korean.label, "주간 사용량");
         assert!(korean.tooltip.starts_with("Codex 7일 사용량\n"));
         assert!(korean.tooltip.contains("현재 사용량: 8%"));
@@ -668,7 +697,13 @@ mod tests {
             reset_text: "2026-07-27 (Mon) 03:00".to_owned(),
             ..korean_row.clone()
         };
-        let english = taskbar_copy(Some(&english_row), Language::English, "Polling", false);
+        let english = taskbar_copy(
+            Some(&english_row),
+            Language::English,
+            "Polling",
+            false,
+            None,
+        );
         assert_eq!(english.label, "Weekly usage");
         assert!(english.tooltip.starts_with("Codex 7d usage\n"));
         assert!(english.tooltip.contains("Current usage: 8%"));
@@ -676,15 +711,57 @@ mod tests {
         assert!(english.tooltip.contains("Reset at: 2026-07-27 (Mon) 03:00"));
         assert!(english.tooltip.contains("Status: Healthy"));
 
-        let remaining = taskbar_copy(Some(&korean_row), Language::Korean, "자동 갱신 중", true);
+        let remaining = taskbar_copy(
+            Some(&korean_row),
+            Language::Korean,
+            "자동 갱신 중",
+            true,
+            None,
+        );
         assert_eq!(remaining.label, "남은 사용량");
         assert!(remaining.tooltip.contains("현재 사용량: 8%"));
         assert!(remaining.tooltip.contains("남은 사용량: 92%"));
 
-        let unavailable = taskbar_copy(None, Language::Korean, "정보 없음", false);
+        let unavailable = taskbar_copy(None, Language::Korean, "정보 없음", false, None);
         assert!(unavailable.tooltip.starts_with("Codex 사용량\n"));
-        let unavailable = taskbar_copy(None, Language::English, "Unavailable", false);
+        let unavailable = taskbar_copy(None, Language::English, "Unavailable", false, None);
         assert!(unavailable.tooltip.starts_with("Codex usage\n"));
+    }
+
+    #[test]
+    fn taskbar_copy_appends_reset_credits_line_to_tooltip() {
+        let row = UsageRowView {
+            label: "7d".to_owned(),
+            used_percent: 8.0,
+            display_percent: 8.0,
+            percent_text: "8%".to_owned(),
+            reset_text: "2026-07-27 (Mon) 03:00".to_owned(),
+            level: UsageLevel::Stable,
+        };
+
+        let korean = taskbar_copy(
+            Some(&row),
+            Language::Korean,
+            "자동 갱신 중",
+            false,
+            Some("Full reset 1개 (만료 2026-07-31 (목) 23:59)"),
+        );
+        assert!(korean
+            .tooltip
+            .contains("Full reset 1개 (만료 2026-07-31 (목) 23:59)"));
+        assert!(korean.tooltip.contains("상태: 안정"));
+
+        let english = taskbar_copy(
+            Some(&row),
+            Language::English,
+            "Polling",
+            false,
+            Some("Full reset: 1 (expires 2026-07-31 (Thu) 23:59)"),
+        );
+        assert!(english
+            .tooltip
+            .contains("Full reset: 1 (expires 2026-07-31 (Thu) 23:59)"));
+        assert!(english.tooltip.contains("Status: Healthy"));
     }
 
     #[test]
@@ -698,7 +775,7 @@ mod tests {
             level: UsageLevel::Limited,
         };
 
-        let copy = taskbar_copy(Some(&row), Language::English, "Critical", true);
+        let copy = taskbar_copy(Some(&row), Language::English, "Critical", true, None);
 
         assert!(copy.tooltip.contains("Remaining: 0%"));
         assert_eq!(row.used_percent, 125.0);

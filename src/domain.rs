@@ -183,6 +183,8 @@ pub struct CodexUsage {
     pub primary: Option<UsageWindow>,
     /// 긴 주기의 보조 사용량 창입니다.
     pub secondary: Option<UsageWindow>,
+    /// 사용 가능한 리셋권 정보입니다. 서버가 제공하지 않으면 `None`입니다.
+    pub reset_credits: Option<ResetCredits>,
     /// 사용량 정보를 성공적으로 가져온 시각입니다.
     pub fetched_at: SystemTime,
 }
@@ -218,6 +220,41 @@ fn reset_soon_label(language: Language) -> &'static str {
         Language::Korean => "곧 초기화",
         Language::English => "Reset soon",
     }
+}
+
+/// 사용량 제한 창을 완전히 초기화할 수 있는 리셋권 정보입니다.
+///
+/// 개수는 서버가 알려준 권위 있는 값이며, 만료 시각은 표시 지원용으로만 사용합니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResetCredits {
+    /// 사용 가능한 리셋권 개수입니다.
+    pub available_count: u32,
+    /// 보유 리셋권 중 가장 빠른 만료 시각입니다.
+    pub nearest_expiry: Option<SystemTime>,
+}
+
+/// 리셋권 개수와 현지화된 만료 문자열로 표시 문구를 만듭니다.
+///
+/// `expiry_text`는 이미 현지 시간대로 변환된 만료 표시 문자열입니다.
+/// 개수가 0이면 표시할 의미가 없으므로 `None`을 반환합니다.
+pub(crate) fn reset_credits_label(
+    available_count: u32,
+    expiry_text: Option<&str>,
+    language: Language,
+) -> Option<String> {
+    if available_count == 0 {
+        return None;
+    }
+    Some(match (language, expiry_text) {
+        (Language::Korean, Some(expiry)) => {
+            format!("Full reset {available_count}개 (만료 {expiry})")
+        }
+        (Language::Korean, None) => format!("Full reset {available_count}개"),
+        (Language::English, Some(expiry)) => {
+            format!("Full reset: {available_count} (expires {expiry})")
+        }
+        (Language::English, None) => format!("Full reset: {available_count}"),
+    })
 }
 
 fn format_remaining_duration(remaining: Duration, language: Language) -> String {
@@ -409,5 +446,34 @@ mod tests {
         assert!(ResetDateTime::new(2026, 7, 27, 7, 3, 4).is_none());
         assert!(ResetDateTime::new(2026, 7, 27, 1, 24, 4).is_none());
         assert!(ResetDateTime::new(2026, 7, 27, 1, 3, 60).is_none());
+    }
+
+    #[test]
+    fn reset_credits_label_formats_count_and_optional_expiry() {
+        assert_eq!(
+            super::reset_credits_label(1, Some("2026-07-31 (목) 23:59"), Language::Korean),
+            Some("Full reset 1개 (만료 2026-07-31 (목) 23:59)".to_owned())
+        );
+        assert_eq!(
+            super::reset_credits_label(1, None, Language::Korean),
+            Some("Full reset 1개".to_owned())
+        );
+        assert_eq!(
+            super::reset_credits_label(2, Some("2026-07-31 (Thu) 23:59"), Language::English),
+            Some("Full reset: 2 (expires 2026-07-31 (Thu) 23:59)".to_owned())
+        );
+        assert_eq!(
+            super::reset_credits_label(2, None, Language::English),
+            Some("Full reset: 2".to_owned())
+        );
+    }
+
+    #[test]
+    fn reset_credits_label_omits_zero_and_missing_counts() {
+        assert_eq!(
+            super::reset_credits_label(0, Some("2026-07-31"), Language::Korean),
+            None
+        );
+        assert_eq!(super::reset_credits_label(0, None, Language::English), None);
     }
 }

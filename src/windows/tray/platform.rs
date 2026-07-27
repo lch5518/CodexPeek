@@ -18,8 +18,9 @@ use windows::{
             },
             WindowsAndMessaging::{
                 AppendMenuW, CreateIcon, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
-                PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_SEPARATOR,
-                MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_NULL,
+                PostMessageW, SetForegroundWindow, TrackPopupMenu, HICON, MF_CHECKED, MF_DISABLED,
+                MF_GRAYED, MF_SEPARATOR, MF_STRING, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+                WM_APP, WM_NULL,
             },
         },
     },
@@ -217,10 +218,18 @@ impl TrayIcon {
         }
     }
 
-    pub(crate) unsafe fn show_menu(owner: HWND, settings: &UiSettings) -> Option<u16> {
+    pub(crate) unsafe fn show_menu(
+        owner: HWND,
+        settings: &UiSettings,
+        reset_credits_text: Option<&str>,
+    ) -> Option<u16> {
         let menu = CreatePopupMenu().ok()?;
         let ko = settings.resolved_language == Language::Korean;
         let result = (|| {
+            if let Some(text) = reset_credits_text {
+                add_info_banner(menu, text)?;
+                separator(menu)?;
+            }
             add(
                 menu,
                 MENU_REFRESH,
@@ -492,6 +501,24 @@ unsafe fn separator(menu: windows::Win32::UI::WindowsAndMessaging::HMENU) -> Opt
     AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null())
         .ok()
         .map(|_| ())
+}
+
+/// 클릭할 수 없는 정보 배너 항목을 메뉴에 추가합니다.
+///
+/// 명령 식별자로 0을 사용하므로 선택되어도 어떤 동작도 발생하지 않습니다.
+unsafe fn add_info_banner(
+    menu: windows::Win32::UI::WindowsAndMessaging::HMENU,
+    text: &str,
+) -> Option<()> {
+    let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    AppendMenuW(
+        menu,
+        MF_STRING | MF_DISABLED | MF_GRAYED,
+        0,
+        PCWSTR(wide.as_ptr()),
+    )
+    .ok()
+    .map(|_| ())
 }
 
 #[cfg(test)]

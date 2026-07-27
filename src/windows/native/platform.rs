@@ -365,13 +365,15 @@ unsafe extern "system" fn owner_proc(
         TRAY_CALLBACK => {
             let event = lparam.0 as u32 & 0xffff;
             if should_open_tray_menu(event) {
+                let snapshot = (*pointer).backend.snapshot();
                 let current_settings = (*pointer).backend.settings();
                 (*pointer).settings = current_settings;
                 let (owner, settings) = {
                     let state = &*pointer;
                     (state.owner, state.settings.clone())
                 };
-                let command = TrayIcon::show_menu(owner, &settings);
+                let command =
+                    TrayIcon::show_menu(owner, &settings, snapshot.reset_credits_text.as_deref());
                 if let Some(command) = command {
                     dispatch_menu(pointer, command);
                 }

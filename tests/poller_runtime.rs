@@ -22,6 +22,7 @@ fn usage(
         secondary: Some(
             UsageWindow::new(WindowKind::Secondary, 50.0, Some(10_080), secondary_reset).unwrap(),
         ),
+        reset_credits: None,
         fetched_at,
     }
 }

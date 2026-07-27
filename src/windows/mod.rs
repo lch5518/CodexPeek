@@ -290,6 +290,8 @@ pub struct WidgetViewModel {
     pub taskbar_label: String,
     /// 작업 표시줄에 연결할 상세 툴팁 문구입니다.
     pub taskbar_tooltip: String,
+    /// 트레이 메뉴와 툴팁에 표시할 리셋권 요약 문구입니다.
+    pub reset_credits_text: Option<String>,
     /// 작업 표시줄의 로딩·정상·오류 표현 상태입니다.
     pub data_state: WidgetDataState,
 }

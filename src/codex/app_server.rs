@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CodexUsage, UsageError, UsageWindow, WindowKind};
+use crate::{CodexUsage, ResetCredits, UsageError, UsageWindow, WindowKind};
 
 use super::{
     locator::locate_cli,
@@ -183,6 +183,13 @@ struct Request<'a, P: Serialize> {
     params: P,
 }
 
+#[derive(Serialize)]
+struct NoParamsRequest<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<u64>,
+    method: &'a str,
+}
+
 #[derive(Deserialize)]
 struct ResponseHeader {
     id: Option<u64>,
@@ -214,12 +221,34 @@ struct AccountDto {
 struct RateLimitsResult {
     #[serde(rename = "rateLimits")]
     rate_limits: RateLimitDto,
+    /// 사용량 제한 초기화 리셋권 정보입니다. 구버전 CLI는 이 필드를 제공하지 않을 수 있습니다.
+    #[serde(rename = "rateLimitResetCredits", default)]
+    reset_credits: Option<ResetCreditsDto>,
 }
 
 #[derive(Deserialize)]
 struct RateLimitDto {
     primary: Option<UsageWindowDto>,
     secondary: Option<UsageWindowDto>,
+}
+
+/// 리셋권 응답의 최상위 구조입니다.
+#[derive(Deserialize)]
+struct ResetCreditsDto {
+    /// 사용 가능한 리셋권 개수입니다.
+    #[serde(rename = "availableCount", default)]
+    available_count: u32,
+    /// 개별 리셋권 목록입니다. 만료 시각 확인에만 사용합니다.
+    #[serde(default)]
+    credits: Option<Vec<CreditDto>>,
+}
+
+/// 단일 리셋권 항목입니다. 표시에 필요한 만료 시각만 추출합니다.
+#[derive(Deserialize)]
+struct CreditDto {
+    /// UNIX epoch 기준 만료 시각(초)입니다.
+    #[serde(rename = "expiresAt")]
+    expires_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -334,14 +363,16 @@ fn read_rate_limits<T: JsonlTransport>(
 ) -> Result<CodexUsage, UsageError> {
     send_request(
         transport,
-        &Request {
+        &NoParamsRequest {
             id: Some(id),
             method: "account/rateLimits/read",
-            params: EmptyParams {},
         },
         deadline,
     )?;
-    let dto = receive_result::<_, RateLimitsResult>(transport, id, deadline)?.rate_limits;
+    let RateLimitsResult {
+        rate_limits: dto,
+        reset_credits,
+    } = receive_result::<_, RateLimitsResult>(transport, id, deadline)?;
     let primary = dto
         .primary
         .map(|window| into_usage_window(window, WindowKind::Primary))
@@ -356,6 +387,7 @@ fn read_rate_limits<T: JsonlTransport>(
     Ok(CodexUsage {
         primary,
         secondary,
+        reset_credits: reset_credits.and_then(into_reset_credits),
         fetched_at: SystemTime::now(),
     })
 }
@@ -368,9 +400,30 @@ fn into_usage_window(dto: UsageWindowDto, kind: WindowKind) -> Result<UsageWindo
     UsageWindow::new(kind, dto.used_percent, dto.window_duration_mins, resets_at)
 }
 
+/// DTO 리셋권 정보를 도메인 모델로 변환합니다.
+///
+/// 개수가 0이면 표시할 값이 없으므로 `None`을 반환합니다. 만료 시각은 보유 리셋권 중 가장 빠른
+/// 시각 하나만 보존하며, 음수이거나 변환할 수 없는 값은 무시합니다.
+fn into_reset_credits(dto: ResetCreditsDto) -> Option<ResetCredits> {
+    if dto.available_count == 0 {
+        return None;
+    }
+    let nearest_expiry = dto
+        .credits
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|credit| credit.expires_at.filter(|seconds| *seconds >= 0))
+        .filter_map(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds as u64)))
+        .min();
+    Some(ResetCredits {
+        available_count: dto.available_count,
+        nearest_expiry,
+    })
+}
+
 fn send_request<T: JsonlTransport, P: Serialize>(
     transport: &mut T,
-    request: &Request<'_, P>,
+    request: &P,
     deadline: Instant,
 ) -> Result<(), UsageError> {
     check_deadline(deadline)?;
@@ -539,7 +592,7 @@ mod tests {
         run_bounded_operation, run_jsonl_session, run_serialized_operation,
         DelayedRateLimitTransport, ScriptedTransport, MAX_JSONL_FRAME_BYTES,
     };
-    use crate::{CodexUsage, UsageError};
+    use crate::{CodexUsage, ResetCredits, UsageError};
 
     const INITIALIZE_REQUEST: &str = concat!(
         r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_usage_monitor","title":"Codex Usage Monitor","version":""#,
@@ -574,7 +627,7 @@ mod tests {
                 INITIALIZE_REQUEST,
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
-                r#"{"id":3,"method":"account/rateLimits/read","params":{}}"#,
+                r#"{"id":3,"method":"account/rateLimits/read"}"#,
             ]
         );
     }
@@ -742,6 +795,7 @@ mod tests {
                 Ok(CodexUsage {
                     primary: None,
                     secondary: None,
+                    reset_credits: None,
                     fetched_at: SystemTime::now(),
                 })
             })
@@ -794,7 +848,7 @@ mod tests {
                     INITIALIZE_REQUEST,
                     r#"{"method":"initialized","params":{}}"#,
                     r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
-                    r#"{"id":3,"method":"account/rateLimits/read","params":{}}"#,
+                    r#"{"id":3,"method":"account/rateLimits/read"}"#,
                 ]
             );
         }
@@ -819,10 +873,82 @@ mod tests {
                 INITIALIZE_REQUEST,
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
-                r#"{"id":3,"method":"account/rateLimits/read","params":{}}"#,
+                r#"{"id":3,"method":"account/rateLimits/read"}"#,
                 r#"{"id":4,"method":"account/read","params":{"refreshToken":true}}"#,
-                r#"{"id":5,"method":"account/rateLimits/read","params":{}}"#,
+                r#"{"id":5,"method":"account/rateLimits/read"}"#,
             ]
+        );
+    }
+
+    #[test]
+    fn session_parses_reset_credits_from_rate_limits_response() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":2,"credits":[{"expiresAt":100},{"expiresAt":50}]}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        let credits = usage.reset_credits.expect("reset credits parsed");
+        assert_eq!(credits.available_count, 2);
+        assert_eq!(
+            credits.nearest_expiry,
+            Some(UNIX_EPOCH + Duration::from_secs(50))
+        );
+    }
+
+    #[test]
+    fn session_treats_missing_reset_credits_as_none() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(usage.primary.unwrap().used_percent, 1.0);
+        assert_eq!(usage.reset_credits, None);
+    }
+
+    #[test]
+    fn session_treats_zero_available_count_as_none() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":0,"credits":[]}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(usage.reset_credits, None);
+    }
+
+    #[test]
+    fn session_keeps_reset_credit_count_when_expiry_details_are_null() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":1,"credits":null}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            usage.reset_credits,
+            Some(ResetCredits {
+                available_count: 1,
+                nearest_expiry: None,
+            })
+        );
+    }
+
+    #[test]
+    fn session_ignores_negative_and_missing_expiry_in_reset_credits() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":1,"credits":[{"expiresAt":-5},{},{"expiresAt":200}]}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        let credits = usage.reset_credits.expect("reset credits parsed");
+        assert_eq!(credits.available_count, 1);
+        assert_eq!(
+            credits.nearest_expiry,
+            Some(UNIX_EPOCH + Duration::from_secs(200))
         );
     }
 
