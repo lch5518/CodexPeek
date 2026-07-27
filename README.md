@@ -5,7 +5,7 @@
 Codex Usage Monitor is a small native Windows widget for checking your Codex usage at a glance.
 It shows the primary and secondary rate-limit windows in the taskbar, a floating widget, and the system tray.
 
-![Codex Usage Monitor taskbar widget](docs/images/taskbar-widget.png)
+![Codex Usage Monitor taskbar widget](docs/images/taskbar-widget-en.png)
 
 ## Highlights
 
