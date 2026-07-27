@@ -26,17 +26,7 @@ use windows::{
     },
 };
 
-use crate::{
-    localized_text, Language, LanguagePreference, LocalizationKey, StartupView, TaskbarDisplayMode,
-};
-
-use super::super::{
-    UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS,
-    MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
-    MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_LOGIN,
-    MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
-    MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
-};
+use super::{super::UiSettings, TrayMenuEntry};
 
 pub(crate) const TRAY_CALLBACK: u32 = WM_APP + 1;
 const ICON_ID: u32 = 1;
@@ -226,176 +216,19 @@ impl TrayIcon {
         reset_credits_text: Option<&str>,
     ) -> Option<u16> {
         let menu = CreatePopupMenu().ok()?;
-        let ko = settings.resolved_language == Language::Korean;
         let result = (|| {
             if let Some(text) = reset_credits_text {
                 add_info_banner(menu, text)?;
                 separator(menu)?;
             }
-            if settings.login_required {
-                add(
-                    menu,
-                    MENU_LOGIN,
-                    localized_text(LocalizationKey::MenuLogin, settings.resolved_language),
-                    false,
-                )?;
-            }
-            add(
-                menu,
-                MENU_REFRESH,
-                if ko { "지금 갱신" } else { "Refresh now" },
-                false,
-            )?;
-            separator(menu)?;
-            for (id, minutes) in [
-                (MENU_INTERVAL_1, 1),
-                (MENU_INTERVAL_5, 5),
-                (MENU_INTERVAL_10, 10),
-                (MENU_INTERVAL_15, 15),
-                (MENU_INTERVAL_30, 30),
-            ] {
-                add(
-                    menu,
-                    id,
-                    &if ko {
-                        format!("갱신 간격: {minutes}분")
-                    } else {
-                        format!("Refresh interval: {minutes} min")
-                    },
-                    settings.refresh_interval_minutes == minutes,
-                )?;
-            }
-            separator(menu)?;
-            add(
-                menu,
-                MENU_AUTOSTART,
-                if ko {
-                    "Windows 시작 시 실행"
-                } else {
-                    "Start with Windows"
-                },
-                settings.start_with_windows,
-            )?;
-            add(
-                menu,
-                MENU_STARTUP_WIDGET,
-                if ko {
-                    "시작: 위젯 표시"
-                } else {
-                    "Startup: show widget"
-                },
-                settings.startup_view == StartupView::Widget,
-            )?;
-            add(
-                menu,
-                MENU_STARTUP_TRAY,
-                if ko {
-                    "시작: 트레이만"
-                } else {
-                    "Startup: tray only"
-                },
-                settings.startup_view == StartupView::TrayOnly,
-            )?;
-            if !settings.login_required {
-                add(
-                    menu,
-                    MENU_AUTH_REFRESH,
-                    if ko {
-                        "인증 갱신"
-                    } else {
-                        "Refresh authentication"
-                    },
-                    false,
-                )?;
-            }
-            add(
-                menu,
-                MENU_AUTO_AUTH_REFRESH,
-                if ko {
-                    "자동 인증 갱신"
-                } else {
-                    "Automatic authentication refresh"
-                },
-                settings.auto_auth_refresh,
-            )?;
-            add(
-                menu,
-                MENU_LANGUAGE_AUTO,
-                super::language_menu_label(LanguagePreference::Auto, settings.resolved_language),
-                settings.language == LanguagePreference::Auto,
-            )?;
-            add(
-                menu,
-                MENU_LANGUAGE_KOREAN,
-                super::language_menu_label(LanguagePreference::Korean, settings.resolved_language),
-                settings.language == LanguagePreference::Korean,
-            )?;
-            add(
-                menu,
-                MENU_LANGUAGE_ENGLISH,
-                super::language_menu_label(LanguagePreference::English, settings.resolved_language),
-                settings.language == LanguagePreference::English,
-            )?;
-            add(
-                menu,
-                MENU_SHOW_REMAINING,
-                super::usage_mode_menu_text(
-                    settings.show_remaining_percent,
-                    settings.resolved_language,
-                ),
-                false,
-            )?;
-            separator(menu)?;
-            add(
-                menu,
-                MENU_DIAGNOSTICS,
-                if ko { "진단" } else { "Diagnostics" },
-                false,
-            )?;
-            add(
-                menu,
-                MENU_UPDATE_CHECK,
-                super::update_menu_text(settings.update_status, settings.resolved_language),
-                false,
-            )?;
-            add(
-                menu,
-                MENU_WIDGET_VISIBLE,
-                if settings.widget_visible {
-                    if ko {
-                        "위젯 숨기기"
-                    } else {
-                        "Hide widget"
+            for entry in super::tray_menu_entries(settings) {
+                match entry {
+                    TrayMenuEntry::Command(command) => {
+                        add(menu, command.id, &command.label, command.checked)?;
                     }
-                } else if ko {
-                    "위젯 표시"
-                } else {
-                    "Show widget"
-                },
-                settings.widget_visible,
-            )?;
-            add(
-                menu,
-                MENU_TASKBAR_ALL,
-                if ko {
-                    "위젯: 모든 모니터"
-                } else {
-                    "Widget: all monitors"
-                },
-                settings.taskbar_display_mode == TaskbarDisplayMode::All,
-            )?;
-            add(
-                menu,
-                MENU_TASKBAR_PRIMARY,
-                if ko {
-                    "위젯: 주 모니터만"
-                } else {
-                    "Widget: primary monitor only"
-                },
-                settings.taskbar_display_mode == TaskbarDisplayMode::Primary,
-            )?;
-            separator(menu)?;
-            add(menu, MENU_EXIT, if ko { "종료" } else { "Exit" }, false)?;
+                    TrayMenuEntry::Separator => separator(menu)?,
+                }
+            }
             let mut point = POINT::default();
             GetCursorPos(&mut point).ok()?;
             let _ = SetForegroundWindow(owner);
