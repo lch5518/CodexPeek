@@ -448,6 +448,7 @@ mod tests {
             taskbar_display_mode: TaskbarDisplayMode::All,
             update_status: UpdatePresentationStatus::Idle,
             show_remaining_percent: false,
+            login_required: false,
         }
     }
 

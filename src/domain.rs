@@ -294,6 +294,56 @@ pub(crate) fn reset_credits_label(
             format!("Full reset: {available_count} (expires {expiry})")
         }
         (Language::English, None) => format!("Full reset: {available_count}"),
+        (Language::Spanish, Some(expiry)) => {
+            format!("Restablecimiento completo: {available_count} (vence {expiry})")
+        }
+        (Language::Spanish, None) => {
+            format!("Restablecimiento completo: {available_count}")
+        }
+        (Language::PortugueseBrazil, Some(expiry)) => {
+            format!("Redefinição completa: {available_count} (expira em {expiry})")
+        }
+        (Language::PortugueseBrazil, None) => {
+            format!("Redefinição completa: {available_count}")
+        }
+        (Language::Indonesian, Some(expiry)) => {
+            format!("Reset penuh: {available_count} (kedaluwarsa {expiry})")
+        }
+        (Language::Indonesian, None) => format!("Reset penuh: {available_count}"),
+        (Language::Japanese, Some(expiry)) => {
+            format!("フルリセット: {available_count}（有効期限 {expiry}）")
+        }
+        (Language::Japanese, None) => format!("フルリセット: {available_count}"),
+        (Language::Hindi, Some(expiry)) => {
+            format!("पूर्ण रीसेट: {available_count} (समाप्ति {expiry})")
+        }
+        (Language::Hindi, None) => format!("पूर्ण रीसेट: {available_count}"),
+        (Language::German, Some(expiry)) => {
+            format!("Vollständige Zurücksetzung: {available_count} (läuft am {expiry} ab)")
+        }
+        (Language::German, None) => {
+            format!("Vollständige Zurücksetzung: {available_count}")
+        }
+        (Language::French, Some(expiry)) => {
+            format!("Réinitialisation complète : {available_count} (expire le {expiry})")
+        }
+        (Language::French, None) => {
+            format!("Réinitialisation complète : {available_count}")
+        }
+        (Language::Vietnamese, Some(expiry)) => {
+            format!("Đặt lại toàn bộ: {available_count} (hết hạn {expiry})")
+        }
+        (Language::Vietnamese, None) => {
+            format!("Đặt lại toàn bộ: {available_count}")
+        }
+        (Language::Turkish, Some(expiry)) => {
+            format!("Tam sıfırlama: {available_count} (sona erme {expiry})")
+        }
+        (Language::Turkish, None) => format!("Tam sıfırlama: {available_count}"),
+        (Language::Arabic, Some(expiry)) => {
+            format!("إعادة ضبط كاملة: {available_count} (تنتهي في {expiry})")
+        }
+        (Language::Arabic, None) => format!("إعادة ضبط كاملة: {available_count}"),
     })
 }
 
@@ -707,6 +757,20 @@ mod tests {
             super::reset_credits_label(2, None, Language::English),
             Some("Full reset: 2".to_owned())
         );
+        for &language in Language::ALL {
+            let with_expiry =
+                super::reset_credits_label(2, Some("2026-07-31 23:59"), language).unwrap();
+            let without_expiry = super::reset_credits_label(2, None, language).unwrap();
+            assert!(with_expiry.contains('2'), "{language:?}: {with_expiry}");
+            assert!(
+                with_expiry.contains("2026-07-31 23:59"),
+                "{language:?}: {with_expiry}"
+            );
+            assert!(
+                without_expiry.contains('2'),
+                "{language:?}: {without_expiry}"
+            );
+        }
     }
 
     #[test]
