@@ -4,7 +4,10 @@ use std::{
     ffi::OsString,
     io,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -55,18 +58,23 @@ struct AppRuntime {
     logger: DiagnosticLogger,
     settings: Settings,
     poller: PollingService,
+    usage_provider: Arc<AppServerUsageProvider>,
+    login_refresh_pending: Arc<AtomicBool>,
     startup_hidden: bool,
     update_presentation: UpdatePresentation,
 }
 
 impl AppRuntime {
     fn new(store: SettingsStore, settings: Settings, startup_hidden: bool) -> io::Result<Self> {
-        let poller = start_poller(&settings)?;
+        let usage_provider = Arc::new(AppServerUsageProvider::new());
+        let poller = start_poller(&settings, Arc::clone(&usage_provider))?;
         Ok(Self {
             settings_writer: AsyncSettingsWriter::start(store),
             logger: DiagnosticLogger::new(),
             settings,
             poller,
+            usage_provider,
+            login_refresh_pending: Arc::new(AtomicBool::new(false)),
             startup_hidden,
             update_presentation: UpdatePresentation::default(),
         })
@@ -147,11 +155,38 @@ impl AppRuntime {
             let _ = native::open_validated_tag_page(&update.release_url);
         }
     }
+
+    fn begin_chatgpt_login(&self) {
+        let provider = Arc::clone(&self.usage_provider);
+        let refresh_pending = Arc::clone(&self.login_refresh_pending);
+        thread::spawn(move || {
+            if provider
+                .login_with_chatgpt(native::open_validated_login_page)
+                .is_ok_and(|completed| completed)
+            {
+                refresh_pending.store(true, Ordering::Release);
+            }
+        });
+    }
+
+    fn consume_login_refresh_request(&self) {
+        if self.login_refresh_pending.swap(false, Ordering::AcqRel) {
+            self.poller.refresh_with_auth();
+        }
+    }
+
+    fn login_required(&self) -> bool {
+        matches!(
+            self.snapshot_inner().last_error,
+            Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+        )
+    }
 }
 
 impl UiBackend for AppRuntime {
     fn snapshot(&self) -> WidgetViewModel {
         self.consume_update_open_request();
+        self.consume_login_refresh_request();
         let snapshot = self.snapshot_inner();
         let language = effective_language(self.settings.language);
         let now = SystemTime::now();
@@ -217,10 +252,12 @@ impl UiBackend for AppRuntime {
 
     fn settings(&self) -> UiSettings {
         self.consume_update_open_request();
+        self.consume_login_refresh_request();
         ui_settings(
             &self.settings,
             self.startup_hidden,
             self.update_presentation.status(),
+            self.login_required(),
         )
     }
 
@@ -253,6 +290,7 @@ impl UiBackend for AppRuntime {
             UiAction::RefreshWithAuth => {
                 self.poller.refresh_with_auth();
             }
+            UiAction::Login => self.begin_chatgpt_login(),
             UiAction::ToggleAutoAuthRefresh => {
                 self.settings.auto_auth_refresh = !self.settings.auto_auth_refresh;
                 let _ = self
@@ -288,13 +326,17 @@ impl UiBackend for AppRuntime {
             &self.settings,
             self.startup_hidden,
             self.update_presentation.status(),
+            self.login_required(),
         )
     }
 }
 
-fn start_poller(settings: &Settings) -> io::Result<PollingService> {
+fn start_poller(
+    settings: &Settings,
+    provider: Arc<AppServerUsageProvider>,
+) -> io::Result<PollingService> {
     PollingService::start(
-        Arc::new(AppServerUsageProvider::new()),
+        provider,
         settings.refresh_interval_minutes,
         settings.auto_auth_refresh,
     )
@@ -305,6 +347,7 @@ fn ui_settings(
     settings: &Settings,
     startup_hidden: bool,
     update_status: UpdatePresentationStatus,
+    login_required: bool,
 ) -> UiSettings {
     UiSettings {
         widget_visible: settings.widget_visible && !startup_hidden,
@@ -318,6 +361,7 @@ fn ui_settings(
         taskbar_display_mode: settings.taskbar_display_mode,
         update_status,
         show_remaining_percent: settings.show_remaining_percent,
+        login_required,
     }
 }
 

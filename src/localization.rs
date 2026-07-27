@@ -32,6 +32,8 @@ pub enum LocalizationKey {
     MenuStartupTrayOnly,
     /// 인증 갱신 메뉴입니다.
     MenuAuthRefresh,
+    /// Codex 로그인 메뉴입니다.
+    MenuLogin,
     /// 언어 메뉴입니다.
     MenuLanguage,
     /// 진단 메뉴입니다.
@@ -96,6 +98,7 @@ impl LocalizationKey {
         Self::MenuStartupWidget,
         Self::MenuStartupTrayOnly,
         Self::MenuAuthRefresh,
+        Self::MenuLogin,
         Self::MenuLanguage,
         Self::MenuDiagnostics,
         Self::MenuUpdateCheck,
@@ -151,6 +154,8 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
         (LocalizationKey::MenuStartupTrayOnly, Language::English) => "Tray only",
         (LocalizationKey::MenuAuthRefresh, Language::Korean) => "자동 인증 갱신",
         (LocalizationKey::MenuAuthRefresh, Language::English) => "Automatic authentication refresh",
+        (LocalizationKey::MenuLogin, Language::Korean) => "Codex 로그인",
+        (LocalizationKey::MenuLogin, Language::English) => "Sign in to Codex",
         (LocalizationKey::MenuLanguage, Language::Korean) => "언어",
         (LocalizationKey::MenuLanguage, Language::English) => "Language",
         (LocalizationKey::MenuDiagnostics, Language::Korean) => "진단",

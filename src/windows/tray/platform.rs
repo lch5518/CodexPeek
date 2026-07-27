@@ -26,13 +26,15 @@ use windows::{
     },
 };
 
-use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode};
+use crate::{
+    localized_text, Language, LanguagePreference, LocalizationKey, StartupView, TaskbarDisplayMode,
+};
 
 use super::super::{
     UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS,
     MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
-    MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH,
-    MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
+    MENU_INTERVAL_5, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_LOGIN,
+    MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
     MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
 };
 
@@ -230,6 +232,14 @@ impl TrayIcon {
                 add_info_banner(menu, text)?;
                 separator(menu)?;
             }
+            if settings.login_required {
+                add(
+                    menu,
+                    MENU_LOGIN,
+                    localized_text(LocalizationKey::MenuLogin, settings.resolved_language),
+                    false,
+                )?;
+            }
             add(
                 menu,
                 MENU_REFRESH,
@@ -286,16 +296,18 @@ impl TrayIcon {
                 },
                 settings.startup_view == StartupView::TrayOnly,
             )?;
-            add(
-                menu,
-                MENU_AUTH_REFRESH,
-                if ko {
-                    "인증 갱신"
-                } else {
-                    "Refresh authentication"
-                },
-                false,
-            )?;
+            if !settings.login_required {
+                add(
+                    menu,
+                    MENU_AUTH_REFRESH,
+                    if ko {
+                        "인증 갱신"
+                    } else {
+                        "Refresh authentication"
+                    },
+                    false,
+                )?;
+            }
             add(
                 menu,
                 MENU_AUTO_AUTH_REFRESH,

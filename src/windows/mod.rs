@@ -31,6 +31,8 @@ pub const MENU_STARTUP_WIDGET: u16 = 170;
 pub const MENU_STARTUP_TRAY: u16 = 171;
 /// 강제 인증 갱신 메뉴 식별자입니다.
 pub const MENU_AUTH_REFRESH: u16 = 180;
+/// ChatGPT 로그인 시작 메뉴 식별자입니다.
+pub const MENU_LOGIN: u16 = 182;
 /// 자동 인증 갱신 메뉴 식별자입니다.
 pub const MENU_AUTO_AUTH_REFRESH: u16 = 181;
 /// 자동 언어 메뉴 식별자입니다.
@@ -199,6 +201,8 @@ pub enum UiAction {
     SetStartupView(StartupView),
     /// 인증 갱신을 강제한 뒤 사용량을 갱신합니다.
     RefreshWithAuth,
+    /// ChatGPT 브라우저 로그인을 시작합니다.
+    Login,
     /// 자동 인증 갱신 정책을 전환합니다.
     ToggleAutoAuthRefresh,
     /// 표시 언어를 변경합니다.
@@ -230,6 +234,7 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_STARTUP_WIDGET => UiAction::SetStartupView(StartupView::Widget),
         MENU_STARTUP_TRAY => UiAction::SetStartupView(StartupView::TrayOnly),
         MENU_AUTH_REFRESH => UiAction::RefreshWithAuth,
+        MENU_LOGIN => UiAction::Login,
         MENU_AUTO_AUTH_REFRESH => UiAction::ToggleAutoAuthRefresh,
         MENU_LANGUAGE_AUTO => UiAction::SetLanguage(LanguagePreference::Auto),
         MENU_LANGUAGE_KOREAN => UiAction::SetLanguage(LanguagePreference::Korean),
@@ -296,6 +301,27 @@ pub struct WidgetViewModel {
     pub data_state: WidgetDataState,
 }
 
+/// Codex app-server가 제공한 ChatGPT 브라우저 로그인 URL인지 확인합니다.
+///
+/// HTTPS와 허용된 OpenAI 도메인만 허용하며, URL의 쿼리 문자열은 로컬 콜백 정보를 포함할 수 있어
+/// 유지합니다. 인증 URL은 사용자에게 표시하거나 로그에 남기지 않아야 합니다.
+pub fn is_valid_chatgpt_login_url(url: &str) -> bool {
+    if url.len() > 8 * 1024 || url.contains(['\r', '\n', '\0']) {
+        return false;
+    }
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains(['@', ':']) {
+        return false;
+    }
+    matches!(
+        authority.to_ascii_lowercase().as_str(),
+        "chatgpt.com" | "auth.openai.com"
+    )
+}
+
 /// 메뉴 체크 상태와 창 정책에 필요한 비민감 설정 복사본입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiSettings {
@@ -321,6 +347,8 @@ pub struct UiSettings {
     pub update_status: crate::UpdatePresentationStatus,
     /// 위젯 숫자를 남은 한도(%)로 표시할지 여부입니다.
     pub show_remaining_percent: bool,
+    /// Codex 로그인이 필요해 트레이 메뉴에 로그인 동작을 표시할지 여부입니다.
+    pub login_required: bool,
 }
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.

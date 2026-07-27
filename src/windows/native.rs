@@ -61,6 +61,21 @@ pub(crate) fn open_validated_tag_page(url: &str) -> io::Result<()> {
     }
 }
 
+/// 검증된 ChatGPT 로그인 페이지를 기본 브라우저로 엽니다.
+///
+/// app-server가 제공한 OpenAI HTTPS 인증 URL만 허용하며, 그 외 URL은 브라우저로 전달하지 않습니다.
+pub(crate) fn open_validated_login_page(url: &str) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        unsafe { platform::open_validated_login_page(url) }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Err(io::Error::new(io::ErrorKind::Unsupported, "Windows only"))
+    }
+}
+
 /// Windows 사용자 UI 언어 식별자와 로캘 이름을 반환합니다.
 pub fn user_ui_language() -> (Option<u16>, Option<String>) {
     #[cfg(windows)]

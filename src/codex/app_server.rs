@@ -23,6 +23,7 @@ use super::{
 const CLIENT_NAME: &str = "codex_usage_monitor";
 const CLIENT_TITLE: &str = "Codex Usage Monitor";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
 
 /// Codex 사용량을 가져오는 동기식 제공자입니다.
@@ -52,6 +53,30 @@ impl AppServerUsageProvider {
         Self {
             in_flight: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// ChatGPT 브라우저 로그인 세션을 시작하고 완료 여부를 반환합니다.
+    ///
+    /// `open_browser`는 app-server가 제공한 인증 URL을 열어야 하며, 로그인 세션은 최대 5분 동안
+    /// 완료 알림을 기다립니다. 이 메서드는 호출 스레드에서 대기하므로 UI 이벤트 처리에서는 워커
+    /// 스레드로 실행해야 합니다.
+    pub(crate) fn login_with_chatgpt<F>(&self, open_browser: F) -> Result<bool, UsageError>
+    where
+        F: FnOnce(&str) -> std::io::Result<()>,
+    {
+        if self.in_flight.swap(true, Ordering::AcqRel) {
+            return Err(UsageError::RpcOverloaded);
+        }
+        let _reset = InFlightReset(Arc::clone(&self.in_flight));
+        let deadline = Instant::now() + LOGIN_TIMEOUT;
+        let candidate = locate_cli(deadline)?;
+        let mut guard = ProcessGuard::start(candidate, deadline)?;
+        let mut transport = ProcessJsonlTransport {
+            transport: guard.take_transport()?,
+        };
+        let result = login_with_chatgpt_until(&mut transport, deadline, open_browser);
+        guard.shutdown_until(deadline.min(Instant::now() + Duration::from_millis(250)));
+        result
     }
 }
 
@@ -134,15 +159,17 @@ where
         return Err(UsageError::RpcOverloaded);
     }
     run_bounded_operation(deadline, move || {
-        struct Reset(Arc<AtomicBool>);
-        impl Drop for Reset {
-            fn drop(&mut self) {
-                self.0.store(false, Ordering::Release);
-            }
-        }
-        let _reset = Reset(in_flight);
+        let _reset = InFlightReset(in_flight);
         operation()
     })
+}
+
+struct InFlightReset(Arc<AtomicBool>);
+
+impl Drop for InFlightReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 trait JsonlTransport {
@@ -276,21 +303,7 @@ fn run_jsonl_session_until<T: JsonlTransport>(
     deadline: Instant,
 ) -> Result<CodexUsage, UsageError> {
     let mut next_id = 1;
-    let initialize = Request {
-        id: Some(next_id),
-        method: "initialize",
-        params: InitializeParams {
-            client_info: ClientInfo {
-                name: CLIENT_NAME,
-                title: CLIENT_TITLE,
-                version: env!("CARGO_PKG_VERSION"),
-            },
-        },
-    };
-    send_request(transport, &initialize, deadline)?;
-    receive_result::<_, serde::de::IgnoredAny>(transport, next_id, deadline)?;
-    send_notification(transport, "initialized", EmptyParams {}, deadline)?;
-
+    initialize_session(transport, next_id, deadline)?;
     next_id += 1;
     if !read_account(transport, next_id, false, deadline)? {
         return Err(UsageError::NotLoggedIn);
@@ -309,6 +322,28 @@ fn run_jsonl_session_until<T: JsonlTransport>(
         }
         Err(error) => Err(error),
     }
+}
+
+fn initialize_session<T: JsonlTransport>(
+    transport: &mut T,
+    id: u64,
+    deadline: Instant,
+) -> Result<(), UsageError> {
+    let initialize = Request {
+        id: Some(id),
+        method: "initialize",
+        params: InitializeParams {
+            client_info: ClientInfo {
+                name: CLIENT_NAME,
+                title: CLIENT_TITLE,
+                version: env!("CARGO_PKG_VERSION"),
+            },
+        },
+    };
+    send_request(transport, &initialize, deadline)?;
+    receive_result::<_, serde::de::IgnoredAny>(transport, id, deadline)?;
+    send_notification(transport, "initialized", EmptyParams {}, deadline)?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -331,6 +366,89 @@ struct EmptyParams {}
 struct AccountParams {
     #[serde(rename = "refreshToken")]
     refresh_token: bool,
+}
+
+#[derive(Serialize)]
+struct ChatGptLoginParams {
+    #[serde(rename = "type")]
+    login_type: &'static str,
+}
+
+#[derive(Deserialize)]
+struct ChatGptLoginResult {
+    #[serde(rename = "type")]
+    login_type: String,
+    #[serde(rename = "loginId")]
+    login_id: String,
+    #[serde(rename = "authUrl")]
+    auth_url: String,
+}
+
+#[derive(Deserialize)]
+struct LoginCompletedNotification {
+    method: String,
+    params: LoginCompletedParams,
+}
+
+#[derive(Deserialize)]
+struct LoginCompletedParams {
+    #[serde(rename = "loginId")]
+    login_id: String,
+    success: bool,
+}
+
+fn login_with_chatgpt_until<T: JsonlTransport, F>(
+    transport: &mut T,
+    deadline: Instant,
+    open_browser: F,
+) -> Result<bool, UsageError>
+where
+    F: FnOnce(&str) -> std::io::Result<()>,
+{
+    let mut next_id = 1;
+    initialize_session(transport, next_id, deadline)?;
+    next_id += 1;
+    send_request(
+        transport,
+        &Request {
+            id: Some(next_id),
+            method: "account/login/start",
+            params: ChatGptLoginParams {
+                login_type: "chatgpt",
+            },
+        },
+        deadline,
+    )?;
+    let login = receive_result::<_, ChatGptLoginResult>(transport, next_id, deadline)?;
+    if login.login_type != "chatgpt" || login.login_id.is_empty() || login.auth_url.is_empty() {
+        return Err(UsageError::InvalidResponse);
+    }
+    open_browser(&login.auth_url).map_err(|_| UsageError::RequestFailed)?;
+    wait_for_login_completion(transport, &login.login_id, deadline)
+}
+
+fn wait_for_login_completion<T: JsonlTransport>(
+    transport: &mut T,
+    login_id: &str,
+    deadline: Instant,
+) -> Result<bool, UsageError> {
+    loop {
+        check_deadline(deadline)?;
+        let Some(line) = transport.read_line().map_err(map_transport_error)? else {
+            return Err(UsageError::InvalidResponse);
+        };
+        if line.len() >= MAX_JSONL_FRAME_BYTES {
+            return Err(UsageError::InvalidResponse);
+        }
+        let Ok(notification) = serde_json::from_str::<LoginCompletedNotification>(&line) else {
+            continue;
+        };
+        if notification.method == "account/login/completed"
+            && notification.params.login_id == login_id
+        {
+            return Ok(notification.params.success);
+        }
+    }
 }
 
 fn read_account<T: JsonlTransport>(
@@ -589,8 +707,9 @@ mod tests {
     };
 
     use super::{
-        run_bounded_operation, run_jsonl_session, run_serialized_operation,
-        DelayedRateLimitTransport, ScriptedTransport, MAX_JSONL_FRAME_BYTES,
+        login_with_chatgpt_until, run_bounded_operation, run_jsonl_session,
+        run_serialized_operation, DelayedRateLimitTransport, ScriptedTransport,
+        MAX_JSONL_FRAME_BYTES,
     };
     use crate::{CodexUsage, ResetCredits, UsageError};
 
@@ -729,6 +848,40 @@ mod tests {
                 INITIALIZE_REQUEST,
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn chatgpt_login_opens_the_returned_url_and_waits_for_completion() {
+        let mut transport = ScriptedTransport::new([
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"result":{"type":"chatgpt","loginId":"login-1","authUrl":"https://chatgpt.com/auth/login?state=opaque"}}"#,
+            r#"{"jsonrpc":"2.0","method":"account/login/completed","params":{"loginId":"login-1","success":true,"error":null}}"#,
+        ]);
+        let mut opened_url = None;
+
+        let completed = login_with_chatgpt_until(
+            &mut transport,
+            Instant::now() + Duration::from_secs(1),
+            |url| {
+                opened_url = Some(url.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(completed);
+        assert_eq!(
+            opened_url.as_deref(),
+            Some("https://chatgpt.com/auth/login?state=opaque")
+        );
+        assert_eq!(
+            transport.requests(),
+            [
+                INITIALIZE_REQUEST,
+                r#"{"method":"initialized","params":{}}"#,
+                r#"{"id":2,"method":"account/login/start","params":{"type":"chatgpt"}}"#,
             ]
         );
     }

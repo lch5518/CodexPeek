@@ -1345,6 +1345,20 @@ pub(super) unsafe fn open_validated_tag_page(url: &str) -> io::Result<()> {
             "unsafe release URL",
         ));
     }
+    open_browser_url(url)
+}
+
+pub(super) unsafe fn open_validated_login_page(url: &str) -> io::Result<()> {
+    if !super::super::is_valid_chatgpt_login_url(url) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsafe login URL",
+        ));
+    }
+    open_browser_url(url)
+}
+
+unsafe fn open_browser_url(url: &str) -> io::Result<()> {
     let url: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
     let result = ShellExecuteW(
         None,

@@ -6,7 +6,7 @@ use std::{
 use codex_usage_monitor::{
     windows::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
-        initial_widget_visible, is_exact_github_tag_page,
+        initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
         menu_action, resolve_windows_language, startup_plan,
         taskbar::{
@@ -23,7 +23,7 @@ use codex_usage_monitor::{
         LaunchMode, StartupStep, UiAction, MENU_AUTH_REFRESH, MENU_AUTOSTART,
         MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
         MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_AUTO,
-        MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_REFRESH, MENU_STARTUP_TRAY,
+        MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_KOREAN, MENU_LOGIN, MENU_REFRESH, MENU_STARTUP_TRAY,
         MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
         MENU_WIDGET_VISIBLE,
     },
@@ -81,6 +81,7 @@ fn every_menu_command_maps_to_a_typed_action() {
             UiAction::SetStartupView(StartupView::TrayOnly),
         ),
         (MENU_AUTH_REFRESH, UiAction::RefreshWithAuth),
+        (MENU_LOGIN, UiAction::Login),
         (MENU_AUTO_AUTH_REFRESH, UiAction::ToggleAutoAuthRefresh),
         (
             MENU_LANGUAGE_AUTO,
@@ -234,6 +235,25 @@ fn release_page_validation_requires_an_exact_github_tag_path() {
         "https://github.com@evil.example/openai/codex/releases/tag/v1.2.3",
     ] {
         assert!(!is_exact_github_tag_page(unsafe_url), "{unsafe_url}");
+    }
+}
+
+#[test]
+fn chatgpt_login_url_validation_allows_only_known_https_hosts() {
+    assert!(is_valid_chatgpt_login_url(
+        "https://chatgpt.com/auth/login?redirect_uri=http%3A%2F%2Flocalhost%3A1234"
+    ));
+    assert!(is_valid_chatgpt_login_url(
+        "https://auth.openai.com/authorize?state=opaque"
+    ));
+    for unsafe_url in [
+        "http://chatgpt.com/auth/login",
+        "https://chatgpt.com.evil.example/auth/login",
+        "https://chatgpt.com@evil.example/auth/login",
+        "https://chatgpt.com:443/auth/login",
+        "https://auth.openai.com\nhttps://evil.example",
+    ] {
+        assert!(!is_valid_chatgpt_login_url(unsafe_url), "{unsafe_url}");
     }
 }
 

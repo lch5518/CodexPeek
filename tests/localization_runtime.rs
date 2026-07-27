@@ -14,6 +14,7 @@ fn every_required_localization_key_has_nonempty_korean_and_english_text() {
         LocalizationKey::MenuStartupWidget,
         LocalizationKey::MenuStartupTrayOnly,
         LocalizationKey::MenuAuthRefresh,
+        LocalizationKey::MenuLogin,
         LocalizationKey::MenuLanguage,
         LocalizationKey::MenuDiagnostics,
         LocalizationKey::MenuUpdateCheck,
