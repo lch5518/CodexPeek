@@ -409,7 +409,7 @@ fn row_view_with_reset_time(
         label: window.period_label(language),
         used_percent: window.used_percent,
         display_percent,
-        percent_text: format!("{:.0}%", display_percent),
+        percent_text: format!("{display_percent:.0}%"),
         reset_text: reset_time
             .map(|value| value.localized_label(language))
             .unwrap_or_else(|| reset_unavailable_label(language).to_owned()),
