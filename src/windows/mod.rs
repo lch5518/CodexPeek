@@ -41,6 +41,26 @@ pub const MENU_LANGUAGE_AUTO: u16 = 200;
 pub const MENU_LANGUAGE_KOREAN: u16 = 201;
 /// 영어 메뉴 식별자입니다.
 pub const MENU_LANGUAGE_ENGLISH: u16 = 202;
+/// 스페인어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_SPANISH: u16 = 203;
+/// 브라질 포르투갈어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_PORTUGUESE_BRAZIL: u16 = 204;
+/// 인도네시아어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_INDONESIAN: u16 = 205;
+/// 일본어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_JAPANESE: u16 = 206;
+/// 힌디어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_HINDI: u16 = 207;
+/// 독일어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_GERMAN: u16 = 208;
+/// 프랑스어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_FRENCH: u16 = 209;
+/// 베트남어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_VIETNAMESE: u16 = 210;
+/// 터키어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_TURKISH: u16 = 211;
+/// 아랍어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_ARABIC: u16 = 212;
 /// 진단 메뉴 식별자입니다.
 pub const MENU_DIAGNOSTICS: u16 = 220;
 /// 업데이트 확인 메뉴 식별자입니다.
@@ -110,18 +130,61 @@ pub fn resolve_windows_language(
     match preference {
         LanguagePreference::Korean => Language::Korean,
         LanguagePreference::English => Language::English,
-        LanguagePreference::Auto => {
-            let korean_language_id = ui_language.is_some_and(|language| language & 0x03ff == 0x12);
-            let korean_locale = locale_name.is_some_and(|locale| {
-                let locale = locale.to_ascii_lowercase();
-                locale == "ko" || locale.starts_with("ko-") || locale.starts_with("ko_")
-            });
-            if korean_language_id || korean_locale {
-                Language::Korean
-            } else {
-                Language::English
-            }
+        LanguagePreference::Spanish => Language::Spanish,
+        LanguagePreference::PortugueseBrazil => Language::PortugueseBrazil,
+        LanguagePreference::Indonesian => Language::Indonesian,
+        LanguagePreference::Japanese => Language::Japanese,
+        LanguagePreference::Hindi => Language::Hindi,
+        LanguagePreference::German => Language::German,
+        LanguagePreference::French => Language::French,
+        LanguagePreference::Vietnamese => Language::Vietnamese,
+        LanguagePreference::Turkish => Language::Turkish,
+        LanguagePreference::Arabic => Language::Arabic,
+        LanguagePreference::Auto => ui_language
+            .and_then(language_from_langid)
+            .or_else(|| locale_name.and_then(language_from_locale_name))
+            .unwrap_or(Language::English),
+    }
+}
+
+fn language_from_langid(language: u16) -> Option<Language> {
+    let primary_language = language & 0x03ff;
+    match primary_language {
+        0x01 => Some(Language::Arabic),
+        0x07 => Some(Language::German),
+        0x09 => Some(Language::English),
+        0x0a => Some(Language::Spanish),
+        0x0c => Some(Language::French),
+        0x11 => Some(Language::Japanese),
+        0x12 => Some(Language::Korean),
+        0x16 if language == 0x0416 => Some(Language::PortugueseBrazil),
+        0x1f => Some(Language::Turkish),
+        0x21 => Some(Language::Indonesian),
+        0x2a => Some(Language::Vietnamese),
+        0x39 => Some(Language::Hindi),
+        _ => None,
+    }
+}
+
+fn language_from_locale_name(locale: &str) -> Option<Language> {
+    let locale = locale.to_ascii_lowercase().replace('_', "-");
+    let primary = locale.split('-').next().unwrap_or_default();
+    match primary {
+        "ar" => Some(Language::Arabic),
+        "de" => Some(Language::German),
+        "en" => Some(Language::English),
+        "es" => Some(Language::Spanish),
+        "fr" => Some(Language::French),
+        "hi" => Some(Language::Hindi),
+        "id" => Some(Language::Indonesian),
+        "ja" => Some(Language::Japanese),
+        "ko" => Some(Language::Korean),
+        "pt" if locale == "pt-br" || locale.starts_with("pt-br-") => {
+            Some(Language::PortugueseBrazil)
         }
+        "tr" => Some(Language::Turkish),
+        "vi" => Some(Language::Vietnamese),
+        _ => None,
     }
 }
 
@@ -239,6 +302,18 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_LANGUAGE_AUTO => UiAction::SetLanguage(LanguagePreference::Auto),
         MENU_LANGUAGE_KOREAN => UiAction::SetLanguage(LanguagePreference::Korean),
         MENU_LANGUAGE_ENGLISH => UiAction::SetLanguage(LanguagePreference::English),
+        MENU_LANGUAGE_SPANISH => UiAction::SetLanguage(LanguagePreference::Spanish),
+        MENU_LANGUAGE_PORTUGUESE_BRAZIL => {
+            UiAction::SetLanguage(LanguagePreference::PortugueseBrazil)
+        }
+        MENU_LANGUAGE_INDONESIAN => UiAction::SetLanguage(LanguagePreference::Indonesian),
+        MENU_LANGUAGE_JAPANESE => UiAction::SetLanguage(LanguagePreference::Japanese),
+        MENU_LANGUAGE_HINDI => UiAction::SetLanguage(LanguagePreference::Hindi),
+        MENU_LANGUAGE_GERMAN => UiAction::SetLanguage(LanguagePreference::German),
+        MENU_LANGUAGE_FRENCH => UiAction::SetLanguage(LanguagePreference::French),
+        MENU_LANGUAGE_VIETNAMESE => UiAction::SetLanguage(LanguagePreference::Vietnamese),
+        MENU_LANGUAGE_TURKISH => UiAction::SetLanguage(LanguagePreference::Turkish),
+        MENU_LANGUAGE_ARABIC => UiAction::SetLanguage(LanguagePreference::Arabic),
         MENU_DIAGNOSTICS => UiAction::RunDiagnostics,
         MENU_UPDATE_CHECK => UiAction::CheckForUpdates,
         MENU_WIDGET_VISIBLE => UiAction::ToggleWidget,

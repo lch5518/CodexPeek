@@ -203,10 +203,7 @@ impl UiBackend for AppRuntime {
         let last_success = snapshot
             .last_success_at
             .and_then(|time| now.duration_since(time).ok())
-            .map(|duration| match language {
-                Language::Korean => format!("마지막 성공 {}초 전", duration.as_secs()),
-                Language::English => format!("Last success {}s ago", duration.as_secs()),
-            })
+            .map(|duration| last_success_text(duration.as_secs(), language))
             .unwrap_or_default();
         let primary = snapshot
             .usage
@@ -442,13 +439,7 @@ fn taskbar_copy(
     show_remaining: bool,
     reset_credits: Option<&str>,
 ) -> TaskbarCopy {
-    let label = match (show_remaining, language) {
-        (true, Language::Korean) => "남은 사용량",
-        (true, Language::English) => "Remaining usage",
-        (false, Language::Korean) => "주간 사용량",
-        (false, Language::English) => "Weekly usage",
-    }
-    .to_owned();
+    let label = taskbar_label(show_remaining, language).to_owned();
     let reset_line = reset_credits
         .map(|text| format!("\n{text}"))
         .unwrap_or_default();
@@ -471,18 +462,213 @@ fn taskbar_copy(
         ),
         (None, Language::Korean) => format!("Codex 사용량{reset_line}\n상태: {status}"),
         (None, Language::English) => format!("Codex usage{reset_line}\nStatus: {status}"),
+        (Some(row), language) => format!(
+            "{} {}\n{}: {:.0}%\n{}: {:.0}%\n{}: {}{reset_line}\n{}: {} · {status}",
+            taskbar_usage_title_prefix(language),
+            row.label,
+            current_usage_label(language),
+            row.used_percent,
+            remaining_usage_label(language),
+            (100.0 - row.used_percent).max(0.0),
+            reset_at_label(language),
+            row.reset_text,
+            status_label(language),
+            taskbar_risk_text(row.used_percent, language),
+        ),
+        (None, language) => format!(
+            "{}{reset_line}\n{}: {status}",
+            codex_usage_title(language),
+            status_label(language)
+        ),
     };
     TaskbarCopy { label, tooltip }
+}
+
+fn last_success_text(seconds: u64, language: Language) -> String {
+    match language {
+        Language::Korean => format!("마지막 성공 {seconds}초 전"),
+        Language::English => format!("Last success {seconds}s ago"),
+        Language::Spanish => format!("Último éxito hace {seconds} s"),
+        Language::PortugueseBrazil => format!("Último sucesso há {seconds} s"),
+        Language::Indonesian => format!("Berhasil terakhir {seconds} dtk lalu"),
+        Language::Japanese => format!("最後の成功は{seconds}秒前"),
+        Language::Hindi => format!("अंतिम सफलता {seconds} सेकंड पहले"),
+        Language::German => format!("Letzter Erfolg vor {seconds} s"),
+        Language::French => format!("Dernier succès il y a {seconds} s"),
+        Language::Vietnamese => format!("Thành công lần cuối {seconds} giây trước"),
+        Language::Turkish => format!("Son başarılı deneme {seconds} sn önce"),
+        Language::Arabic => format!("آخر نجاح قبل {seconds} ثانية"),
+    }
+}
+
+const fn taskbar_label(show_remaining: bool, language: Language) -> &'static str {
+    match (show_remaining, language) {
+        (true, Language::Korean) => "남은 사용량",
+        (true, Language::English) => "Remaining usage",
+        (true, Language::Spanish) => "Uso restante",
+        (true, Language::PortugueseBrazil) => "Uso restante",
+        (true, Language::Indonesian) => "Sisa penggunaan",
+        (true, Language::Japanese) => "残り使用量",
+        (true, Language::Hindi) => "शेष उपयोग",
+        (true, Language::German) => "Verbleibende Nutzung",
+        (true, Language::French) => "Utilisation restante",
+        (true, Language::Vietnamese) => "Mức dùng còn lại",
+        (true, Language::Turkish) => "Kalan kullanım",
+        (true, Language::Arabic) => "الاستخدام المتبقي",
+        (false, Language::Korean) => "주간 사용량",
+        (false, Language::English) => "Weekly usage",
+        (false, Language::Spanish) => "Uso semanal",
+        (false, Language::PortugueseBrazil) => "Uso semanal",
+        (false, Language::Indonesian) => "Penggunaan mingguan",
+        (false, Language::Japanese) => "週間使用量",
+        (false, Language::Hindi) => "साप्ताहिक उपयोग",
+        (false, Language::German) => "Wöchentliche Nutzung",
+        (false, Language::French) => "Utilisation hebdomadaire",
+        (false, Language::Vietnamese) => "Mức dùng hằng tuần",
+        (false, Language::Turkish) => "Haftalık kullanım",
+        (false, Language::Arabic) => "الاستخدام الأسبوعي",
+    }
+}
+
+const fn codex_usage_title(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "Codex 사용량",
+        Language::English => "Codex usage",
+        Language::Spanish => "Uso de Codex",
+        Language::PortugueseBrazil => "Uso do Codex",
+        Language::Indonesian => "Penggunaan Codex",
+        Language::Japanese => "Codex 使用量",
+        Language::Hindi => "Codex उपयोग",
+        Language::German => "Codex-Nutzung",
+        Language::French => "Utilisation de Codex",
+        Language::Vietnamese => "Mức dùng Codex",
+        Language::Turkish => "Codex kullanımı",
+        Language::Arabic => "استخدام Codex",
+    }
+}
+
+const fn taskbar_usage_title_prefix(language: Language) -> &'static str {
+    match language {
+        Language::Spanish => "Uso de Codex",
+        Language::PortugueseBrazil => "Uso do Codex",
+        Language::Indonesian => "Penggunaan Codex",
+        Language::Japanese => "Codex 使用量",
+        Language::Hindi => "Codex उपयोग",
+        Language::German => "Codex-Nutzung",
+        Language::French => "Utilisation de Codex",
+        Language::Vietnamese => "Mức dùng Codex",
+        Language::Turkish => "Codex kullanımı",
+        Language::Arabic => "استخدام Codex",
+        Language::Korean | Language::English => codex_usage_title(language),
+    }
+}
+
+const fn current_usage_label(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "현재 사용량",
+        Language::English => "Current usage",
+        Language::Spanish => "Uso actual",
+        Language::PortugueseBrazil => "Uso atual",
+        Language::Indonesian => "Penggunaan saat ini",
+        Language::Japanese => "現在の使用量",
+        Language::Hindi => "वर्तमान उपयोग",
+        Language::German => "Aktuelle Nutzung",
+        Language::French => "Utilisation actuelle",
+        Language::Vietnamese => "Mức dùng hiện tại",
+        Language::Turkish => "Geçerli kullanım",
+        Language::Arabic => "الاستخدام الحالي",
+    }
+}
+
+const fn remaining_usage_label(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "남은 사용량",
+        Language::English => "Remaining",
+        Language::Spanish => "Restante",
+        Language::PortugueseBrazil => "Restante",
+        Language::Indonesian => "Tersisa",
+        Language::Japanese => "残り",
+        Language::Hindi => "शेष",
+        Language::German => "Verbleibend",
+        Language::French => "Restant",
+        Language::Vietnamese => "Còn lại",
+        Language::Turkish => "Kalan",
+        Language::Arabic => "المتبقي",
+    }
+}
+
+const fn reset_at_label(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "초기화 시각",
+        Language::English => "Reset at",
+        Language::Spanish => "Se restablece",
+        Language::PortugueseBrazil => "Redefine em",
+        Language::Indonesian => "Direset pada",
+        Language::Japanese => "リセット時刻",
+        Language::Hindi => "रीसेट समय",
+        Language::German => "Zurücksetzen um",
+        Language::French => "Réinitialisation à",
+        Language::Vietnamese => "Đặt lại lúc",
+        Language::Turkish => "Sıfırlanma zamanı",
+        Language::Arabic => "إعادة التعيين عند",
+    }
+}
+
+const fn status_label(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "상태",
+        Language::English => "Status",
+        Language::Spanish => "Estado",
+        Language::PortugueseBrazil => "Status",
+        Language::Indonesian => "Status",
+        Language::Japanese => "状態",
+        Language::Hindi => "स्थिति",
+        Language::German => "Status",
+        Language::French => "État",
+        Language::Vietnamese => "Trạng thái",
+        Language::Turkish => "Durum",
+        Language::Arabic => "الحالة",
+    }
 }
 
 fn taskbar_risk_text(percent: f64, language: Language) -> &'static str {
     match (percent, language) {
         (value, Language::Korean) if value >= 90.0 => "위험",
         (value, Language::English) if value >= 90.0 => "Critical",
+        (value, Language::Spanish) if value >= 90.0 => "Crítico",
+        (value, Language::PortugueseBrazil) if value >= 90.0 => "Crítico",
+        (value, Language::Indonesian) if value >= 90.0 => "Kritis",
+        (value, Language::Japanese) if value >= 90.0 => "危険",
+        (value, Language::Hindi) if value >= 90.0 => "गंभीर",
+        (value, Language::German) if value >= 90.0 => "Kritisch",
+        (value, Language::French) if value >= 90.0 => "Critique",
+        (value, Language::Vietnamese) if value >= 90.0 => "Nghiêm trọng",
+        (value, Language::Turkish) if value >= 90.0 => "Kritik",
+        (value, Language::Arabic) if value >= 90.0 => "حرج",
         (value, Language::Korean) if value >= 70.0 => "주의",
         (value, Language::English) if value >= 70.0 => "Warning",
+        (value, Language::Spanish) if value >= 70.0 => "Advertencia",
+        (value, Language::PortugueseBrazil) if value >= 70.0 => "Atenção",
+        (value, Language::Indonesian) if value >= 70.0 => "Peringatan",
+        (value, Language::Japanese) if value >= 70.0 => "注意",
+        (value, Language::Hindi) if value >= 70.0 => "चेतावनी",
+        (value, Language::German) if value >= 70.0 => "Warnung",
+        (value, Language::French) if value >= 70.0 => "Avertissement",
+        (value, Language::Vietnamese) if value >= 70.0 => "Cảnh báo",
+        (value, Language::Turkish) if value >= 70.0 => "Uyarı",
+        (value, Language::Arabic) if value >= 70.0 => "تحذير",
         (_, Language::Korean) => "안정",
         (_, Language::English) => "Healthy",
+        (_, Language::Spanish) => "Correcto",
+        (_, Language::PortugueseBrazil) => "Saudável",
+        (_, Language::Indonesian) => "Sehat",
+        (_, Language::Japanese) => "正常",
+        (_, Language::Hindi) => "ठीक",
+        (_, Language::German) => "In Ordnung",
+        (_, Language::French) => "Sain",
+        (_, Language::Vietnamese) => "Ổn định",
+        (_, Language::Turkish) => "Sağlıklı",
+        (_, Language::Arabic) => "سليم",
     }
 }
 
@@ -513,6 +699,7 @@ struct DiagnosticSummary {
 
 impl DiagnosticSummary {
     fn localized(&self, language: Language) -> (&'static str, String) {
+        let copy = diagnostic_copy(language);
         match language {
             Language::Korean => (
                 "Codex 사용량 모니터 진단",
@@ -542,7 +729,178 @@ impl DiagnosticSummary {
                     self.response_format,
                 ),
             ),
+            _ => (
+                copy.title,
+                format!(
+                    "{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}",
+                    copy.settings,
+                    pass_fail(self.settings_valid, language),
+                    copy.proxy,
+                    proxy_presence(self.proxy_present, language),
+                    copy.login_file,
+                    pass_fail(self.auth_exists, language),
+                    copy.taskbar,
+                    pass_fail(self.taskbar_available, language),
+                    copy.cli,
+                    diagnostic_status(self.cli, language),
+                    copy.app_server,
+                    diagnostic_status(self.app_server, language),
+                    copy.login,
+                    diagnostic_status(self.login, language),
+                    copy.response_format,
+                    diagnostic_status(self.response_format, language),
+                ),
+            ),
         }
+    }
+}
+
+struct DiagnosticCopy {
+    title: &'static str,
+    settings: &'static str,
+    proxy: &'static str,
+    login_file: &'static str,
+    taskbar: &'static str,
+    cli: &'static str,
+    app_server: &'static str,
+    login: &'static str,
+    response_format: &'static str,
+}
+
+const fn diagnostic_copy(language: Language) -> DiagnosticCopy {
+    match language {
+        Language::Korean => DiagnosticCopy {
+            title: "Codex 사용량 모니터 진단",
+            settings: "설정",
+            proxy: "프록시 설정",
+            login_file: "로그인 파일",
+            taskbar: "작업 표시줄 호환성",
+            cli: "Codex CLI",
+            app_server: "앱 서버",
+            login: "로그인",
+            response_format: "응답 형식",
+        },
+        Language::English => DiagnosticCopy {
+            title: "Codex Usage Monitor diagnostics",
+            settings: "Settings",
+            proxy: "Proxy configuration",
+            login_file: "Login file",
+            taskbar: "Taskbar compatibility",
+            cli: "Codex CLI",
+            app_server: "App server",
+            login: "Login",
+            response_format: "Response format",
+        },
+        Language::Spanish => DiagnosticCopy {
+            title: "Diagnóstico de Codex Usage Monitor",
+            settings: "Configuración",
+            proxy: "Configuración de proxy",
+            login_file: "Archivo de inicio de sesión",
+            taskbar: "Compatibilidad con la barra de tareas",
+            cli: "Codex CLI",
+            app_server: "Servidor de la app",
+            login: "Inicio de sesión",
+            response_format: "Formato de respuesta",
+        },
+        Language::PortugueseBrazil => DiagnosticCopy {
+            title: "Diagnóstico do Codex Usage Monitor",
+            settings: "Configurações",
+            proxy: "Configuração de proxy",
+            login_file: "Arquivo de login",
+            taskbar: "Compatibilidade com a barra de tarefas",
+            cli: "Codex CLI",
+            app_server: "Servidor do app",
+            login: "Login",
+            response_format: "Formato da resposta",
+        },
+        Language::Indonesian => DiagnosticCopy {
+            title: "Diagnostik Codex Usage Monitor",
+            settings: "Pengaturan",
+            proxy: "Konfigurasi proxy",
+            login_file: "File login",
+            taskbar: "Kompatibilitas taskbar",
+            cli: "Codex CLI",
+            app_server: "Server aplikasi",
+            login: "Login",
+            response_format: "Format respons",
+        },
+        Language::Japanese => DiagnosticCopy {
+            title: "Codex 使用量モニター診断",
+            settings: "設定",
+            proxy: "プロキシ設定",
+            login_file: "ログインファイル",
+            taskbar: "タスクバー互換性",
+            cli: "Codex CLI",
+            app_server: "アプリサーバー",
+            login: "ログイン",
+            response_format: "応答形式",
+        },
+        Language::Hindi => DiagnosticCopy {
+            title: "Codex Usage Monitor निदान",
+            settings: "सेटिंग्स",
+            proxy: "प्रॉक्सी कॉन्फ़िगरेशन",
+            login_file: "लॉगिन फ़ाइल",
+            taskbar: "टास्कबार संगतता",
+            cli: "Codex CLI",
+            app_server: "ऐप सर्वर",
+            login: "लॉगिन",
+            response_format: "प्रतिक्रिया प्रारूप",
+        },
+        Language::German => DiagnosticCopy {
+            title: "Codex Usage Monitor Diagnose",
+            settings: "Einstellungen",
+            proxy: "Proxy-Konfiguration",
+            login_file: "Anmeldedatei",
+            taskbar: "Taskleisten-Kompatibilität",
+            cli: "Codex CLI",
+            app_server: "App-Server",
+            login: "Anmeldung",
+            response_format: "Antwortformat",
+        },
+        Language::French => DiagnosticCopy {
+            title: "Diagnostic de Codex Usage Monitor",
+            settings: "Paramètres",
+            proxy: "Configuration du proxy",
+            login_file: "Fichier de connexion",
+            taskbar: "Compatibilité avec la barre des tâches",
+            cli: "Codex CLI",
+            app_server: "Serveur d'application",
+            login: "Connexion",
+            response_format: "Format de réponse",
+        },
+        Language::Vietnamese => DiagnosticCopy {
+            title: "Chẩn đoán Codex Usage Monitor",
+            settings: "Cài đặt",
+            proxy: "Cấu hình proxy",
+            login_file: "Tệp đăng nhập",
+            taskbar: "Tương thích thanh tác vụ",
+            cli: "Codex CLI",
+            app_server: "Máy chủ ứng dụng",
+            login: "Đăng nhập",
+            response_format: "Định dạng phản hồi",
+        },
+        Language::Turkish => DiagnosticCopy {
+            title: "Codex Usage Monitor tanılama",
+            settings: "Ayarlar",
+            proxy: "Proxy yapılandırması",
+            login_file: "Oturum açma dosyası",
+            taskbar: "Görev çubuğu uyumluluğu",
+            cli: "Codex CLI",
+            app_server: "Uygulama sunucusu",
+            login: "Oturum açma",
+            response_format: "Yanıt biçimi",
+        },
+        Language::Arabic => DiagnosticCopy {
+            title: "تشخيص Codex Usage Monitor",
+            settings: "الإعدادات",
+            proxy: "إعدادات الوكيل",
+            login_file: "ملف تسجيل الدخول",
+            taskbar: "توافق شريط المهام",
+            cli: "Codex CLI",
+            app_server: "خادم التطبيق",
+            login: "تسجيل الدخول",
+            response_format: "تنسيق الاستجابة",
+        },
     }
 }
 
@@ -552,6 +910,55 @@ const fn pass_fail(value: bool, language: Language) -> &'static str {
         (false, Language::Korean) => "확인 필요",
         (true, Language::English) => "OK",
         (false, Language::English) => "needs attention",
+        (true, Language::Spanish) => "correcto",
+        (false, Language::Spanish) => "requiere atención",
+        (true, Language::PortugueseBrazil) => "OK",
+        (false, Language::PortugueseBrazil) => "requer atenção",
+        (true, Language::Indonesian) => "OK",
+        (false, Language::Indonesian) => "perlu perhatian",
+        (true, Language::Japanese) => "正常",
+        (false, Language::Japanese) => "確認が必要",
+        (true, Language::Hindi) => "ठीक",
+        (false, Language::Hindi) => "ध्यान चाहिए",
+        (true, Language::German) => "OK",
+        (false, Language::German) => "Aufmerksamkeit erforderlich",
+        (true, Language::French) => "OK",
+        (false, Language::French) => "attention requise",
+        (true, Language::Vietnamese) => "OK",
+        (false, Language::Vietnamese) => "cần chú ý",
+        (true, Language::Turkish) => "Tamam",
+        (false, Language::Turkish) => "dikkat gerekiyor",
+        (true, Language::Arabic) => "حسنًا",
+        (false, Language::Arabic) => "يتطلب الانتباه",
+    }
+}
+
+const fn proxy_presence(present: bool, language: Language) -> &'static str {
+    match (present, language) {
+        (true, Language::Korean) => "감지됨",
+        (false, Language::Korean) => "없음",
+        (true, Language::English) => "detected",
+        (false, Language::English) => "none",
+        (true, Language::Spanish) => "detectada",
+        (false, Language::Spanish) => "ninguna",
+        (true, Language::PortugueseBrazil) => "detectada",
+        (false, Language::PortugueseBrazil) => "nenhuma",
+        (true, Language::Indonesian) => "terdeteksi",
+        (false, Language::Indonesian) => "tidak ada",
+        (true, Language::Japanese) => "検出済み",
+        (false, Language::Japanese) => "なし",
+        (true, Language::Hindi) => "मिला",
+        (false, Language::Hindi) => "कोई नहीं",
+        (true, Language::German) => "erkannt",
+        (false, Language::German) => "keine",
+        (true, Language::French) => "détectée",
+        (false, Language::French) => "aucune",
+        (true, Language::Vietnamese) => "đã phát hiện",
+        (false, Language::Vietnamese) => "không có",
+        (true, Language::Turkish) => "algılandı",
+        (false, Language::Turkish) => "yok",
+        (true, Language::Arabic) => "تم الاكتشاف",
+        (false, Language::Arabic) => "لا يوجد",
     }
 }
 
@@ -560,13 +967,115 @@ fn diagnostic_status(value: &'static str, language: Language) -> &'static str {
         return value;
     }
     match value {
-        "ok" | "started" => "정상",
-        "unavailable" => "사용할 수 없음",
-        "failed" | "request failed" => "실패",
-        "invalid" => "잘못됨",
-        "not checked" => "확인하지 못함",
-        "unknown" => "알 수 없음",
+        "ok" | "started" => diagnostic_ok(language),
+        "unavailable" => diagnostic_unavailable(language),
+        "failed" | "request failed" => diagnostic_failed(language),
+        "invalid" => diagnostic_invalid(language),
+        "not checked" => diagnostic_not_checked(language),
+        "unknown" => diagnostic_unknown(language),
         _ => value,
+    }
+}
+
+const fn diagnostic_ok(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "정상",
+        Language::English => "ok",
+        Language::Spanish => "correcto",
+        Language::PortugueseBrazil => "OK",
+        Language::Indonesian => "OK",
+        Language::Japanese => "正常",
+        Language::Hindi => "ठीक",
+        Language::German => "OK",
+        Language::French => "OK",
+        Language::Vietnamese => "OK",
+        Language::Turkish => "Tamam",
+        Language::Arabic => "حسنًا",
+    }
+}
+
+const fn diagnostic_unavailable(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "사용할 수 없음",
+        Language::English => "unavailable",
+        Language::Spanish => "no disponible",
+        Language::PortugueseBrazil => "indisponível",
+        Language::Indonesian => "tidak tersedia",
+        Language::Japanese => "利用不可",
+        Language::Hindi => "उपलब्ध नहीं",
+        Language::German => "nicht verfügbar",
+        Language::French => "indisponible",
+        Language::Vietnamese => "không khả dụng",
+        Language::Turkish => "kullanılamıyor",
+        Language::Arabic => "غير متاح",
+    }
+}
+
+const fn diagnostic_failed(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "실패",
+        Language::English => "failed",
+        Language::Spanish => "falló",
+        Language::PortugueseBrazil => "falhou",
+        Language::Indonesian => "gagal",
+        Language::Japanese => "失敗",
+        Language::Hindi => "विफल",
+        Language::German => "fehlgeschlagen",
+        Language::French => "échec",
+        Language::Vietnamese => "thất bại",
+        Language::Turkish => "başarısız",
+        Language::Arabic => "فشل",
+    }
+}
+
+const fn diagnostic_invalid(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "잘못됨",
+        Language::English => "invalid",
+        Language::Spanish => "no válido",
+        Language::PortugueseBrazil => "inválido",
+        Language::Indonesian => "tidak valid",
+        Language::Japanese => "無効",
+        Language::Hindi => "अमान्य",
+        Language::German => "ungültig",
+        Language::French => "invalide",
+        Language::Vietnamese => "không hợp lệ",
+        Language::Turkish => "geçersiz",
+        Language::Arabic => "غير صالح",
+    }
+}
+
+const fn diagnostic_not_checked(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "확인하지 못함",
+        Language::English => "not checked",
+        Language::Spanish => "no comprobado",
+        Language::PortugueseBrazil => "não verificado",
+        Language::Indonesian => "belum diperiksa",
+        Language::Japanese => "未確認",
+        Language::Hindi => "जाँचा नहीं गया",
+        Language::German => "nicht geprüft",
+        Language::French => "non vérifié",
+        Language::Vietnamese => "chưa kiểm tra",
+        Language::Turkish => "kontrol edilmedi",
+        Language::Arabic => "لم يتم الفحص",
+    }
+}
+
+const fn diagnostic_unknown(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "알 수 없음",
+        Language::English => "unknown",
+        Language::Spanish => "desconocido",
+        Language::PortugueseBrazil => "desconhecido",
+        Language::Indonesian => "tidak diketahui",
+        Language::Japanese => "不明",
+        Language::Hindi => "अज्ञात",
+        Language::German => "unbekannt",
+        Language::French => "inconnu",
+        Language::Vietnamese => "không xác định",
+        Language::Turkish => "bilinmiyor",
+        Language::Arabic => "غير معروف",
     }
 }
 
@@ -691,11 +1200,30 @@ fn safe_path_text(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{row_view, row_view_with_reset_time, status_with_update, taskbar_copy};
+    use super::{
+        diagnostic_status, last_success_text, pass_fail, proxy_presence, row_view,
+        row_view_with_reset_time, status_with_update, taskbar_copy, taskbar_risk_text,
+        DiagnosticSummary,
+    };
     use crate::{
         domain::ResetDateTime, windows::UsageRowView, Language, UpdatePresentationStatus,
         UsageLevel, UsageWindow, WindowKind,
     };
+
+    const ALL_LANGUAGES: [Language; 12] = [
+        Language::Korean,
+        Language::English,
+        Language::Spanish,
+        Language::PortugueseBrazil,
+        Language::Indonesian,
+        Language::Japanese,
+        Language::Hindi,
+        Language::German,
+        Language::French,
+        Language::Vietnamese,
+        Language::Turkish,
+        Language::Arabic,
+    ];
 
     #[test]
     fn update_status_is_appended_without_hiding_usage_error() {
@@ -707,6 +1235,96 @@ mod tests {
             ),
             "Usage request failed · Update check failed"
         );
+    }
+
+    #[test]
+    fn app_dynamic_copy_is_nonempty_for_every_language() {
+        let row = UsageRowView {
+            label: "7d".to_owned(),
+            used_percent: 73.0,
+            display_percent: 73.0,
+            percent_text: "73%".to_owned(),
+            reset_text: "2026-07-27 03:00".to_owned(),
+            level: UsageLevel::Caution,
+        };
+        let summary = DiagnosticSummary {
+            settings_valid: true,
+            proxy_present: true,
+            auth_exists: false,
+            taskbar_available: true,
+            cli: "ok",
+            app_server: "started",
+            login: "failed",
+            response_format: "invalid",
+        };
+
+        for language in ALL_LANGUAGES {
+            assert!(!last_success_text(42, language).trim().is_empty());
+            assert!(last_success_text(42, language).contains("42"));
+            assert!(!pass_fail(true, language).trim().is_empty());
+            assert!(!pass_fail(false, language).trim().is_empty());
+            assert!(!proxy_presence(true, language).trim().is_empty());
+            assert!(!proxy_presence(false, language).trim().is_empty());
+            for status in [
+                "ok",
+                "started",
+                "unavailable",
+                "failed",
+                "request failed",
+                "invalid",
+                "not checked",
+                "unknown",
+            ] {
+                assert!(!diagnostic_status(status, language).trim().is_empty());
+            }
+            assert!(!taskbar_risk_text(40.0, language).trim().is_empty());
+            assert!(!taskbar_risk_text(75.0, language).trim().is_empty());
+            assert!(!taskbar_risk_text(95.0, language).trim().is_empty());
+
+            let used = taskbar_copy(Some(&row), language, "status", false, None);
+            assert!(!used.label.trim().is_empty());
+            assert!(used.tooltip.contains("73%"));
+            assert!(used.tooltip.contains("27%"));
+            assert!(used.tooltip.contains("2026-07-27 03:00"));
+            assert!(used.tooltip.contains("status"));
+
+            let remaining = taskbar_copy(Some(&row), language, "status", true, None);
+            assert!(!remaining.label.trim().is_empty());
+            assert!(remaining.tooltip.contains("73%"));
+            assert!(remaining.tooltip.contains("27%"));
+
+            let unavailable = taskbar_copy(None, language, "status", false, None);
+            assert!(!unavailable.label.trim().is_empty());
+            assert!(unavailable.tooltip.contains("status"));
+
+            let reset_credits = "reset-credit-line";
+            let used_with_reset =
+                taskbar_copy(Some(&row), language, "status", false, Some(reset_credits));
+            assert!(used_with_reset.tooltip.contains(reset_credits));
+            let unavailable_with_reset =
+                taskbar_copy(None, language, "status", false, Some(reset_credits));
+            assert!(unavailable_with_reset.tooltip.contains(reset_credits));
+
+            let (title, body) = summary.localized(language);
+            assert!(!title.trim().is_empty());
+            assert!(!body.trim().is_empty());
+            assert!(body.contains("Codex CLI"));
+            assert!(body.lines().count() >= 8);
+        }
+    }
+
+    #[test]
+    fn app_dynamic_copy_has_representative_unicode_translations() {
+        assert_eq!(
+            last_success_text(5, Language::Spanish),
+            "Último éxito hace 5 s"
+        );
+        assert_eq!(
+            taskbar_copy(None, Language::Japanese, "自動更新中", false, None).tooltip,
+            "Codex 使用量\n状態: 自動更新中"
+        );
+        assert_eq!(taskbar_risk_text(95.0, Language::Arabic), "حرج");
+        assert_eq!(pass_fail(false, Language::Hindi), "ध्यान चाहिए");
     }
 
     #[test]

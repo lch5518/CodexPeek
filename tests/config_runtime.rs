@@ -52,6 +52,42 @@ fn settings_defaults_match_product_policy() {
 }
 
 #[test]
+fn language_preferences_round_trip_all_persisted_variants() {
+    let cases = [
+        (LanguagePreference::Auto, "auto"),
+        (LanguagePreference::Korean, "korean"),
+        (LanguagePreference::English, "english"),
+        (LanguagePreference::Spanish, "spanish"),
+        (LanguagePreference::PortugueseBrazil, "portuguese_brazil"),
+        (LanguagePreference::Indonesian, "indonesian"),
+        (LanguagePreference::Japanese, "japanese"),
+        (LanguagePreference::Hindi, "hindi"),
+        (LanguagePreference::German, "german"),
+        (LanguagePreference::French, "french"),
+        (LanguagePreference::Vietnamese, "vietnamese"),
+        (LanguagePreference::Turkish, "turkish"),
+        (LanguagePreference::Arabic, "arabic"),
+    ];
+    for (preference, persisted) in cases {
+        let root = test_root(persisted);
+        let store = SettingsStore::for_root(&root);
+        let settings = Settings {
+            language: preference,
+            ..Settings::default()
+        };
+
+        store.save(&settings).unwrap();
+        assert_eq!(store.load().unwrap().language, preference);
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["language"], persisted);
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
 fn settings_without_show_remaining_field_loads_with_default() {
     let root = test_root("missing-show-remaining");
     fs::create_dir_all(&root).unwrap();

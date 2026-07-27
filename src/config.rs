@@ -37,6 +37,26 @@ pub enum LanguagePreference {
     Korean,
     /// 영어로 표시합니다.
     English,
+    /// 스페인어로 표시합니다.
+    Spanish,
+    /// 브라질 포르투갈어로 표시합니다.
+    PortugueseBrazil,
+    /// 인도네시아어로 표시합니다.
+    Indonesian,
+    /// 일본어로 표시합니다.
+    Japanese,
+    /// 힌디어로 표시합니다.
+    Hindi,
+    /// 독일어로 표시합니다.
+    German,
+    /// 프랑스어로 표시합니다.
+    French,
+    /// 베트남어로 표시합니다.
+    Vietnamese,
+    /// 터키어로 표시합니다.
+    Turkish,
+    /// 아랍어로 표시합니다.
+    Arabic,
 }
 
 /// 다중 모니터에서 작업표시줄 위젯을 표시할 범위입니다.
