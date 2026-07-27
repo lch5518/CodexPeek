@@ -78,6 +78,8 @@ pub enum LocalizationKey {
     MenuAuthRefreshNow,
     /// 언어 메뉴입니다.
     MenuLanguage,
+    /// 언어 자동 선택 항목입니다.
+    MenuLanguageAutomaticChoice,
     /// 진단 메뉴입니다.
     MenuDiagnostics,
     /// 업데이트 확인 메뉴입니다.
@@ -98,6 +100,12 @@ pub enum LocalizationKey {
     MenuTaskbarAll,
     /// 주 모니터 작업표시줄 표시 메뉴입니다.
     MenuTaskbarPrimary,
+    /// 위젯 표시 위치 메뉴입니다.
+    MenuWidgetPlacement,
+    /// 모든 모니터 선택 항목입니다.
+    MenuTaskbarAllChoice,
+    /// 주 모니터 선택 항목입니다.
+    MenuTaskbarPrimaryChoice,
     /// 업데이트 가능 알림입니다.
     UpdateAvailable,
     /// 최신 상태 알림입니다.
@@ -152,6 +160,7 @@ impl LocalizationKey {
         Self::MenuLogin,
         Self::MenuAuthRefreshNow,
         Self::MenuLanguage,
+        Self::MenuLanguageAutomaticChoice,
         Self::MenuDiagnostics,
         Self::MenuUpdateCheck,
         Self::MenuSettings,
@@ -162,6 +171,9 @@ impl LocalizationKey {
         Self::MenuStartupTrayOnlyChoice,
         Self::MenuTaskbarAll,
         Self::MenuTaskbarPrimary,
+        Self::MenuWidgetPlacement,
+        Self::MenuTaskbarAllChoice,
+        Self::MenuTaskbarPrimaryChoice,
         Self::UpdateAvailable,
         Self::UpdateCurrent,
         Self::UpdateChecking,
@@ -198,38 +210,42 @@ impl LocalizationKey {
             Self::MenuLogin => 12,
             Self::MenuAuthRefreshNow => 13,
             Self::MenuLanguage => 14,
-            Self::MenuDiagnostics => 15,
-            Self::MenuUpdateCheck => 16,
-            Self::MenuSettings => 17,
-            Self::MenuExit => 18,
-            Self::MenuShowWidget => 19,
-            Self::MenuHideWidget => 20,
-            Self::MenuStartupWidgetChoice => 21,
-            Self::MenuStartupTrayOnlyChoice => 22,
-            Self::MenuTaskbarAll => 23,
-            Self::MenuTaskbarPrimary => 24,
-            Self::UpdateAvailable => 25,
-            Self::UpdateCurrent => 26,
-            Self::UpdateChecking => 27,
-            Self::UpdateFailed => 28,
-            Self::WindowTitle => 29,
-            Self::SettingsTitle => 30,
-            Self::DiagnosticsTitle => 31,
-            Self::PrimaryWindowLabel => 32,
-            Self::SecondaryWindowLabel => 33,
-            Self::DiagnosticCli => 34,
-            Self::DiagnosticRpc => 35,
-            Self::DiagnosticLogin => 36,
-            Self::DiagnosticSettings => 37,
-            Self::DiagnosticProxy => 38,
-            Self::DiagnosticTaskbar => 39,
-            Self::MenuShowRemaining => 40,
-            Self::MenuShowWeekly => 41,
+            Self::MenuLanguageAutomaticChoice => 15,
+            Self::MenuDiagnostics => 16,
+            Self::MenuUpdateCheck => 17,
+            Self::MenuSettings => 18,
+            Self::MenuExit => 19,
+            Self::MenuShowWidget => 20,
+            Self::MenuHideWidget => 21,
+            Self::MenuStartupWidgetChoice => 22,
+            Self::MenuStartupTrayOnlyChoice => 23,
+            Self::MenuTaskbarAll => 24,
+            Self::MenuTaskbarPrimary => 25,
+            Self::MenuWidgetPlacement => 26,
+            Self::MenuTaskbarAllChoice => 27,
+            Self::MenuTaskbarPrimaryChoice => 28,
+            Self::UpdateAvailable => 29,
+            Self::UpdateCurrent => 30,
+            Self::UpdateChecking => 31,
+            Self::UpdateFailed => 32,
+            Self::WindowTitle => 33,
+            Self::SettingsTitle => 34,
+            Self::DiagnosticsTitle => 35,
+            Self::PrimaryWindowLabel => 36,
+            Self::SecondaryWindowLabel => 37,
+            Self::DiagnosticCli => 38,
+            Self::DiagnosticRpc => 39,
+            Self::DiagnosticLogin => 40,
+            Self::DiagnosticSettings => 41,
+            Self::DiagnosticProxy => 42,
+            Self::DiagnosticTaskbar => 43,
+            Self::MenuShowRemaining => 44,
+            Self::MenuShowWeekly => 45,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 42;
+const LOCALIZATION_KEY_COUNT: usize = 46;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -247,6 +263,7 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex 로그인",
     "인증 갱신",
     "언어",
+    "자동",
     "진단",
     "업데이트 확인",
     "설정",
@@ -257,6 +274,9 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "시작: 트레이만",
     "위젯: 모든 모니터",
     "위젯: 주 모니터만",
+    "위젯 위치",
+    "모든 모니터",
+    "주 모니터만",
     "새 업데이트를 사용할 수 있습니다",
     "최신 버전입니다",
     "업데이트를 확인하는 중입니다",
@@ -292,6 +312,7 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Sign in to Codex",
     "Refresh authentication",
     "Language",
+    "Automatic",
     "Diagnostics",
     "Check for updates",
     "Settings",
@@ -302,6 +323,9 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Startup: tray only",
     "Widget: all monitors",
     "Widget: primary monitor only",
+    "Widget placement",
+    "All monitors",
+    "Primary monitor only",
     "An update is available",
     "You are up to date",
     "Checking for updates",
@@ -337,6 +361,7 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Iniciar sesión en Codex",
     "Actualizar autenticación",
     "Idioma",
+    "Automático",
     "Diagnóstico",
     "Buscar actualizaciones",
     "Configuración",
@@ -347,6 +372,9 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Inicio: solo bandeja",
     "Widget: todos los monitores",
     "Widget: solo monitor principal",
+    "Ubicación del widget",
+    "Todos los monitores",
+    "Solo monitor principal",
     "Hay una actualización disponible",
     "Tienes la versión más reciente",
     "Buscando actualizaciones",
@@ -382,6 +410,7 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Entrar no Codex",
     "Atualizar autenticação",
     "Idioma",
+    "Automático",
     "Diagnóstico",
     "Verificar atualizações",
     "Configurações",
@@ -392,6 +421,9 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Inicialização: somente bandeja",
     "Widget: todos os monitores",
     "Widget: somente monitor principal",
+    "Posição do widget",
+    "Todos os monitores",
+    "Somente monitor principal",
     "Há uma atualização disponível",
     "Você está na versão mais recente",
     "Verificando atualizações",
@@ -427,6 +459,7 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Masuk ke Codex",
     "Segarkan autentikasi",
     "Bahasa",
+    "Otomatis",
     "Diagnostik",
     "Periksa pembaruan",
     "Pengaturan",
@@ -437,6 +470,9 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Awal: hanya baki sistem",
     "Widget: semua monitor",
     "Widget: hanya monitor utama",
+    "Posisi widget",
+    "Semua monitor",
+    "Hanya monitor utama",
     "Pembaruan tersedia",
     "Anda sudah menggunakan versi terbaru",
     "Memeriksa pembaruan",
@@ -472,6 +508,7 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex にログイン",
     "認証を更新",
     "言語",
+    "自動",
     "診断",
     "更新を確認",
     "設定",
@@ -482,6 +519,9 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "起動: トレイのみ",
     "ウィジェット: すべてのモニター",
     "ウィジェット: メインモニターのみ",
+    "ウィジェットの配置",
+    "すべてのモニター",
+    "メインモニターのみ",
     "新しい更新があります",
     "最新バージョンです",
     "更新を確認中",
@@ -517,6 +557,7 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex में साइन इन करें",
     "प्रमाणीकरण रीफ़्रेश करें",
     "भाषा",
+    "स्वतः",
     "निदान",
     "अपडेट जाँचें",
     "सेटिंग्स",
@@ -527,6 +568,9 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "स्टार्टअप: केवल ट्रे",
     "विजेट: सभी मॉनिटर",
     "विजेट: केवल मुख्य मॉनिटर",
+    "विजेट स्थान",
+    "सभी मॉनिटर",
+    "केवल मुख्य मॉनिटर",
     "अपडेट उपलब्ध है",
     "आप नवीनतम संस्करण पर हैं",
     "अपडेट जाँचे जा रहे हैं",
@@ -562,6 +606,7 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Bei Codex anmelden",
     "Authentifizierung aktualisieren",
     "Sprache",
+    "Automatisch",
     "Diagnose",
     "Nach Updates suchen",
     "Einstellungen",
@@ -572,6 +617,9 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Start: nur Infobereich",
     "Widget: alle Monitore",
     "Widget: nur Hauptmonitor",
+    "Widget-Position",
+    "Alle Monitore",
+    "Nur Hauptmonitor",
     "Ein Update ist verfügbar",
     "Sie sind auf dem neuesten Stand",
     "Updates werden gesucht",
@@ -607,6 +655,7 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Se connecter à Codex",
     "Actualiser l'authentification",
     "Langue",
+    "Automatique",
     "Diagnostics",
     "Rechercher des mises à jour",
     "Paramètres",
@@ -617,6 +666,9 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Démarrage: zone de notification seule",
     "Widget: tous les moniteurs",
     "Widget: moniteur principal seul",
+    "Emplacement du widget",
+    "Tous les moniteurs",
+    "Moniteur principal seul",
     "Une mise à jour est disponible",
     "Vous êtes à jour",
     "Recherche de mises à jour",
@@ -652,6 +704,7 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Đăng nhập vào Codex",
     "Làm mới xác thực",
     "Ngôn ngữ",
+    "Tự động",
     "Chẩn đoán",
     "Kiểm tra cập nhật",
     "Cài đặt",
@@ -662,6 +715,9 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Khởi động: chỉ khay hệ thống",
     "Widget: tất cả màn hình",
     "Widget: chỉ màn hình chính",
+    "Vị trí widget",
+    "Tất cả màn hình",
+    "Chỉ màn hình chính",
     "Có bản cập nhật mới",
     "Bạn đang dùng phiên bản mới nhất",
     "Đang kiểm tra cập nhật",
@@ -697,6 +753,7 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex'te oturum aç",
     "Kimlik doğrulamayı yenile",
     "Dil",
+    "Otomatik",
     "Tanılama",
     "Güncellemeleri denetle",
     "Ayarlar",
@@ -707,6 +764,9 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Başlangıç: yalnızca tepsi",
     "Widget: tüm monitörler",
     "Widget: yalnızca ana monitör",
+    "Widget konumu",
+    "Tüm monitörler",
+    "Yalnızca ana monitör",
     "Bir güncelleme mevcut",
     "Güncelsiniz",
     "Güncellemeler denetleniyor",
@@ -742,6 +802,7 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "تسجيل الدخول إلى Codex",
     "تحديث المصادقة",
     "اللغة",
+    "تلقائي",
     "التشخيصات",
     "التحقق من التحديثات",
     "الإعدادات",
@@ -752,6 +813,9 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "بدء التشغيل: علبة النظام فقط",
     "الويدجت: كل الشاشات",
     "الويدجت: الشاشة الرئيسية فقط",
+    "موضع الويدجت",
+    "كل الشاشات",
+    "الشاشة الرئيسية فقط",
     "يتوفر تحديث جديد",
     "أنت تستخدم أحدث إصدار",
     "جارٍ التحقق من التحديثات",
@@ -793,29 +857,30 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
     }
 }
 
-/// 갱신 간격 값을 트레이 메뉴에 표시할 지역화 문구로 만듭니다.
+/// 갱신 간격 값을 하위 메뉴의 짧은 선택 문구로 만듭니다.
 ///
 /// `minutes`는 지원되는 자동 갱신 간격이며, 호출자가 메뉴 동작 검증을 별도로 수행합니다.
-pub(crate) fn localized_refresh_interval_menu_text(minutes: u32, language: Language) -> String {
+pub(crate) fn localized_refresh_interval_choice_text(minutes: u32, language: Language) -> String {
     match language {
-        Language::Korean => format!("갱신 간격: {minutes}분"),
-        Language::English => format!("Refresh interval: {minutes} min"),
-        Language::Spanish => format!("Intervalo de actualización: {minutes} min"),
-        Language::PortugueseBrazil => format!("Intervalo de atualização: {minutes} min"),
-        Language::Indonesian => format!("Interval penyegaran: {minutes} mnt"),
-        Language::Japanese => format!("更新間隔: {minutes}分"),
-        Language::Hindi => format!("रीफ़्रेश अंतराल: {minutes} मिनट"),
-        Language::German => format!("Aktualisierungsintervall: {minutes} Min."),
-        Language::French => format!("Intervalle d'actualisation: {minutes} min"),
-        Language::Vietnamese => format!("Khoảng thời gian làm mới: {minutes} phút"),
-        Language::Turkish => format!("Yenileme aralığı: {minutes} dk"),
-        Language::Arabic => format!("فاصل التحديث: {minutes} دقيقة"),
+        Language::Korean => format!("{minutes}분"),
+        Language::English | Language::Spanish | Language::PortugueseBrazil | Language::French => {
+            format!("{minutes} min")
+        }
+        Language::Indonesian => format!("{minutes} mnt"),
+        Language::Japanese => format!("{minutes}分"),
+        Language::Hindi => format!("{minutes} मिनट"),
+        Language::German => format!("{minutes} Min."),
+        Language::Vietnamese => format!("{minutes} phút"),
+        Language::Turkish => format!("{minutes} dk"),
+        Language::Arabic => format!("{minutes} دقيقة"),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{localized_refresh_interval_menu_text, localized_text, Language, LocalizationKey};
+    use super::{
+        localized_refresh_interval_choice_text, localized_text, Language, LocalizationKey,
+    };
 
     #[test]
     fn every_key_has_a_nonempty_translation() {
@@ -827,17 +892,17 @@ mod tests {
     }
 
     #[test]
-    fn refresh_interval_menu_text_includes_value_and_unit() {
+    fn refresh_interval_choice_text_includes_value_and_unit() {
         assert_eq!(
-            localized_refresh_interval_menu_text(15, Language::Korean),
-            "갱신 간격: 15분"
+            localized_refresh_interval_choice_text(15, Language::Korean),
+            "15분"
         );
         assert_eq!(
-            localized_refresh_interval_menu_text(15, Language::English),
-            "Refresh interval: 15 min"
+            localized_refresh_interval_choice_text(15, Language::English),
+            "15 min"
         );
         for language in Language::ALL {
-            let text = localized_refresh_interval_menu_text(15, *language);
+            let text = localized_refresh_interval_choice_text(15, *language);
             assert!(text.contains("15"), "{language:?}: {text}");
         }
     }
