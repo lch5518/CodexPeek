@@ -1,15 +1,6 @@
 # Codex 사용량 모니터
 
-[English version](README.md)
-
-## ❤️ 후원
-
-CodexPeek가 시간을 절약해 드린다면 개발을 후원해 주세요.
-
-- ⭐ 이 저장소에 Star 남기기
-- ❤️ [GitHub에서 후원하기](https://github.com/sponsors/lch5518)
-
-후원해 주실 때마다 프로젝트를 활발하게 유지하는 데 큰 도움이 됩니다.
+**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows 네이티브 위젯입니다.
 기본·보조 사용량 기간을 작업 표시줄, 플로팅 위젯, 시스템 트레이에 표시합니다.
@@ -174,6 +165,15 @@ cargo build --release
 ```
 
 자동화된 검사는 [릴리스 체크리스트](docs/RELEASE_CHECKLIST.md)의 Windows, DPI, 다중 모니터, Explorer 복구 검증을 대체하지 않습니다.
+
+## ❤️ 후원
+
+CodexPeek가 시간을 절약해 드린다면 개발을 후원해 주세요.
+
+- ⭐ 이 저장소에 Star 남기기
+- ❤️ [GitHub에서 후원하기](https://github.com/sponsors/lch5518)
+
+후원해 주실 때마다 프로젝트를 활발하게 유지하는 데 큰 도움이 됩니다.
 
 ## 라이선스
 

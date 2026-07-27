@@ -1,0 +1,180 @@
+# Monitor de Uso de Codex
+
+**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+
+Codex Usage Monitor es un pequeño widget nativo para Windows que permite consultar tu uso de Codex de un vistazo.
+Muestra las ventanas de límite de uso primaria y secundaria en la barra de tareas, en un widget flotante y en la bandeja del sistema.
+
+![Widget de Codex Usage Monitor en la barra de tareas](docs/images/taskbar-widget-en.png)
+
+## Aspectos destacados
+
+- Muestra las ventanas de uso primaria y secundaria de Codex, incluidos los horarios de restablecimiento.
+- Usa la interfaz `app-server` del Codex CLI instalado en lugar de analizar archivos de autenticación.
+- Permite mostrar el widget en todas las barras de tareas o solo en el monitor principal.
+- Recurre de forma segura a un widget flotante y a un icono de bandeja cuando no puede acoplarse a la barra de tareas.
+- Admite actualización manual, intervalos de actualización automática, inicio con Windows, diagnósticos e interfaz localizada.
+
+## Cómo funciona
+
+El monitor inicia `codex app-server --stdio` como un proceso hijo local e intercambia mensajes JSONL por la entrada y salida estándar.
+El Codex CLI instalado gestiona su propia autenticación y puede comunicarse con OpenAI según su configuración y política de red existentes.
+
+El monitor solicita únicamente el estado de sesión iniciada y las ventanas de uso necesarias para mostrarlas.
+No inicia una tarea de Codex ni llama a `codex exec`.
+
+## Requisitos
+
+- Windows 10 o Windows 11, x64.
+- Un [Codex CLI](https://github.com/openai/codex) con sesión iniciada y compatibilidad con `account/read` y `account/rateLimits/read`.
+
+## Descargar y ejecutar
+
+Primero verifica que Codex CLI esté instalado y tenga la sesión iniciada:
+
+```powershell
+codex --version
+codex login status
+```
+
+### Instalador (recomendado)
+
+1. Descarga `CodexPeek-Setup-v<version>-x64.exe` desde la
+   [última GitHub Release](https://github.com/lch5518/CodexPeek/releases/latest).
+2. Ejecuta el instalador y sigue las indicaciones. No se requiere acceso de administrador.
+3. Inicia **Codex Usage Monitor** desde el menú Inicio.
+
+### Portable
+
+1. Descarga `codex-peek-v<version>-windows-x86_64-portable.zip` desde la
+   última release.
+2. Extrae el ZIP por completo en una carpeta con permisos de escritura.
+3. Ejecuta `codex-peek.exe` desde la carpeta extraída.
+
+### Compilar desde el código fuente
+
+Esta opción requiere Rust 1.85 o posterior, Visual Studio 2022 C++ Build Tools y un
+Windows SDK. Ejecuta la aplicación desde el repositorio clonado y no crea un acceso
+directo en el menú Inicio ni un desinstalador.
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo build --release
+.\target\release\codex-peek.exe
+```
+
+Para comprobar la compilación y la conexión con Codex CLI sin abrir la interfaz:
+
+```powershell
+.\target\release\codex-peek.exe --diagnose
+```
+
+### Pedirle a Codex que lo instale
+
+Copia el prompt siguiente en Codex. Prefiere el Instalador verificado y solo recurre a
+una compilación desde código fuente cuando no hay assets de Release compatibles.
+
+```text
+Instala CodexPeek en este equipo Windows x64 y completa la verificación por mí.
+
+1. Confirma que esto es Windows x64 y luego ejecuta `codex --version` y `codex login status`.
+2. Usa solo el repositorio oficial y sus Releases:
+   https://github.com/lch5518/CodexPeek
+3. Prefiere el `CodexPeek-Setup-v<version>-x64.exe` más reciente. Descárgalo junto con
+   `SHA256SUMS.txt`, encuentra la entrada exacta del Instalador en ese archivo, calcula
+   el SHA-256 del Instalador y continúa solo si los hashes coinciden. No desactives
+   controles de seguridad ni ejecutes un archivo cuya suma de comprobación falte o sea diferente.
+4. Instálalo para el usuario actual sin solicitar acceso de administrador. Conserva
+   la configuración existente de CodexPeek y no detengas una aplicación en ejecución ni
+   procesos no relacionados; dime si necesito cerrar la aplicación yo mismo.
+5. Solo si no hay assets de Release compatibles disponibles, clona el repositorio oficial
+   en un directorio nuevo con permisos de escritura para el usuario y ejecuta `cargo build --release`.
+   Si es necesario instalar Git, Rust 1.85+, Visual Studio 2022 C++ Build Tools o un Windows SDK,
+   primero explica exactamente qué cambiará y pide mi aprobación.
+6. Nunca leas ni imprimas el contenido de `%USERPROFILE%\.codex\auth.json`. La autenticación
+   debe gestionarse únicamente mediante el Codex CLI instalado.
+7. Después de la instalación o compilación, ejecuta el `codex-peek.exe --diagnose` resultante.
+   Si se completa correctamente, inicia CodexPeek.
+8. Informa el método de instalación seleccionado, la versión instalada, la ubicación del ejecutable,
+   el resultado de la suma de comprobación y el resultado del diagnóstico. Si algo falla, detente
+   de forma segura y explica el bloqueo exacto sin exponer información sensible.
+```
+
+Las ediciones Instalador y Portable usan `%APPDATA%\CodexUsageMonitor\settings.json`, por lo que
+comparten la configuración si alternas entre ellas. El instalador agrega un acceso directo al menú
+Inicio, pero no habilita el inicio con Windows de forma predeterminada.
+
+Las versiones iniciales no están firmadas con código y pueden activar Microsoft Defender SmartScreen.
+Descarga únicamente desde la release oficial y verifica el archivo con `SHA256SUMS.txt`.
+
+Consulta la [guía de instalación detallada (en coreano)](docs/INSTALL.md) para ver la verificación de hash,
+actualizaciones, comportamiento de desinstalación, diagnósticos y solución de problemas.
+
+## Usar el monitor
+
+Usa el menú de la bandeja para actualizar el uso, elegir un intervalo de actualización de 1/5/10/15/30 minutos y mostrar u ocultar el widget.
+También ofrece ajustes de inicio con Windows, vista inicial, actualización de autenticación, actualización automática de autenticación, idioma y diagnósticos.
+Elige **Widget: all monitors** o **Widget: primary monitor only** para controlar la ubicación en varios monitores; la selección se conserva entre reinicios.
+
+De forma predeterminada, el idioma de la interfaz sigue la configuración regional de Windows cuando coincide con un idioma compatible. También puedes elegir un idioma manualmente desde el menú de la bandeja. Los idiomas compatibles son coreano, inglés, español, portugués brasileño, indonesio, japonés, hindi, alemán, francés, vietnamita, turco y árabe.
+
+El widget de la barra de tareas usa el tema claro/oscuro del sistema de Windows para el texto y deja que el material nativo de la barra de tareas se vea a través del fondo.
+
+Solo se ejecuta una solicitud de uso a la vez. Las solicitudes fallidas se reintentan con retrasos crecientes mientras los últimos valores correctos permanecen visibles.
+
+Si el widget de la barra de tareas no puede acoplarse después de reiniciar Explorer o de un cambio en el diseño de la barra de tareas, el icono de bandeja sigue disponible y el monitor reintenta de forma segura.
+
+## Privacidad y seguridad
+
+El monitor nunca lee ni analiza el contenido de `%USERPROFILE%\.codex\auth.json`.
+Los diagnósticos solo comprueban si esa ruta existe.
+
+Las respuestas RPC sin procesar se procesan solo el tiempo necesario para extraer el tipo de inicio de sesión y los campos de límite de uso mostrados.
+Los tokens, ID de cuenta, direcciones de correo, contenido de archivos de autenticación y valores de proxy no se almacenan ni se escriben en registros.
+
+La configuración se guarda en `%APPDATA%\CodexUsageMonitor\settings.json`.
+Un registro de diagnóstico acotado se guarda en `%TEMP%\codex-peek.log`.
+
+Para la guía completa sobre tratamiento de datos e informes de vulnerabilidades, consulta [SECURITY.md](SECURITY.md).
+
+## Solución de problemas
+
+| Problema | Qué hacer |
+| --- | --- |
+| No se encuentra Codex CLI | Ejecuta `codex --version` y `where.exe codex`, y luego asegúrate de que Codex CLI esté en `PATH`. |
+| El CLI no es compatible | Actualiza Codex CLI. La compatibilidad con los RPC requeridos importa más que el número de versión mostrado. |
+| Sesión cerrada o autenticación vencida | Completa el flujo normal de inicio de sesión en Codex CLI y luego elige **Refresh authentication** en el menú de la bandeja. |
+| El widget de la barra de tareas está en el monitor incorrecto | Elige **Widget: all monitors** o **Widget: primary monitor only** desde el menú de la bandeja. |
+| Falta el widget de la barra de tareas | Usa el widget flotante o el icono de bandeja, reinicia Explorer si es necesario y selecciona el modo de monitor de widget preferido. |
+| Se necesita más detalle | Ejecuta `--diagnose` o abre **Diagnostics** desde el menú de la bandeja. |
+
+## Desarrollo
+
+Las compilaciones desde código fuente requieren Rust 1.85 o posterior, Visual Studio 2022 C++ Build Tools y un
+Windows SDK. Compila y valida desde la raíz del repositorio:
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo build --release
+```
+
+Las comprobaciones automatizadas no sustituyen los escenarios de recuperación de Windows, DPI, varios monitores y Explorer de la [lista de verificación de release](docs/RELEASE_CHECKLIST.md).
+
+## ❤️ Soporte
+
+Si CodexPeek te ahorra tiempo, considera apoyar su desarrollo.
+
+- ⭐ Dale una estrella a este repositorio
+- ❤️ [Patrocinar en GitHub](https://github.com/sponsors/lch5518)
+
+Cada patrocinio ayuda a mantener el proyecto activamente mantenido.
+
+## Licencia
+
+Este proyecto está disponible bajo la [MIT License](LICENSE).
+Consulta [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) para ver los avisos de terceros.

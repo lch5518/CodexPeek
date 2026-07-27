@@ -1,0 +1,177 @@
+# Codex Usage Monitor
+
+**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+
+Codex Usage Monitor は、Codex の使用状況をひと目で確認するための小さな Windows ネイティブウィジェットです。
+主使用量と副使用量のレート制限ウィンドウを、タスクバー、フローティングウィジェット、システムトレイに表示します。
+
+![Codex Usage Monitor タスクバーウィジェット](docs/images/taskbar-widget-en.png)
+
+## ハイライト
+
+- リセット時刻を含む、Codex の主使用量ウィンドウと副使用量ウィンドウを表示します。
+- 認証ファイルを解析せず、インストール済み Codex CLI の `app-server` インターフェイスを使用します。
+- すべてのタスクバー、またはメインモニターのみにウィジェットを表示できます。
+- タスクバーへのアタッチが利用できない場合は、フローティングウィジェットとトレイアイコンへ安全にフォールバックします。
+- 手動更新、自動更新間隔、Windows スタートアップ、診断、ローカライズ済み UI に対応しています。
+
+## 仕組み
+
+モニターは `codex app-server --stdio` をローカルの子プロセスとして起動し、標準入力と標準出力を通じて JSONL メッセージをやり取りします。
+インストール済みの Codex CLI は自身の認証を処理し、既存の設定とネットワークポリシーに従って OpenAI に接続することがあります。
+
+モニターが要求するのは、表示に必要なサインイン状態と使用量ウィンドウのみです。
+Codex タスクを開始したり、`codex exec` を呼び出したりすることはありません。
+
+## 要件
+
+- Windows 10 または Windows 11、x64。
+- `account/read` と `account/rateLimits/read` をサポートし、サインイン済みの [Codex CLI](https://github.com/openai/codex)。
+
+## ダウンロードと実行
+
+まず、Codex CLI がインストールされ、サインイン済みであることを確認します。
+
+```powershell
+codex --version
+codex login status
+```
+
+### インストーラー (推奨)
+
+1. [最新の GitHub Release](https://github.com/lch5518/CodexPeek/releases/latest) から
+   `CodexPeek-Setup-v<version>-x64.exe` をダウンロードします。
+2. セットアップを実行し、画面の指示に従います。管理者権限は不要です。
+3. Start Menu から **Codex Usage Monitor** を起動します。
+
+### Portable
+
+1. 最新リリースから `codex-peek-v<version>-windows-x86_64-portable.zip` をダウンロードします。
+2. ZIP を書き込み可能なフォルダーへ完全に展開します。
+3. 展開したフォルダーから `codex-peek.exe` を実行します。
+
+### ソースからビルド
+
+この方法には Rust 1.85 以降、Visual Studio 2022 C++ Build Tools、Windows SDK が必要です。
+クローンしたリポジトリからアプリを実行するため、Start Menu ショートカットやアンインストーラーは作成されません。
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo build --release
+.\target\release\codex-peek.exe
+```
+
+UI を開かずにビルドと Codex CLI 接続を確認するには、次を実行します。
+
+```powershell
+.\target\release\codex-peek.exe --diagnose
+```
+
+### Codex にインストールを依頼する
+
+以下のプロンプトを Codex にコピーしてください。このプロンプトは検証済みの Installer を優先し、
+互換性のある Release アセットが利用できない場合にのみソースビルドへフォールバックします。
+
+```text
+この Windows x64 コンピューターに CodexPeek をインストールし、検証まで完了してください。
+
+1. これが Windows x64 であることを確認し、`codex --version` と `codex login status` を実行してください。
+2. 公式リポジトリとその Releases のみを使用してください。
+   https://github.com/lch5518/CodexPeek
+3. 最新の `CodexPeek-Setup-v<version>-x64.exe` を優先してください。`SHA256SUMS.txt` と
+   一緒にダウンロードし、そのファイル内で正確な Installer の項目を見つけ、Installer の
+   SHA-256 を計算し、ハッシュが一致する場合にのみ続行してください。セキュリティ制御を
+   無効にしたり、チェックサムが欠落または不一致のファイルを実行したりしないでください。
+4. 管理者権限を要求せず、現在のユーザー向けにインストールしてください。既存の
+   CodexPeek 設定を保持し、実行中のアプリや無関係なプロセスを停止しないでください。
+   私が自分でアプリを閉じる必要がある場合は知らせてください。
+5. 互換性のある Release アセットが利用できない場合にのみ、公式リポジトリをユーザーが
+   書き込み可能な新しいディレクトリに clone し、`cargo build --release` を実行してください。
+   Git、Rust 1.85+、Visual Studio 2022 C++ Build Tools、または Windows SDK のインストールが
+   必要な場合は、何が変わるのかを最初に正確に説明し、私の承認を求めてください。
+6. `%USERPROFILE%\.codex\auth.json` の内容を絶対に読んだり表示したりしないでください。
+   認証は、インストール済みの Codex CLI を通じてのみ処理する必要があります。
+7. インストールまたはビルド後、生成された `codex-peek.exe --diagnose` を実行してください。
+   成功した場合は CodexPeek を起動してください。
+8. 選択したインストール方法、インストールされたバージョン、実行ファイルの場所、
+   チェックサム結果、診断結果を報告してください。何かが失敗した場合は安全に停止し、
+   機密情報を露出せずに正確な blocker を説明してください。
+```
+
+Installer 版と Portable 版は `%APPDATA%\CodexUsageMonitor\settings.json` を使用するため、
+切り替えて使う場合も設定は共有されます。インストーラーは Start Menu ショートカットを追加しますが、
+既定では Windows スタートアップを有効にしません。
+
+初期リリースはコード署名されていないため、Microsoft Defender SmartScreen が表示される場合があります。
+公式リリースからのみダウンロードし、`SHA256SUMS.txt` でファイルを検証してください。
+
+ハッシュ検証、更新、アンインストール動作、診断、トラブルシューティングについては、[詳細なインストールガイド (韓国語)](docs/INSTALL.md) を参照してください。
+
+## モニターの使い方
+
+トレイメニューを使用して、使用量の更新、1/5/10/15/30 分の更新間隔の選択、ウィジェットの表示または非表示を行います。
+Windows スタートアップ、起動時の表示、認証の更新、自動認証更新、言語、診断の設定も提供します。
+マルチモニター配置を制御するには、**Widget: all monitors** または **Widget: primary monitor only** を選択します。この選択は再起動後も保持されます。
+
+既定では、対応言語に一致する場合、UI 言語は Windows ロケールに従います。トレイメニューから手動で言語を選ぶこともできます。対応言語は、韓国語、英語、スペイン語、ブラジルポルトガル語、インドネシア語、日本語、ヒンディー語、ドイツ語、フランス語、ベトナム語、トルコ語、アラビア語です。
+
+タスクバーウィジェットは、テキストに Windows のライト/ダークシステムテーマを使用し、背景にはネイティブのタスクバー素材が透けて見えるようにします。
+
+使用量リクエストは一度に 1 件だけ実行されます。失敗したリクエストは遅延を増やしながら再試行され、最後に成功した値は表示されたまま維持されます。
+
+Explorer の再起動やタスクバー配置の変更後にタスクバーウィジェットをアタッチできない場合でも、トレイアイコンは利用でき、モニターは安全に再試行します。
+
+## プライバシーとセキュリティ
+
+モニターは `%USERPROFILE%\.codex\auth.json` の内容を読み取ったり解析したりしません。
+診断では、そのパスが存在するかどうかだけを確認します。
+
+生の RPC レスポンスは、ログイン種別と表示するレート制限フィールドを抽出するために必要な間だけ処理されます。
+トークン、アカウント ID、メールアドレス、認証ファイルの内容、プロキシ値は保存されず、ログにも書き込まれません。
+
+設定は `%APPDATA%\CodexUsageMonitor\settings.json` に保存されます。
+サイズを制限した診断ログは `%TEMP%\codex-peek.log` に保存されます。
+
+データ取り扱いと脆弱性報告に関する完全なガイダンスは、[SECURITY.md](SECURITY.md) を参照してください。
+
+## トラブルシューティング
+
+| 問題 | 対処方法 |
+| --- | --- |
+| Codex CLI が見つからない | `codex --version` と `where.exe codex` を実行し、Codex CLI が `PATH` にあることを確認します。 |
+| CLI がサポートされていない | Codex CLI を更新してください。表示されるバージョン番号より、必要な RPC サポートの有無が重要です。 |
+| ログアウトしている、または認証が期限切れ | Codex CLI で通常のログインフローを完了し、トレイメニューで **Refresh authentication** を選択します。 |
+| タスクバーウィジェットが間違ったモニターにある | トレイメニューから **Widget: all monitors** または **Widget: primary monitor only** を選択します。 |
+| タスクバーウィジェットが表示されない | フローティングウィジェットまたはトレイアイコンを使用し、必要に応じて Explorer を再起動して、希望するウィジェットのモニターモードを選択します。 |
+| さらに詳細が必要 | `--diagnose` を実行するか、トレイメニューから **Diagnostics** を開きます。 |
+
+## 開発
+
+ソースビルドには Rust 1.85 以降、Visual Studio 2022 C++ Build Tools、Windows SDK が必要です。
+リポジトリルートからビルドと検証を行います。
+
+```powershell
+git clone https://github.com/lch5518/CodexPeek.git
+Set-Location .\CodexPeek
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo build --release
+```
+
+自動チェックは、[リリースチェックリスト](docs/RELEASE_CHECKLIST.md) にある Windows、DPI、マルチモニター、Explorer 復旧シナリオの代わりにはなりません。
+
+## ❤️ サポート
+
+CodexPeek が時間の節約に役立っている場合は、開発支援をご検討ください。
+
+- ⭐ このリポジトリにスターを付ける
+- ❤️ [GitHub でスポンサーになる](https://github.com/sponsors/lch5518)
+
+スポンサーは、このプロジェクトの継続的なメンテナンスに役立ちます。
+
+## ライセンス
+
+このプロジェクトは [MIT License](LICENSE) のもとで提供されています。
+サードパーティ通知については [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
