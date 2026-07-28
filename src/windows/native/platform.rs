@@ -14,12 +14,13 @@ use windows::{
         Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage},
         Graphics::Gdi::{
             BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
-            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetStockObject,
-            InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
-            BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
-            DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_RTLREADING,
-            DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN,
-            OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
+            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetMonitorInfoW,
+            GetStockObject, InvalidateRect, MonitorFromWindow, ReleaseDC, SelectObject, SetBkMode,
+            SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS,
+            DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
+            DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL,
+            HDC, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTOPRIMARY, NULL_PEN, OUT_DEFAULT_PRECIS,
+            PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
@@ -42,15 +43,15 @@ use windows::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
                 GetMessageW, GetParent, GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW,
                 MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-                SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+                SendMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
                 ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
-                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
-                MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-                SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
-                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE,
-                WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
-                WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED,
-                WS_EX_TOOLWINDOW, WS_POPUP,
+                CS_VREDRAW, CW_USEDEFAULT, GWLP_HWNDPARENT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
+                HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA,
+                SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
+                WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+                WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -62,8 +63,8 @@ use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
     taskbar::{
-        attach_to_taskbar, reposition_taskbar_widget, TaskbarObserver, TaskbarTarget,
-        TASKBAR_LAYOUT_CHANGED,
+        attach_to_taskbar, reconcile_widget_surfaces, reposition_taskbar_widget, TaskbarObserver,
+        TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
     },
     taskbar_widget::{
         profile_header_text, progress_fill_width, select_weekly_row, widget_surface_layout,
@@ -585,17 +586,14 @@ unsafe fn tray_shutdown_complete(state_pointer: *mut NativeState<'_>) -> bool {
     )
 }
 
-unsafe fn create_widget(
-    state_pointer: *mut NativeState<'_>,
-    target: TaskbarTarget,
-) -> io::Result<HWND> {
+unsafe fn create_detached_widget(state_pointer: *mut NativeState<'_>) -> io::Result<HWND> {
     let (owner, instance) = {
         let state = &*state_pointer;
         (state.owner, state.instance)
     };
-    // 작업표시줄 위젯의 기본 논리 크기. 실제 물리 크기는 작업표시줄 부착 시 보정됩니다.
+    // 분리 위젯은 프로필 헤더와 기존 48px 본문을 함께 표시합니다.
     let width = logical_to_physical(TASKBAR_WIDTH_LOGICAL, 96);
-    let height = logical_to_physical(48, 96);
+    let height = logical_to_physical(72, 96);
     let widget_title = localized_window_title((*state_pointer).settings.resolved_language);
     let widget = CreateWindowExW(
         WS_EX_TOOLWINDOW,
@@ -615,7 +613,7 @@ unsafe fn create_widget(
     let was_empty = (*state_pointer).widgets.is_empty();
     (*state_pointer).widgets.push(WidgetSlot {
         hwnd: widget,
-        taskbar_parent: target.parent,
+        taskbar_parent: HWND::default(),
         hover: HoverTransition::default(),
         mouse_tracking: false,
         tooltip: HWND::default(),
@@ -626,14 +624,79 @@ unsafe fn create_widget(
         state.lifecycle.widget_created();
     }
     if let Err(error) =
-        set_layered_mode(widget, true).and_then(|()| attach_to_taskbar(widget, target))
+        set_layered_mode(widget, true).and_then(|()| position_detached_widget(widget))
     {
         let _ = DestroyWindow(widget);
         return Err(error);
     }
-    (*state_pointer).lifecycle.widget_attached_to_taskbar();
     let _ = create_tooltip(state_pointer, widget);
     Ok(widget)
+}
+
+unsafe fn attach_widget(
+    state_pointer: *mut NativeState<'_>,
+    widget: HWND,
+    target: TaskbarTarget,
+) -> io::Result<()> {
+    if let Err(attach_error) = attach_to_taskbar(widget, target) {
+        let _ = detach_widget(state_pointer, widget);
+        return Err(attach_error);
+    }
+    let slot = widget_slot(state_pointer, widget)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "widget slot unavailable"))?;
+    (*slot).taskbar_parent = target.parent;
+    (*state_pointer).lifecycle.widget_attached_to_taskbar();
+    Ok(())
+}
+
+unsafe fn detach_widget(state_pointer: *mut NativeState<'_>, widget: HWND) -> io::Result<()> {
+    let owner = (*state_pointer).owner;
+    SetParent(widget, None).map_err(win_error)?;
+    let style = GetWindowLongPtrW(widget, GWL_STYLE) as u32;
+    let detached_style = (style & !WS_CHILD.0) | WS_POPUP.0 | WS_CLIPSIBLINGS.0;
+    SetWindowLongPtrW(widget, GWL_STYLE, detached_style as isize);
+    SetWindowLongPtrW(widget, GWLP_HWNDPARENT, owner.0 as isize);
+    let verified_style = GetWindowLongPtrW(widget, GWL_STYLE) as u32;
+    if verified_style & (WS_CHILD.0 | WS_POPUP.0) != WS_POPUP.0
+        || GetParent(widget).ok() != Some(owner)
+    {
+        return Err(io::Error::other(
+            "detached widget style or owner verification failed",
+        ));
+    }
+    position_detached_widget(widget)?;
+    let slot = widget_slot(state_pointer, widget)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "widget slot unavailable"))?;
+    (*slot).taskbar_parent = HWND::default();
+    Ok(())
+}
+
+unsafe fn position_detached_widget(widget: HWND) -> io::Result<()> {
+    let monitor = MonitorFromWindow(widget, MONITOR_DEFAULTTOPRIMARY);
+    let mut monitor_info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
+        return Err(io::Error::last_os_error());
+    }
+    let dpi = GetDpiForWindow(widget).max(96);
+    let width = logical_to_physical(TASKBAR_WIDTH_LOGICAL, dpi);
+    let height = logical_to_physical(72, dpi);
+    let margin = logical_to_physical(16, dpi);
+    let work_area = monitor_info.rcWork;
+    let x = (work_area.right - width - margin).max(work_area.left);
+    let y = (work_area.bottom - height - margin).max(work_area.top);
+    SetWindowPos(
+        widget,
+        Some(HWND_TOPMOST),
+        x,
+        y,
+        width.min(work_area.right - work_area.left),
+        height.min(work_area.bottom - work_area.top),
+        SWP_FRAMECHANGED | SWP_NOACTIVATE,
+    )
+    .map_err(win_error)
 }
 
 unsafe fn create_tooltip(state_pointer: *mut NativeState<'_>, widget: HWND) -> io::Result<()> {
@@ -777,6 +840,57 @@ unsafe fn refresh_tray(state_pointer: *mut NativeState<'_>, restore: bool) -> io
     Ok(())
 }
 
+struct NativeWidgetSurfaceBackend<'a> {
+    state_pointer: *mut NativeState<'a>,
+    targets: Vec<TaskbarTarget>,
+}
+
+impl WidgetSurfaceBackend for NativeWidgetSurfaceBackend<'_> {
+    type Window = HWND;
+    type Target = HWND;
+    type Error = io::Error;
+
+    fn surfaces(&self) -> Vec<(Self::Window, WidgetSurface<Self::Target>)> {
+        unsafe {
+            (*self.state_pointer)
+                .widgets
+                .iter()
+                .filter(|widget| IsWindow(Some(widget.hwnd)).as_bool())
+                .map(|widget| {
+                    let surface = if widget_is_attached_to_taskbar(widget) {
+                        WidgetSurface::Attached(widget.taskbar_parent)
+                    } else {
+                        WidgetSurface::Detached
+                    };
+                    (widget.hwnd, surface)
+                })
+                .collect()
+        }
+    }
+
+    fn create_detached(&mut self) -> Result<Self::Window, Self::Error> {
+        unsafe { create_detached_widget(self.state_pointer) }
+    }
+
+    fn attach(&mut self, window: Self::Window, target: Self::Target) -> Result<(), Self::Error> {
+        let target = self
+            .targets
+            .iter()
+            .find(|candidate| candidate.parent == target)
+            .copied()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "taskbar target unavailable"))?;
+        unsafe { attach_widget(self.state_pointer, window, target) }
+    }
+
+    fn detach(&mut self, window: Self::Window) -> Result<(), Self::Error> {
+        unsafe { detach_widget(self.state_pointer, window) }
+    }
+
+    fn destroy(&mut self, window: Self::Window) -> Result<(), Self::Error> {
+        unsafe { DestroyWindow(window).map_err(win_error) }
+    }
+}
+
 unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result<()> {
     let settings = (*state_pointer).settings.clone();
     if !settings.widget_visible {
@@ -786,40 +900,37 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         return Ok(());
     }
     let targets = desired_taskbars(&*state_pointer);
-    if widgets_match_targets(&(*state_pointer).widgets, &targets) {
-        reposition_widgets(&(*state_pointer).widgets, &targets);
-        let state = &*state_pointer;
-        let snapshot = state.backend.snapshot();
-        let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
-        for widget in &state.widgets {
-            let _ = ShowWindow(widget.hwnd, SW_SHOWNA);
-            if let Err(error) = paint_taskbar_widget(
-                widget.hwnd,
-                &snapshot,
-                widget.hover.value(),
-                rtl,
-                widget_is_attached_to_taskbar(widget),
-            ) {
-                log_taskbar_render_error("compose", &error);
-            }
-        }
-        return Ok(());
+    let target_parents = targets
+        .iter()
+        .map(|target| target.parent)
+        .collect::<Vec<_>>();
+    let attach_errors = {
+        let mut backend = NativeWidgetSurfaceBackend {
+            state_pointer,
+            targets: targets.clone(),
+        };
+        reconcile_widget_surfaces(&mut backend, &target_parents)?
+    };
+    for error in attach_errors {
+        log_taskbar_render_error("attach", &error);
     }
-    destroy_all_widgets(state_pointer);
+
+    reposition_widgets(&(*state_pointer).widgets, &targets);
     let snapshot = (*state_pointer).backend.snapshot();
     let rtl = matches!(
         (*state_pointer).settings.resolved_language,
         crate::Language::Arabic
     );
-    for target in targets {
-        match create_widget(state_pointer, target) {
-            Ok(widget) => {
-                let _ = ShowWindow(widget, SW_SHOWNA);
-                if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0, rtl, true) {
-                    log_taskbar_render_error("compose", &error);
-                }
-            }
-            Err(error) => log_taskbar_render_error("attach", &error),
+    for widget in &(*state_pointer).widgets {
+        let _ = ShowWindow(widget.hwnd, SW_SHOWNA);
+        if let Err(error) = paint_taskbar_widget(
+            widget.hwnd,
+            &snapshot,
+            widget.hover.value(),
+            rtl,
+            widget_is_attached_to_taskbar(widget),
+        ) {
+            log_taskbar_render_error("compose", &error);
         }
     }
     Ok(())
@@ -848,9 +959,14 @@ unsafe fn widgets_match_targets(widgets: &[WidgetSlot], targets: &[TaskbarTarget
 }
 
 unsafe fn reposition_widgets(widgets: &[WidgetSlot], targets: &[TaskbarTarget]) {
-    for (widget, target) in widgets.iter().zip(targets) {
-        if let Err(error) = reposition_taskbar_widget(widget.hwnd, *target) {
-            log_taskbar_render_error("position", &error);
+    for widget in widgets {
+        if let Some(target) = targets
+            .iter()
+            .find(|target| target.parent == widget.taskbar_parent)
+        {
+            if let Err(error) = reposition_taskbar_widget(widget.hwnd, *target) {
+                log_taskbar_render_error("position", &error);
+            }
         }
     }
 }
