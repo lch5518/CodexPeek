@@ -6,6 +6,7 @@ mod domain;
 mod errors;
 mod localization;
 mod poller;
+mod profile_poller;
 mod profiles;
 mod update_check;
 pub mod windows;
@@ -21,6 +22,7 @@ pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
 pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
+pub use profile_poller::{ProfilePollEvent, ProfilePollingService};
 pub use profiles::{
     normalize_profile_label, ManagedUsageProfile, ProfileExecutionContext, ProfileValidationError,
     UsageProfileCatalog, UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
