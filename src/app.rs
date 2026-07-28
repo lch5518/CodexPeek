@@ -12,7 +12,8 @@ use std::{
 
 use crate::{
     aggregate_profile_diagnostics,
-    codex::{locate_supported_cli, AppServerUsageProvider, UsageProvider},
+    codex::{locate_supported_cli, AppServerUsageProvider},
+    diagnose_profile_contexts,
     domain::{reset_credits_label, reset_unavailable_label, ResetDateTime},
     inspect_settings_for_diagnostics, localized_text,
     windows::{
@@ -24,8 +25,8 @@ use crate::{
     },
     AsyncDiagnosticWriter, CorrelatedProfileSettingsEvent, DiagnosticCode, DiagnosticLogger,
     Language, LanguagePreference, LocalizationKey, NativeProfileFileSystem, PollSnapshot,
-    PollTrigger, ProfileDiagnosticSnapshot, ProfileExecutionContext, ProfilePollEvent,
-    ProfilePollingService, ProfileSettingsMutation, ProfileSettingsOperation,
+    PollTrigger, ProfileDiagnosticRun, ProfileDiagnosticSnapshot, ProfileExecutionContext,
+    ProfilePollEvent, ProfilePollingService, ProfileSettingsMutation, ProfileSettingsOperation,
     ProfileSettingsRequestId, ProfileSettingsService, ProfileValidationError, ResetCredits,
     SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckStart, UpdateChecker,
     UpdatePresentation, UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError,
@@ -1940,7 +1941,8 @@ fn run_safe_diagnostics(write_console: bool) -> io::Result<DiagnosticSummary> {
         }
     }
 
-    let rpc = AppServerUsageProvider::new().fetch(false);
+    let profile_diagnostics = diagnose_configured_profiles(&store, settings_valid)?;
+    let rpc = profile_diagnostics.system_result;
     if let Err(error) = rpc {
         let code = match error {
             UsageError::CliNotFound | UsageError::UnsupportedCli => DiagnosticCode::CliUnavailable,
@@ -1952,19 +1954,11 @@ fn run_safe_diagnostics(write_console: bool) -> io::Result<DiagnosticSummary> {
         let _ = logger.record_safe(SafeDiagnostic::Rpc { code });
     }
 
-    let configured_profiles = diagnostic_configured_profiles(&store, settings_valid);
-    let (ok_profiles, login_required_profiles, request_failed_profiles) = match &rpc {
-        Ok(_) => (1, 0, 0),
-        Err(UsageError::NotLoggedIn | UsageError::AuthenticationExpired) => (0, 1, 0),
-        Err(_) => (0, 0, 1),
-    };
-    let _ = logger.record_safe(SafeDiagnostic::Profiles {
-        settings_valid,
-        configured: configured_profiles,
-        ok: ok_profiles,
-        login_required: login_required_profiles,
-        request_failed: request_failed_profiles,
-    });
+    let configured_profiles = profile_diagnostics.configured;
+    let ok_profiles = profile_diagnostics.ok;
+    let login_required_profiles = profile_diagnostics.login_required;
+    let request_failed_profiles = profile_diagnostics.request_failed;
+    let _ = logger.record_safe(profile_diagnostics.safe_diagnostic(settings_valid));
 
     let cli_status = if cli_result.is_ok() {
         "ok"
@@ -2025,19 +2019,31 @@ fn run_safe_diagnostics(write_console: bool) -> io::Result<DiagnosticSummary> {
     Ok(summary)
 }
 
-fn diagnostic_configured_profiles(store: &SettingsStore, settings_valid: bool) -> u8 {
+fn diagnose_configured_profiles(
+    store: &SettingsStore,
+    settings_valid: bool,
+) -> io::Result<ProfileDiagnosticRun> {
+    let provider = AppServerUsageProvider::new();
     if !settings_valid {
-        return 0;
+        return Ok(diagnose_profile_contexts(
+            &provider,
+            1,
+            &[ProfileExecutionContext::system()],
+        ));
     }
-    match std::fs::read(store.path()) {
-        Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
-            .ok()
-            .map(|settings| settings.usage_profiles.managed().len() + 1)
-            .unwrap_or(1)
-            .min(8) as u8,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => 1,
-        Err(_) => 0,
-    }
+    let settings = store.load()?;
+    let (service, startup) = ProfileSettingsService::start_with_recovery(
+        store.clone(),
+        settings,
+        NativeProfileFileSystem::default(),
+    );
+    let run = diagnose_profile_contexts(
+        &provider,
+        startup.report().configured,
+        startup.execution_contexts(),
+    );
+    service.stop()?;
+    Ok(run)
 }
 
 fn auth_path() -> PathBuf {

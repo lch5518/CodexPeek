@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{
+    codex::{OperationCancellation, ProfileAccountProvider},
     PollSnapshot, ProfileExecutionContext, Settings, SettingsStore, UsageError, UsageProfileId,
     UsageProfileRoot,
 };
@@ -323,6 +324,73 @@ fn join_diagnostic_worker(worker: Option<JoinHandle<io::Result<()>>>) -> io::Res
             .map_err(|_| io::Error::other("diagnostic writer worker panicked"))?,
         None => Ok(()),
     }
+}
+
+/// 검증된 모든 프로필 진단의 민감하지 않은 집계와 시스템 프로필 결과입니다.
+///
+/// 프로필 이름, 내부 식별자, 관리 경로와 사용량 payload는 보관하지 않습니다. 각 분류 합계는 항상
+/// `configured`와 같으며 `system_result`에는 기존 진단 요약에 필요한 안전한 오류 종류만 남깁니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileDiagnosticRun {
+    /// 시스템 프로필을 포함한 설정 프로필 수입니다.
+    pub configured: u8,
+    /// 정상 조회된 프로필 수입니다.
+    pub ok: u8,
+    /// 로그인이 필요한 프로필 수입니다.
+    pub login_required: u8,
+    /// RPC 실패 또는 시작 경로 검증 실패 프로필 수입니다.
+    pub request_failed: u8,
+    /// 기존 CLI·app-server·로그인 요약에 사용할 시스템 프로필 결과입니다.
+    pub system_result: Result<(), UsageError>,
+}
+
+impl ProfileDiagnosticRun {
+    /// 설정 유효성과 집계 개수만 포함하는 안전 진단 이벤트를 반환합니다.
+    pub fn safe_diagnostic(self, settings_valid: bool) -> SafeDiagnostic {
+        SafeDiagnostic::Profiles {
+            settings_valid,
+            configured: self.configured,
+            ok: self.ok,
+            login_required: self.login_required,
+            request_failed: self.request_failed,
+        }
+    }
+}
+
+/// 시작 복구·검증을 통과한 프로필 컨텍스트를 하나의 provider로 순차 진단합니다.
+///
+/// `configured`에는 검증에서 제외된 프로필도 포함합니다. 함수는 `contexts` 순서대로 동기 조회하며
+/// 각 호출에 새 취소 토큰을 사용합니다. 컨텍스트에 없는 구성 프로필은 `request_failed`로 집계해
+/// 결과 합계를 일치시키고, 어떤 이름·경로·계정 정보나 원본 RPC 응답도 반환하지 않습니다.
+pub fn diagnose_profile_contexts(
+    provider: &dyn ProfileAccountProvider,
+    configured: u8,
+    contexts: &[ProfileExecutionContext],
+) -> ProfileDiagnosticRun {
+    let checked = contexts.len().min(crate::MAX_USAGE_PROFILES) as u8;
+    let configured = configured.min(crate::MAX_USAGE_PROFILES as u8).max(checked);
+    let mut run = ProfileDiagnosticRun {
+        configured,
+        ok: 0,
+        login_required: 0,
+        request_failed: configured.saturating_sub(checked),
+        system_result: Err(UsageError::RequestFailed),
+    };
+
+    for context in contexts.iter().take(usize::from(checked)) {
+        let result = provider.fetch_profile(context, false, OperationCancellation::default());
+        if context.id() == UsageProfileId::System {
+            run.system_result = result.as_ref().map(|_| ()).map_err(|error| *error);
+        }
+        match result {
+            Ok(_) => run.ok = run.ok.saturating_add(1),
+            Err(UsageError::NotLoggedIn | UsageError::AuthenticationExpired) => {
+                run.login_required = run.login_required.saturating_add(1);
+            }
+            Err(_) => run.request_failed = run.request_failed.saturating_add(1),
+        }
+    }
+    run
 }
 
 /// 한 프로필의 비민감 폴링 상태를 집계 진단 입력으로 전달합니다.

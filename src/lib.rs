@@ -16,8 +16,9 @@ pub use app::{ProfileRuntimeCommand, ProfileRuntimeState};
 
 pub use config::{LanguagePreference, Settings, SettingsStore, StartupView, TaskbarDisplayMode};
 pub use diagnostics::{
-    aggregate_profile_diagnostics, inspect_settings_for_diagnostics, AsyncDiagnosticWriter,
-    DiagnosticCode, DiagnosticLogger, ProfileDiagnosticSnapshot, SafeDiagnostic,
+    aggregate_profile_diagnostics, diagnose_profile_contexts, inspect_settings_for_diagnostics,
+    AsyncDiagnosticWriter, DiagnosticCode, DiagnosticLogger, ProfileDiagnosticRun,
+    ProfileDiagnosticSnapshot, SafeDiagnostic,
 };
 pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
