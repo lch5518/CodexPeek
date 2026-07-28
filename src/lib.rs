@@ -16,7 +16,8 @@ pub use app::{ProfileRuntimeCommand, ProfileRuntimeState};
 
 pub use config::{LanguagePreference, Settings, SettingsStore, StartupView, TaskbarDisplayMode};
 pub use diagnostics::{
-    inspect_settings_for_diagnostics, DiagnosticCode, DiagnosticLogger, SafeDiagnostic,
+    aggregate_profile_diagnostics, inspect_settings_for_diagnostics, AsyncDiagnosticWriter,
+    DiagnosticCode, DiagnosticLogger, ProfileDiagnosticSnapshot, SafeDiagnostic,
 };
 pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
@@ -24,8 +25,9 @@ pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
 pub use profile_poller::{ProfilePollEvent, ProfilePollingService};
 pub use profile_settings::{
-    NativeProfileFileSystem, ProfileFileSystem, ProfileSettingsEvent, ProfileSettingsMutation,
-    ProfileSettingsService,
+    CorrelatedProfileSettingsEvent, NativeProfileFileSystem, ProfileFileSystem,
+    ProfileSettingsEvent, ProfileSettingsMutation, ProfileSettingsOperation,
+    ProfileSettingsRequestId, ProfileSettingsService,
 };
 pub use profiles::{
     normalize_profile_label, ManagedUsageProfile, ProfileExecutionContext, ProfileValidationError,

@@ -5,7 +5,9 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    inspect_settings_for_diagnostics, DiagnosticLogger, SafeDiagnostic, SettingsStore,
+    aggregate_profile_diagnostics, inspect_settings_for_diagnostics, AsyncDiagnosticWriter,
+    DiagnosticLogger, PollSnapshot, ProfileDiagnosticSnapshot, SafeDiagnostic, Settings,
+    SettingsStore, UsageError, UsageProfileId, UsageProfileRoot,
 };
 
 fn temp_log() -> std::path::PathBuf {
@@ -58,22 +60,37 @@ fn profile_diagnostics_are_aggregate_only_and_clamped_to_supported_count() {
 fn profile_diagnostics_never_serialize_labels_or_managed_paths() {
     let path = temp_log();
     let logger = DiagnosticLogger::for_path(&path);
-    let fixture_label = "private-profile-label";
-    let fixture_path = r"C:\private\managed-profile\codex-home";
-
-    logger
-        .record_safe(SafeDiagnostic::Profiles {
-            settings_valid: false,
-            configured: 2,
-            ok: 0,
-            login_required: 1,
-            request_failed: 1,
-        })
-        .unwrap();
+    let fixture_label = "SENTINEL_PRIVATE_PROFILE_LABEL";
+    let root_path = std::env::temp_dir().join("SENTINEL_PRIVATE_MANAGED_PATH");
+    let root = UsageProfileRoot::new(root_path.clone());
+    let mut settings = Settings::default();
+    let managed_id = settings.usage_profiles.add(fixture_label).unwrap().id();
+    let managed_snapshot = PollSnapshot {
+        last_error: Some(UsageError::NotLoggedIn),
+        ..PollSnapshot::default()
+    };
+    let inputs = [
+        ProfileDiagnosticSnapshot {
+            id: UsageProfileId::System,
+            snapshot: Some(PollSnapshot::default()),
+            login_required: false,
+        },
+        ProfileDiagnosticSnapshot {
+            id: managed_id,
+            snapshot: Some(managed_snapshot),
+            login_required: false,
+        },
+    ];
+    let event = aggregate_profile_diagnostics(true, &settings, &root, &inputs);
+    let writer = AsyncDiagnosticWriter::start(logger, 4);
+    assert!(writer.enqueue(event));
+    writer.stop().unwrap();
 
     let serialized = fs::read_to_string(&path).unwrap();
+    assert!(serialized.contains("configured=2"));
+    assert!(serialized.contains("login_required=1"));
     assert!(!serialized.contains(fixture_label));
-    assert!(!serialized.contains(fixture_path));
+    assert!(!serialized.contains(root_path.to_string_lossy().as_ref()));
     assert!(!serialized.to_ascii_lowercase().contains("profile-0001"));
     let _ = fs::remove_file(path);
 }

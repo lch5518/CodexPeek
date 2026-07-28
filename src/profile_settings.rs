@@ -426,7 +426,7 @@ fn reject_reparse_metadata(metadata: &fs::Metadata) -> io::Result<()> {
 }
 
 /// 설정과 프로필 디렉터리를 같은 작업 큐에서 변경하는 명령입니다.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum ProfileSettingsMutation {
     /// 검증한 표시 이름으로 새 관리 프로필을 추가합니다.
     Add { label: String },
@@ -438,8 +438,73 @@ pub enum ProfileSettingsMutation {
     Delete { id: UsageProfileId },
 }
 
-/// 순서가 보장된 프로필 설정 작업의 완료 결과입니다.
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl std::fmt::Debug for ProfileSettingsMutation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Add { .. } => formatter.write_str("Add { label: [redacted] }"),
+            Self::Rename { id, .. } => formatter
+                .debug_struct("Rename")
+                .field("id", id)
+                .field("label", &"[redacted]")
+                .finish(),
+            Self::Select { id } => formatter.debug_struct("Select").field("id", id).finish(),
+            Self::Delete { id } => formatter.debug_struct("Delete").field("id", id).finish(),
+        }
+    }
+}
+
+impl ProfileSettingsMutation {
+    pub(crate) fn operation(&self) -> ProfileSettingsOperation {
+        match self {
+            Self::Add { .. } => ProfileSettingsOperation::Add,
+            Self::Rename { .. } => ProfileSettingsOperation::Rename,
+            Self::Select { .. } => ProfileSettingsOperation::Select,
+            Self::Delete { .. } => ProfileSettingsOperation::Delete,
+        }
+    }
+}
+
+/// 프로필 설정 요청과 완료 이벤트를 연결하는 프로세스 내부 식별자입니다.
+///
+/// 값은 서비스 인스턴스 안에서 1부터 단조 증가하며 프로필 ID, 이름 또는 경로에서 파생되지
+/// 않습니다. 로그나 사용자 화면에 표시하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProfileSettingsRequestId(u64);
+
+impl ProfileSettingsRequestId {
+    /// 0이 아닌 불투명 요청 번호를 생성합니다.
+    ///
+    /// `value`가 0이면 `None`을 반환합니다. 테스트와 런타임 조정 계층에서 이미 발급된 번호를
+    /// 형식화할 때 사용하며 프로필 정보는 포함하지 않습니다.
+    pub fn new(value: u64) -> Option<Self> {
+        (value != 0).then_some(Self(value))
+    }
+}
+
+/// 프로필 설정 이벤트의 민감하지 않은 작업 종류입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileSettingsOperation {
+    /// 관리 프로필 추가입니다.
+    Add,
+    /// 관리 프로필 이름 변경입니다.
+    Rename,
+    /// 표시 프로필 선택입니다.
+    Select,
+    /// 관리 프로필 삭제입니다.
+    Delete,
+    /// 일반 UI 환경설정 저장입니다.
+    Preferences,
+    /// 시작 시 tombstone 정리입니다.
+    Cleanup,
+    /// 시작 또는 add 재시도 전 orphan 정리입니다.
+    AddCleanup,
+}
+
+/// 기존 호출자가 소비하는 순서 보장 프로필 설정 작업의 완료 결과입니다.
+///
+/// 요청 상관관계가 필요한 런타임은 `CorrelatedProfileSettingsEvent`를 사용합니다. 이 호환 타입은
+/// 기존 variant shape를 유지하며 custom `Debug`에서 설정과 표시 이름을 생략합니다.
+#[derive(Clone, PartialEq, Eq)]
 pub enum ProfileSettingsEvent {
     /// 새 프로필과 저장된 최신 설정을 반환합니다.
     Added {
@@ -468,8 +533,122 @@ pub enum ProfileSettingsEvent {
     },
 }
 
+impl std::fmt::Debug for ProfileSettingsEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Added { id, .. } => formatter.debug_struct("Added").field("id", id).finish(),
+            Self::Renamed { id, .. } => formatter.debug_struct("Renamed").field("id", id).finish(),
+            Self::Selected { id, .. } => {
+                formatter.debug_struct("Selected").field("id", id).finish()
+            }
+            Self::Deleted { id, .. } => formatter.debug_struct("Deleted").field("id", id).finish(),
+            Self::Failed { operation, kind } => formatter
+                .debug_struct("Failed")
+                .field("operation", operation)
+                .field("kind", kind)
+                .finish(),
+        }
+    }
+}
+
+/// 요청 ID와 타입 지정 작업 종류를 포함하는 런타임용 프로필 설정 완료 이벤트입니다.
+///
+/// 설정 worker가 발급한 요청 ID를 그대로 돌려주며 preference/시작 정리 실패는 `None`을
+/// 사용합니다. custom `Debug`는 설정, 프로필 이름과 관리 경로를 출력하지 않습니다.
+#[derive(Clone, PartialEq, Eq)]
+pub enum CorrelatedProfileSettingsEvent {
+    /// 상관 ID와 내구성 있게 추가된 프로필 설정입니다.
+    Added {
+        request_id: ProfileSettingsRequestId,
+        settings: Settings,
+        id: UsageProfileId,
+    },
+    /// 상관 ID와 내구성 있게 이름이 변경된 설정입니다.
+    Renamed {
+        request_id: ProfileSettingsRequestId,
+        settings: Settings,
+        id: UsageProfileId,
+    },
+    /// 상관 ID와 내구성 있게 선택된 설정입니다.
+    Selected {
+        request_id: ProfileSettingsRequestId,
+        settings: Settings,
+        id: UsageProfileId,
+    },
+    /// 상관 ID와 내구성 있게 삭제된 설정입니다.
+    Deleted {
+        request_id: ProfileSettingsRequestId,
+        settings: Settings,
+        id: UsageProfileId,
+    },
+    /// 요청 ID, 타입 지정 작업, 호환 stage와 안전 오류 종류입니다.
+    Failed {
+        request_id: Option<ProfileSettingsRequestId>,
+        operation: ProfileSettingsOperation,
+        stage: &'static str,
+        kind: io::ErrorKind,
+    },
+}
+
+impl std::fmt::Debug for CorrelatedProfileSettingsEvent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Added { request_id, id, .. } => formatter
+                .debug_struct("Added")
+                .field("request_id", request_id)
+                .field("id", id)
+                .finish(),
+            Self::Renamed { request_id, id, .. } => formatter
+                .debug_struct("Renamed")
+                .field("request_id", request_id)
+                .field("id", id)
+                .finish(),
+            Self::Selected { request_id, id, .. } => formatter
+                .debug_struct("Selected")
+                .field("request_id", request_id)
+                .field("id", id)
+                .finish(),
+            Self::Deleted { request_id, id, .. } => formatter
+                .debug_struct("Deleted")
+                .field("request_id", request_id)
+                .field("id", id)
+                .finish(),
+            Self::Failed {
+                request_id,
+                operation,
+                stage,
+                kind,
+            } => formatter
+                .debug_struct("Failed")
+                .field("request_id", request_id)
+                .field("operation", operation)
+                .field("stage", stage)
+                .field("kind", kind)
+                .finish(),
+        }
+    }
+}
+
+impl CorrelatedProfileSettingsEvent {
+    fn into_legacy(self) -> ProfileSettingsEvent {
+        match self {
+            Self::Added { settings, id, .. } => ProfileSettingsEvent::Added { settings, id },
+            Self::Renamed { settings, id, .. } => ProfileSettingsEvent::Renamed { settings, id },
+            Self::Selected { settings, id, .. } => ProfileSettingsEvent::Selected { settings, id },
+            Self::Deleted { settings, id, .. } => ProfileSettingsEvent::Deleted { settings, id },
+            Self::Failed { stage, kind, .. } => ProfileSettingsEvent::Failed {
+                operation: stage,
+                kind,
+            },
+        }
+    }
+}
+
 enum ProfileSettingsCommand {
-    Mutate(ProfileSettingsMutation),
+    Mutate {
+        request_id: ProfileSettingsRequestId,
+        mutation: ProfileSettingsMutation,
+    },
     SavePreferences(Settings),
     Flush(mpsc::SyncSender<io::Result<()>>),
     Stop,
@@ -478,8 +657,9 @@ enum ProfileSettingsCommand {
 /// 프로필 카탈로그와 일반 환경설정을 하나의 순서 보장 worker에서 저장합니다.
 pub struct ProfileSettingsService {
     commands: mpsc::Sender<ProfileSettingsCommand>,
-    events: mpsc::Receiver<ProfileSettingsEvent>,
+    events: mpsc::Receiver<CorrelatedProfileSettingsEvent>,
     worker: Option<JoinHandle<io::Result<()>>>,
+    next_request_id: AtomicU64,
 }
 
 impl ProfileSettingsService {
@@ -502,17 +682,40 @@ impl ProfileSettingsService {
             commands: command_sender,
             events: event_receiver,
             worker: Some(worker),
+            next_request_id: AtomicU64::new(1),
         }
     }
 
     /// 프로필 변경을 기다리지 않고 순서 보장 작업 큐에 추가합니다.
     ///
     /// `mutation`은 worker가 설정과 파일 시스템을 함께 변경합니다. 큐 제출 성공 여부만 즉시
-    /// 반환하며 실제 결과는 이벤트로 전달됩니다.
+    /// 반환하며 실제 결과는 같은 요청 ID를 포함한 이벤트로 전달됩니다.
     pub fn submit(&self, mutation: ProfileSettingsMutation) -> io::Result<()> {
+        self.submit_correlated(mutation).map(|_| ())
+    }
+
+    /// 프로필 변경을 제출하고 완료 이벤트와 연결할 불투명 요청 ID를 반환합니다.
+    ///
+    /// 기존 `submit`과 같은 worker 큐를 사용하며 외부 I/O를 기다리지 않습니다. 런타임은 반환된
+    /// ID를 `take_correlated_events`의 이벤트와 비교해야 합니다.
+    pub fn submit_correlated(
+        &self,
+        mutation: ProfileSettingsMutation,
+    ) -> io::Result<ProfileSettingsRequestId> {
+        let raw = self
+            .next_request_id
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .map_err(|_| io::Error::other("profile settings request id exhausted"))?;
+        let request_id = ProfileSettingsRequestId(raw);
         self.commands
-            .send(ProfileSettingsCommand::Mutate(mutation))
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "profile settings stopped"))
+            .send(ProfileSettingsCommand::Mutate {
+                request_id,
+                mutation,
+            })
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "profile settings stopped"))?;
+        Ok(request_id)
     }
 
     /// 일반 환경설정 복사본을 프로필 변경과 같은 순서 보장 작업 큐에 추가합니다.
@@ -542,6 +745,17 @@ impl ProfileSettingsService {
     ///
     /// 반환 시점에 아직 처리 중인 작업은 포함하지 않으며 디스크 I/O를 수행하지 않습니다.
     pub fn take_events(&self) -> Vec<ProfileSettingsEvent> {
+        self.take_correlated_events()
+            .into_iter()
+            .map(CorrelatedProfileSettingsEvent::into_legacy)
+            .collect()
+    }
+
+    /// 현재 도착한 상관 ID 포함 완료 이벤트를 기다리지 않고 모두 반환합니다.
+    ///
+    /// AppRuntime처럼 profile pending 작업을 정확히 연결해야 하는 호출자가 사용합니다. 호출은
+    /// 디스크 I/O를 수행하지 않으며 기존 `take_events`와 동시에 사용하면 안 됩니다.
+    pub fn take_correlated_events(&self) -> Vec<CorrelatedProfileSettingsEvent> {
         self.events.try_iter().collect()
     }
 
@@ -549,6 +763,14 @@ impl ProfileSettingsService {
     ///
     /// 테스트나 종료 조정처럼 UI 이벤트 처리 밖에서만 호출해야 합니다.
     pub fn wait_for_event(&self) -> io::Result<ProfileSettingsEvent> {
+        self.wait_for_correlated_event()
+            .map(CorrelatedProfileSettingsEvent::into_legacy)
+    }
+
+    /// 다음 상관 ID 포함 완료 이벤트가 도착할 때까지 기다립니다.
+    ///
+    /// 테스트 또는 종료 조정에서만 사용하며 UI 이벤트 처리에서는 호출하지 않습니다.
+    pub fn wait_for_correlated_event(&self) -> io::Result<CorrelatedProfileSettingsEvent> {
         self.events
             .recv()
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "profile settings event lost"))
@@ -573,26 +795,33 @@ fn profile_settings_loop(
     mut settings: Settings,
     backend: Arc<dyn ProfileFileSystem>,
     commands: mpsc::Receiver<ProfileSettingsCommand>,
-    events: mpsc::Sender<ProfileSettingsEvent>,
+    events: mpsc::Sender<CorrelatedProfileSettingsEvent>,
 ) -> io::Result<()> {
     let root = UsageProfileRoot::new(store.root().to_path_buf());
     let mut first_error: Option<io::ErrorKind> = None;
     if let Err(error) = backend.cleanup_staged(&root, &settings.usage_profiles) {
-        let _ = events.send(ProfileSettingsEvent::Failed {
-            operation: "cleanup",
+        let _ = events.send(CorrelatedProfileSettingsEvent::Failed {
+            request_id: None,
+            operation: ProfileSettingsOperation::Cleanup,
+            stage: "cleanup",
             kind: error.kind(),
         });
     }
     if let Err(error) = backend.cleanup_orphaned_homes(&root, &settings.usage_profiles) {
-        let _ = events.send(ProfileSettingsEvent::Failed {
-            operation: "add_cleanup",
+        let _ = events.send(CorrelatedProfileSettingsEvent::Failed {
+            request_id: None,
+            operation: ProfileSettingsOperation::AddCleanup,
+            stage: "add_cleanup",
             kind: error.kind(),
         });
     }
 
     while let Ok(command) = commands.recv() {
         match command {
-            ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Add { label }) => {
+            ProfileSettingsCommand::Mutate {
+                request_id,
+                mutation: ProfileSettingsMutation::Add { label },
+            } => {
                 add_profile(
                     &store,
                     &root,
@@ -601,15 +830,40 @@ fn profile_settings_loop(
                     &label,
                     &events,
                     &mut first_error,
+                    request_id,
                 );
             }
-            ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Rename { id, label }) => {
-                rename_profile(&store, &mut settings, id, &label, &events, &mut first_error);
+            ProfileSettingsCommand::Mutate {
+                request_id,
+                mutation: ProfileSettingsMutation::Rename { id, label },
+            } => {
+                rename_profile(
+                    &store,
+                    &mut settings,
+                    id,
+                    &label,
+                    &events,
+                    &mut first_error,
+                    request_id,
+                );
             }
-            ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Select { id }) => {
-                select_profile(&store, &mut settings, id, &events, &mut first_error);
+            ProfileSettingsCommand::Mutate {
+                request_id,
+                mutation: ProfileSettingsMutation::Select { id },
+            } => {
+                select_profile(
+                    &store,
+                    &mut settings,
+                    id,
+                    &events,
+                    &mut first_error,
+                    request_id,
+                );
             }
-            ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Delete { id }) => {
+            ProfileSettingsCommand::Mutate {
+                request_id,
+                mutation: ProfileSettingsMutation::Delete { id },
+            } => {
                 delete_profile(
                     &store,
                     &root,
@@ -618,6 +872,7 @@ fn profile_settings_loop(
                     id,
                     &events,
                     &mut first_error,
+                    request_id,
                 );
             }
             ProfileSettingsCommand::SavePreferences(mut preferences) => {
@@ -627,7 +882,13 @@ fn profile_settings_loop(
                     Ok(()) => settings = preferences,
                     Err(error) => {
                         remember_first_save_error(&mut first_error, error.kind());
-                        send_failed(&events, "preferences", error.kind());
+                        send_failed(
+                            &events,
+                            None,
+                            ProfileSettingsOperation::Preferences,
+                            "preferences",
+                            error.kind(),
+                        );
                     }
                 }
             }
@@ -650,21 +911,35 @@ fn rename_profile(
     settings: &mut Settings,
     id: UsageProfileId,
     label: &str,
-    events: &mpsc::Sender<ProfileSettingsEvent>,
+    events: &mpsc::Sender<CorrelatedProfileSettingsEvent>,
     first_error: &mut Option<io::ErrorKind>,
+    request_id: ProfileSettingsRequestId,
 ) {
     let mut candidate = settings.clone();
     if candidate.usage_profiles.rename(id, label).is_err() {
-        send_failed(events, "rename", io::ErrorKind::InvalidInput);
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Rename,
+            "rename",
+            io::ErrorKind::InvalidInput,
+        );
         return;
     }
     if let Err(error) = store.save(&candidate) {
         remember_first_save_error(first_error, error.kind());
-        send_failed(events, "rename", error.kind());
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Rename,
+            "rename",
+            error.kind(),
+        );
         return;
     }
     *settings = candidate.clone();
-    let _ = events.send(ProfileSettingsEvent::Renamed {
+    let _ = events.send(CorrelatedProfileSettingsEvent::Renamed {
+        request_id,
         settings: candidate,
         id,
     });
@@ -674,86 +949,147 @@ fn select_profile(
     store: &SettingsStore,
     settings: &mut Settings,
     id: UsageProfileId,
-    events: &mpsc::Sender<ProfileSettingsEvent>,
+    events: &mpsc::Sender<CorrelatedProfileSettingsEvent>,
     first_error: &mut Option<io::ErrorKind>,
+    request_id: ProfileSettingsRequestId,
 ) {
     let mut candidate = settings.clone();
     if candidate.usage_profiles.select(id).is_err() {
-        send_failed(events, "select", io::ErrorKind::InvalidInput);
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Select,
+            "select",
+            io::ErrorKind::InvalidInput,
+        );
         return;
     }
     if let Err(error) = store.save(&candidate) {
         remember_first_save_error(first_error, error.kind());
-        send_failed(events, "select", error.kind());
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Select,
+            "select",
+            error.kind(),
+        );
         return;
     }
     *settings = candidate.clone();
-    let _ = events.send(ProfileSettingsEvent::Selected {
+    let _ = events.send(CorrelatedProfileSettingsEvent::Selected {
+        request_id,
         settings: candidate,
         id,
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn add_profile(
     store: &SettingsStore,
     root: &UsageProfileRoot,
     backend: &dyn ProfileFileSystem,
     settings: &mut Settings,
     label: &str,
-    events: &mpsc::Sender<ProfileSettingsEvent>,
+    events: &mpsc::Sender<CorrelatedProfileSettingsEvent>,
     first_error: &mut Option<io::ErrorKind>,
+    request_id: ProfileSettingsRequestId,
 ) {
     if let Err(error) = backend.cleanup_orphaned_homes(root, &settings.usage_profiles) {
-        send_failed(events, "add_cleanup", error.kind());
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Add,
+            "add_cleanup",
+            error.kind(),
+        );
         return;
     }
     let mut candidate = settings.clone();
     let profile = match candidate.usage_profiles.add(label) {
         Ok(profile) => profile,
         Err(_) => {
-            send_failed(events, "add", io::ErrorKind::InvalidInput);
+            send_failed(
+                events,
+                Some(request_id),
+                ProfileSettingsOperation::Add,
+                "add",
+                io::ErrorKind::InvalidInput,
+            );
             return;
         }
     };
     let id = profile.id();
     if let Err(error) = backend.create_managed_home(root, id) {
-        send_failed(events, "add", error.kind());
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Add,
+            "add",
+            error.kind(),
+        );
         return;
     }
     if let Err(error) = store.save(&candidate) {
         remember_first_save_error(first_error, error.kind());
         if let Err(rollback_error) = backend.remove_empty_home(root, id) {
-            send_failed(events, "add_rollback", rollback_error.kind());
+            send_failed(
+                events,
+                Some(request_id),
+                ProfileSettingsOperation::Add,
+                "add_rollback",
+                rollback_error.kind(),
+            );
             return;
         }
-        send_failed(events, "add", error.kind());
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Add,
+            "add",
+            error.kind(),
+        );
         return;
     }
     *settings = candidate.clone();
-    let _ = events.send(ProfileSettingsEvent::Added {
+    let _ = events.send(CorrelatedProfileSettingsEvent::Added {
+        request_id,
         settings: candidate,
         id,
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn delete_profile(
     store: &SettingsStore,
     root: &UsageProfileRoot,
     backend: &dyn ProfileFileSystem,
     settings: &mut Settings,
     id: UsageProfileId,
-    events: &mpsc::Sender<ProfileSettingsEvent>,
+    events: &mpsc::Sender<CorrelatedProfileSettingsEvent>,
     first_error: &mut Option<io::ErrorKind>,
+    request_id: ProfileSettingsRequestId,
 ) {
     let mut candidate = settings.clone();
     if candidate.usage_profiles.remove(id).is_err() {
-        send_failed(events, "delete", io::ErrorKind::InvalidInput);
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Delete,
+            "delete",
+            io::ErrorKind::InvalidInput,
+        );
         return;
     }
     let staged = match backend.stage_delete(root, id) {
         Ok(staged) => staged,
         Err(error) => {
-            send_failed(events, "delete", error.kind());
+            send_failed(
+                events,
+                Some(request_id),
+                ProfileSettingsOperation::Delete,
+                "delete",
+                error.kind(),
+            );
             return;
         }
     };
@@ -762,16 +1098,29 @@ fn delete_profile(
         let destination = root.managed_directory(id).ok();
         if let Some(destination) = destination {
             if let Err(restore_error) = backend.restore_staged(&staged, &destination) {
-                send_failed(events, "delete_restore", restore_error.kind());
+                send_failed(
+                    events,
+                    Some(request_id),
+                    ProfileSettingsOperation::Delete,
+                    "delete_restore",
+                    restore_error.kind(),
+                );
                 return;
             }
         }
-        send_failed(events, "delete", error.kind());
+        send_failed(
+            events,
+            Some(request_id),
+            ProfileSettingsOperation::Delete,
+            "delete",
+            error.kind(),
+        );
         return;
     }
     *settings = candidate.clone();
     let _ = backend.remove_staged(&staged);
-    let _ = events.send(ProfileSettingsEvent::Deleted {
+    let _ = events.send(CorrelatedProfileSettingsEvent::Deleted {
+        request_id,
         settings: candidate,
         id,
     });
@@ -784,11 +1133,18 @@ fn remember_first_save_error(first_error: &mut Option<io::ErrorKind>, kind: io::
 }
 
 fn send_failed(
-    events: &mpsc::Sender<ProfileSettingsEvent>,
-    operation: &'static str,
+    events: &mpsc::Sender<CorrelatedProfileSettingsEvent>,
+    request_id: Option<ProfileSettingsRequestId>,
+    operation: ProfileSettingsOperation,
+    stage: &'static str,
     kind: io::ErrorKind,
 ) {
-    let _ = events.send(ProfileSettingsEvent::Failed { operation, kind });
+    let _ = events.send(CorrelatedProfileSettingsEvent::Failed {
+        request_id,
+        operation,
+        stage,
+        kind,
+    });
 }
 
 fn join_worker(worker: Option<JoinHandle<io::Result<()>>>) -> io::Result<()> {

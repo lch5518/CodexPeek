@@ -6,11 +6,12 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    normalize_profile_label, NativeProfileFileSystem, PollTrigger, ProfileFileSystem,
-    ProfilePollEvent, ProfileRuntimeCommand, ProfileRuntimeState, ProfileSettingsEvent,
-    ProfileSettingsMutation, ProfileSettingsService, ProfileValidationError, Settings,
-    SettingsStore, UsageError, UsageProfileCatalog, UsageProfileId, UsageProfileRoot,
-    MAX_USAGE_PROFILES,
+    normalize_profile_label, CorrelatedProfileSettingsEvent as RuntimeSettingsEvent,
+    NativeProfileFileSystem, PollTrigger, ProfileFileSystem, ProfilePollEvent,
+    ProfileRuntimeCommand, ProfileRuntimeState, ProfileSettingsEvent, ProfileSettingsMutation,
+    ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService,
+    ProfileValidationError, Settings, SettingsStore, UsageError, UsageProfileCatalog,
+    UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
 };
 
 #[derive(Clone)]
@@ -179,6 +180,8 @@ struct RecordingProfileRuntime {
     state: ProfileRuntimeState,
     poll_commands: Vec<String>,
     settings_commands: Vec<String>,
+    next_request_id: u64,
+    last_request_id: Option<ProfileSettingsRequestId>,
 }
 
 impl RecordingProfileRuntime {
@@ -187,6 +190,8 @@ impl RecordingProfileRuntime {
             state: ProfileRuntimeState::new(settings, UsageProfileRoot::new(root)),
             poll_commands: Vec::new(),
             settings_commands: Vec::new(),
+            next_request_id: 1,
+            last_request_id: None,
         }
     }
 
@@ -202,7 +207,7 @@ impl RecordingProfileRuntime {
         Ok(())
     }
 
-    fn apply_settings_event(&mut self, event: ProfileSettingsEvent) {
+    fn apply_settings_event(&mut self, event: RuntimeSettingsEvent) {
         let commands = self.state.apply_settings_event(event);
         self.record(commands);
     }
@@ -216,17 +221,21 @@ impl RecordingProfileRuntime {
         for command in commands {
             match command {
                 ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Add { .. }) => {
+                    self.bind_recorded_request(ProfileSettingsOperation::Add);
                     self.settings_commands.push("add".to_owned());
                 }
                 ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Rename { id, .. }) => {
+                    self.bind_recorded_request(ProfileSettingsOperation::Rename);
                     self.settings_commands
                         .push(format!("rename:{}", id_text(id)));
                 }
                 ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Select { id }) => {
+                    self.bind_recorded_request(ProfileSettingsOperation::Select);
                     self.settings_commands
                         .push(format!("select:{}", id_text(id)));
                 }
                 ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Delete { id }) => {
+                    self.bind_recorded_request(ProfileSettingsOperation::Delete);
                     self.settings_commands
                         .push(format!("delete:{}", id_text(id)));
                 }
@@ -255,6 +264,9 @@ impl RecordingProfileRuntime {
                 ProfileRuntimeCommand::Quiesce(id) => {
                     self.poll_commands.push(format!("quiesce:{}", id_text(id)))
                 }
+                ProfileRuntimeCommand::Resume(id) => {
+                    self.poll_commands.push(format!("resume:{}", id_text(id)))
+                }
                 ProfileRuntimeCommand::Remove(id) => {
                     self.poll_commands.push(format!("remove:{}", id_text(id)))
                 }
@@ -268,6 +280,17 @@ impl RecordingProfileRuntime {
 
     fn settings_commands(&self) -> &[String] {
         &self.settings_commands
+    }
+
+    fn last_request_id(&self) -> ProfileSettingsRequestId {
+        self.last_request_id.expect("settings request was recorded")
+    }
+
+    fn bind_recorded_request(&mut self, operation: ProfileSettingsOperation) {
+        let request_id = ProfileSettingsRequestId::new(self.next_request_id).unwrap();
+        self.next_request_id += 1;
+        assert!(self.state.bind_settings_request(request_id, operation));
+        self.last_request_id = Some(request_id);
     }
 }
 
@@ -313,7 +336,8 @@ fn added_profile_is_logged_in_only_after_durable_settings_success() {
     runtime.request_add("개인".into()).unwrap();
     assert!(runtime.poll_commands().is_empty());
 
-    runtime.apply_settings_event(ProfileSettingsEvent::Added {
+    runtime.apply_settings_event(RuntimeSettingsEvent::Added {
+        request_id: runtime.last_request_id(),
         settings: settings_with_profile(1, "개인"),
         id: UsageProfileId::Managed(1),
     });
@@ -341,12 +365,15 @@ fn delete_waits_for_quiesce_before_storage_delete() {
 fn failed_selection_save_retains_the_previous_render_selection() {
     let mut runtime = selected_managed_profile_fixture();
 
-    runtime
+    let commands = runtime
         .state
         .request_select(UsageProfileId::System)
         .unwrap();
-    runtime.apply_settings_event(ProfileSettingsEvent::Failed {
-        operation: "select",
+    runtime.record(commands);
+    runtime.apply_settings_event(RuntimeSettingsEvent::Failed {
+        request_id: Some(runtime.last_request_id()),
+        operation: ProfileSettingsOperation::Select,
+        stage: "select",
         kind: io::ErrorKind::PermissionDenied,
     });
 
@@ -358,9 +385,83 @@ fn failed_selection_save_retains_the_previous_render_selection() {
 }
 
 #[test]
+fn preference_and_stale_failures_do_not_clear_profile_pending_request() {
+    let mut runtime = selected_managed_profile_fixture();
+    runtime
+        .state
+        .request_select(UsageProfileId::System)
+        .unwrap();
+    let active = ProfileSettingsRequestId::new(41).unwrap();
+    runtime
+        .state
+        .bind_settings_request(active, ProfileSettingsOperation::Select);
+
+    runtime.apply_settings_event(RuntimeSettingsEvent::Failed {
+        request_id: None,
+        operation: ProfileSettingsOperation::Preferences,
+        stage: "preferences",
+        kind: io::ErrorKind::PermissionDenied,
+    });
+    assert!(runtime.state.mutation_pending());
+
+    runtime.apply_settings_event(RuntimeSettingsEvent::Failed {
+        request_id: Some(ProfileSettingsRequestId::new(40).unwrap()),
+        operation: ProfileSettingsOperation::Select,
+        stage: "select",
+        kind: io::ErrorKind::PermissionDenied,
+    });
+    assert!(runtime.state.mutation_pending());
+
+    runtime.apply_settings_event(RuntimeSettingsEvent::Failed {
+        request_id: Some(active),
+        operation: ProfileSettingsOperation::Select,
+        stage: "select",
+        kind: io::ErrorKind::PermissionDenied,
+    });
+    assert!(!runtime.state.mutation_pending());
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::Managed(1)
+    );
+}
+
+#[test]
+fn mismatched_success_event_cannot_update_pending_selection() {
+    let mut runtime = selected_managed_profile_fixture();
+    runtime
+        .state
+        .request_select(UsageProfileId::System)
+        .unwrap();
+    let active = ProfileSettingsRequestId::new(51).unwrap();
+    runtime
+        .state
+        .bind_settings_request(active, ProfileSettingsOperation::Select);
+    let mut selected_system = runtime.state.settings().clone();
+    selected_system
+        .usage_profiles
+        .select(UsageProfileId::System)
+        .unwrap();
+
+    runtime.apply_settings_event(RuntimeSettingsEvent::Selected {
+        request_id: ProfileSettingsRequestId::new(52).unwrap(),
+        settings: selected_system,
+        id: UsageProfileId::System,
+    });
+
+    assert!(runtime.state.mutation_pending());
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::Managed(1)
+    );
+    assert!(runtime.poll_commands().is_empty());
+}
+
+#[test]
 fn successful_login_selects_durably_before_forced_refresh() {
     let mut runtime = profile_runtime_fixture();
-    runtime.apply_settings_event(ProfileSettingsEvent::Added {
+    runtime.request_add("개인".into()).unwrap();
+    runtime.apply_settings_event(RuntimeSettingsEvent::Added {
+        request_id: runtime.last_request_id(),
         settings: settings_with_profile(1, "개인"),
         id: UsageProfileId::Managed(1),
     });
@@ -379,7 +480,8 @@ fn successful_login_selects_durably_before_forced_refresh() {
         .usage_profiles
         .select(UsageProfileId::Managed(1))
         .unwrap();
-    runtime.apply_settings_event(ProfileSettingsEvent::Selected {
+    runtime.apply_settings_event(RuntimeSettingsEvent::Selected {
+        request_id: runtime.last_request_id(),
         settings: selected,
         id: UsageProfileId::Managed(1),
     });
@@ -392,7 +494,9 @@ fn successful_login_selects_durably_before_forced_refresh() {
 #[test]
 fn cancelled_login_retains_login_required_without_selecting_profile() {
     let mut runtime = profile_runtime_fixture();
-    runtime.apply_settings_event(ProfileSettingsEvent::Added {
+    runtime.request_add("개인".into()).unwrap();
+    runtime.apply_settings_event(RuntimeSettingsEvent::Added {
+        request_id: runtime.last_request_id(),
         settings: settings_with_profile(1, "개인"),
         id: UsageProfileId::Managed(1),
     });
@@ -436,7 +540,8 @@ fn deleting_selected_profile_falls_back_to_system_after_durable_delete() {
     )));
     runtime.poll_commands.clear();
 
-    runtime.apply_settings_event(ProfileSettingsEvent::Deleted {
+    runtime.apply_settings_event(RuntimeSettingsEvent::Deleted {
+        request_id: runtime.last_request_id(),
         settings: Settings::default(),
         id: UsageProfileId::Managed(1),
     });
@@ -449,6 +554,69 @@ fn deleting_selected_profile_falls_back_to_system_after_durable_delete() {
         runtime.poll_commands(),
         ["remove:managed-1", "select:system"]
     );
+}
+
+#[test]
+fn deleting_unselected_profile_keeps_authoritative_managed_selection() {
+    let mut settings = settings_with_profile(2, "두 번째");
+    settings
+        .usage_profiles
+        .select(UsageProfileId::Managed(1))
+        .unwrap();
+    let mut runtime = RecordingProfileRuntime::new(settings, test_root("runtime-delete-other"));
+    runtime.request_delete(UsageProfileId::Managed(2)).unwrap();
+    runtime.apply_poll_event(ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+        2,
+    )));
+    runtime.poll_commands.clear();
+
+    let mut deleted = settings_with_profile(2, "두 번째");
+    deleted
+        .usage_profiles
+        .select(UsageProfileId::Managed(1))
+        .unwrap();
+    deleted
+        .usage_profiles
+        .remove(UsageProfileId::Managed(2))
+        .unwrap();
+    runtime.apply_settings_event(RuntimeSettingsEvent::Deleted {
+        request_id: runtime.last_request_id(),
+        settings: deleted,
+        id: UsageProfileId::Managed(2),
+    });
+
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::Managed(1)
+    );
+    assert_eq!(
+        runtime.poll_commands(),
+        ["remove:managed-2", "select:managed-1"]
+    );
+}
+
+#[test]
+fn failed_staged_delete_resumes_only_the_quiesced_profile() {
+    let mut runtime = selected_managed_profile_fixture();
+    runtime.request_delete(UsageProfileId::Managed(1)).unwrap();
+    runtime.apply_poll_event(ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+        1,
+    )));
+    runtime.poll_commands.clear();
+
+    runtime.apply_settings_event(RuntimeSettingsEvent::Failed {
+        request_id: Some(runtime.last_request_id()),
+        operation: ProfileSettingsOperation::Delete,
+        stage: "delete",
+        kind: io::ErrorKind::PermissionDenied,
+    });
+
+    assert_eq!(runtime.poll_commands(), ["resume:managed-1"]);
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::Managed(1)
+    );
+    assert!(!runtime.state.mutation_pending());
 }
 
 #[test]
@@ -505,6 +673,90 @@ fn profile_settings_delete_stages_directory_saves_then_removes_staged_directory(
         backend.operations(),
         ["stage_delete", "save_settings", "remove_staged"]
     );
+    service.stop().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn profile_settings_events_echo_monotonic_request_ids() {
+    let root = test_root("request-correlation");
+    let store = SettingsStore::for_root(&root);
+    let settings = Settings::default();
+    store.save(&settings).unwrap();
+    let service = ProfileSettingsService::start(
+        store.clone(),
+        settings,
+        RecordingProfileFileSystem::new(store),
+    );
+
+    let add_request = service
+        .submit_correlated(ProfileSettingsMutation::Add {
+            label: "Work".to_owned(),
+        })
+        .unwrap();
+    let added = service.wait_for_correlated_event().unwrap();
+    assert!(matches!(
+        added,
+        RuntimeSettingsEvent::Added { request_id, .. } if request_id == add_request
+    ));
+
+    let rename_request = service
+        .submit_correlated(ProfileSettingsMutation::Rename {
+            id: UsageProfileId::Managed(1),
+            label: "Office".to_owned(),
+        })
+        .unwrap();
+    let renamed = service.wait_for_correlated_event().unwrap();
+    assert!(rename_request > add_request);
+    assert!(matches!(
+        renamed,
+        RuntimeSettingsEvent::Renamed { request_id, .. } if request_id == rename_request
+    ));
+    service.stop().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn legacy_profile_settings_api_signature_and_event_shape_remain_compatible() {
+    let _submit: fn(&ProfileSettingsService, ProfileSettingsMutation) -> io::Result<()> =
+        ProfileSettingsService::submit;
+    let event = ProfileSettingsEvent::Failed {
+        operation: "preferences",
+        kind: io::ErrorKind::PermissionDenied,
+    };
+
+    assert!(matches!(
+        event,
+        ProfileSettingsEvent::Failed {
+            operation: "preferences",
+            kind: io::ErrorKind::PermissionDenied,
+        }
+    ));
+}
+
+#[test]
+fn profile_settings_event_debug_never_contains_labels_or_paths() {
+    let root = test_root("debug-redaction");
+    let store = SettingsStore::for_root(&root);
+    let settings = Settings::default();
+    store.save(&settings).unwrap();
+    let service = ProfileSettingsService::start(
+        store.clone(),
+        settings,
+        RecordingProfileFileSystem::new(store),
+    );
+    let sentinel_label = "SENTINEL_PRIVATE_LABEL";
+
+    service
+        .submit_correlated(ProfileSettingsMutation::Add {
+            label: sentinel_label.to_owned(),
+        })
+        .unwrap();
+    let event = service.wait_for_correlated_event().unwrap();
+    let debug = format!("{event:?}");
+
+    assert!(!debug.contains(sentinel_label));
+    assert!(!debug.contains(root.to_string_lossy().as_ref()));
     service.stop().unwrap();
     let _ = std::fs::remove_dir_all(root);
 }

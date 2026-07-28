@@ -382,6 +382,166 @@ fn quiesce_emits_after_current_profile_work_returns() {
 }
 
 #[test]
+fn resume_reenables_automatic_and_manual_polling() {
+    let provider = FakeProfileProvider::with_steps([
+        ProviderStep {
+            waits_for_release: true,
+            ..fetch_step(UsageProfileId::System)
+        },
+        fetch_step(UsageProfileId::Managed(1)),
+        fetch_step(UsageProfileId::Managed(1)),
+    ]);
+    let service = ProfilePollingService::start(
+        Arc::new(provider.clone()),
+        vec![ProfileExecutionContext::system(), managed_context(1)],
+        UsageProfileId::System,
+        5,
+        false,
+    )
+    .unwrap();
+    provider.wait_for_calls(1);
+
+    service.quiesce(UsageProfileId::Managed(1)).unwrap();
+    provider.release_one();
+    provider.wait_for_completed(1);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !service
+        .take_events()
+        .contains(&ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+            1,
+        )))
+    {
+        assert!(Instant::now() < deadline, "quiesce event did not arrive");
+        thread::yield_now();
+    }
+    service.resume(UsageProfileId::Managed(1)).unwrap();
+    provider.wait_for_completed(2);
+    let after_automatic = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+    assert_eq!(
+        after_automatic
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.primary.as_ref())
+            .map(|window| window.used_percent),
+        Some(1.0)
+    );
+
+    service.select(UsageProfileId::Managed(1)).unwrap();
+    service.refresh_selected(PollTrigger::Manual).unwrap();
+    provider.wait_for_completed(3);
+    assert_eq!(
+        provider.calls(),
+        vec![
+            (UsageProfileId::System, "fetch"),
+            (UsageProfileId::Managed(1), "fetch"),
+            (UsageProfileId::Managed(1), "fetch"),
+        ]
+    );
+    assert_eq!(provider.max_active(), 1);
+    service.stop();
+}
+
+#[test]
+fn resume_preserves_last_good_and_backoff_state() {
+    let provider = FakeProfileProvider::with_steps([
+        fetch_step(UsageProfileId::Managed(1)),
+        fetch_step(UsageProfileId::System),
+        ProviderStep {
+            operation: "fetch",
+            result: ProviderResult::Fetch(Err(UsageError::RpcTimeout)),
+            waits_for_release: false,
+        },
+    ]);
+    let service = ProfilePollingService::start(
+        Arc::new(provider.clone()),
+        vec![ProfileExecutionContext::system(), managed_context(1)],
+        UsageProfileId::Managed(1),
+        5,
+        false,
+    )
+    .unwrap();
+    provider.wait_for_completed(2);
+    let last_good_at = service
+        .snapshot(UsageProfileId::Managed(1))
+        .unwrap()
+        .last_success_at;
+
+    service.quiesce(UsageProfileId::Managed(1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !service
+        .take_events()
+        .contains(&ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+            1,
+        )))
+    {
+        assert!(Instant::now() < deadline, "quiesce event did not arrive");
+        thread::yield_now();
+    }
+    service.resume(UsageProfileId::Managed(1)).unwrap();
+    service.refresh_selected(PollTrigger::Manual).unwrap();
+    provider.wait_for_completed(3);
+
+    let resumed = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+    assert_eq!(resumed.last_success_at, last_good_at);
+    assert_eq!(resumed.last_error, Some(UsageError::RpcTimeout));
+    assert_eq!(
+        resumed
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.primary.as_ref())
+            .map(|window| window.used_percent),
+        Some(1.0)
+    );
+    service.stop();
+}
+
+#[test]
+fn deleting_unselected_profile_keeps_refresh_on_authoritative_selection() {
+    let provider = FakeProfileProvider::with_steps([
+        fetch_step(UsageProfileId::Managed(1)),
+        fetch_step(UsageProfileId::System),
+        fetch_step(UsageProfileId::Managed(2)),
+        fetch_step(UsageProfileId::Managed(1)),
+    ]);
+    let service = ProfilePollingService::start(
+        Arc::new(provider.clone()),
+        vec![
+            ProfileExecutionContext::system(),
+            managed_context(1),
+            managed_context(2),
+        ],
+        UsageProfileId::Managed(1),
+        5,
+        false,
+    )
+    .unwrap();
+    provider.wait_for_completed(3);
+
+    service.quiesce(UsageProfileId::Managed(2)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !service
+        .take_events()
+        .contains(&ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+            2,
+        )))
+    {
+        assert!(Instant::now() < deadline, "quiesce event did not arrive");
+        thread::yield_now();
+    }
+    service.remove(UsageProfileId::Managed(2)).unwrap();
+    service.select(UsageProfileId::Managed(1)).unwrap();
+    service.refresh_selected(PollTrigger::Manual).unwrap();
+    provider.wait_for_completed(4);
+
+    assert_eq!(service.selected_id(), UsageProfileId::Managed(1));
+    assert_eq!(
+        provider.calls().last(),
+        Some(&(UsageProfileId::Managed(1), "fetch"))
+    );
+    service.stop();
+}
+
+#[test]
 fn logout_is_serialized_and_reports_an_event() {
     let provider = FakeProfileProvider::with_steps([
         fetch_step(UsageProfileId::System),

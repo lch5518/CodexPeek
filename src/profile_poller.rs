@@ -41,6 +41,7 @@ enum ProfilePollCommand {
     RefreshSelected(PollTrigger),
     Add(ProfileExecutionContext),
     Quiesce(UsageProfileId),
+    Resume(UsageProfileId),
     Remove(UsageProfileId),
     Login(UsageProfileId, LoginPageOpener),
     Logout(UsageProfileId),
@@ -169,6 +170,14 @@ impl ProfilePollingService {
     /// `ProfilePollEvent::ProfileQuiesced`를 내보냅니다.
     pub fn quiesce(&self, id: UsageProfileId) -> Result<(), &'static str> {
         self.send(ProfilePollCommand::Quiesce(id))
+    }
+
+    /// 정지된 프로필을 기존 폴링 상태 그대로 자동 조회 대상에 복귀시킵니다.
+    ///
+    /// `id`의 `PollState`, 마지막 정상 사용량, 오류 백오프와 다음 예약 시각은 변경하지 않고
+    /// quiesce 표시만 제거합니다. 존재하지 않거나 정지되지 않은 프로필은 안전한 no-op입니다.
+    pub fn resume(&self, id: UsageProfileId) -> Result<(), &'static str> {
+        self.send(ProfilePollCommand::Resume(id))
     }
 
     /// 정지된 프로필의 실행 컨텍스트와 폴링 상태를 워커에서 제거합니다.
@@ -416,6 +425,9 @@ fn handle_command(
                 state.quiesced.insert(id);
                 state.events.push(ProfilePollEvent::ProfileQuiesced(id));
             }
+        }
+        ProfilePollCommand::Resume(id) => {
+            lock(shared).quiesced.remove(&id);
         }
         ProfilePollCommand::Remove(id) => {
             let mut state = lock(shared);
