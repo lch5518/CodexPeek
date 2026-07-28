@@ -1,11 +1,11 @@
 # Monitor de Uso de Codex
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor es un pequeño widget nativo para Windows que permite consultar tu uso de Codex de un vistazo.
 Muestra las ventanas de límite de uso primaria y secundaria en la barra de tareas, en un widget flotante y en la bandeja del sistema.
 
-![Widget de Codex Usage Monitor en la barra de tareas](docs/images/taskbar-widget-en.png)
+![Widget de Codex Usage Monitor en la barra de tareas](../images/taskbar-widget-en.png)
 
 ## Aspectos destacados
 
@@ -108,7 +108,7 @@ Inicio, pero no habilita el inicio con Windows de forma predeterminada.
 Las versiones iniciales no están firmadas con código y pueden activar Microsoft Defender SmartScreen.
 Descarga únicamente desde la release oficial y verifica el archivo con `SHA256SUMS.txt`.
 
-Consulta la [guía de instalación detallada (en coreano)](docs/INSTALL.md) para ver la verificación de hash,
+Consulta la [guía de instalación detallada (en coreano)](../INSTALL.md) para ver la verificación de hash,
 actualizaciones, comportamiento de desinstalación, diagnósticos y solución de problemas.
 
 ## Usar el monitor
@@ -136,7 +136,7 @@ Los tokens, ID de cuenta, direcciones de correo, contenido de archivos de autent
 La configuración se guarda en `%APPDATA%\CodexUsageMonitor\settings.json`.
 Un registro de diagnóstico acotado se guarda en `%TEMP%\codex-peek.log`.
 
-Para la guía completa sobre tratamiento de datos e informes de vulnerabilidades, consulta [SECURITY.md](SECURITY.md).
+Para la guía completa sobre tratamiento de datos e informes de vulnerabilidades, consulta [SECURITY.md](../../SECURITY.md).
 
 ## Solución de problemas
 
@@ -163,7 +163,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Las comprobaciones automatizadas no sustituyen los escenarios de recuperación de Windows, DPI, varios monitores y Explorer de la [lista de verificación de release](docs/RELEASE_CHECKLIST.md).
+Las comprobaciones automatizadas no sustituyen los escenarios de recuperación de Windows, DPI, varios monitores y Explorer de la [lista de verificación de release](../RELEASE_CHECKLIST.md).
 
 ## ❤️ Soporte
 
@@ -176,5 +176,5 @@ Cada patrocinio ayuda a mantener el proyecto activamente mantenido.
 
 ## Licencia
 
-Este proyecto está disponible bajo la [MIT License](LICENSE).
-Consulta [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) para ver los avisos de terceros.
+Este proyecto está disponible bajo la [MIT License](../../LICENSE).
+Consulta [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) para ver los avisos de terceros.

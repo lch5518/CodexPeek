@@ -1,11 +1,11 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor は、Codex の使用状況をひと目で確認するための小さな Windows ネイティブウィジェットです。
 主使用量と副使用量のレート制限ウィンドウを、タスクバー、フローティングウィジェット、システムトレイに表示します。
 
-![Codex Usage Monitor タスクバーウィジェット](docs/images/taskbar-widget-en.png)
+![Codex Usage Monitor タスクバーウィジェット](../images/taskbar-widget-en.png)
 
 ## ハイライト
 
@@ -106,7 +106,7 @@ Installer 版と Portable 版は `%APPDATA%\CodexUsageMonitor\settings.json` を
 初期リリースはコード署名されていないため、Microsoft Defender SmartScreen が表示される場合があります。
 公式リリースからのみダウンロードし、`SHA256SUMS.txt` でファイルを検証してください。
 
-ハッシュ検証、更新、アンインストール動作、診断、トラブルシューティングについては、[詳細なインストールガイド (韓国語)](docs/INSTALL.md) を参照してください。
+ハッシュ検証、更新、アンインストール動作、診断、トラブルシューティングについては、[詳細なインストールガイド (韓国語)](../INSTALL.md) を参照してください。
 
 ## モニターの使い方
 
@@ -133,7 +133,7 @@ Explorer の再起動やタスクバー配置の変更後にタスクバーウ�
 設定は `%APPDATA%\CodexUsageMonitor\settings.json` に保存されます。
 サイズを制限した診断ログは `%TEMP%\codex-peek.log` に保存されます。
 
-データ取り扱いと脆弱性報告に関する完全なガイダンスは、[SECURITY.md](SECURITY.md) を参照してください。
+データ取り扱いと脆弱性報告に関する完全なガイダンスは、[SECURITY.md](../../SECURITY.md) を参照してください。
 
 ## トラブルシューティング
 
@@ -160,7 +160,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-自動チェックは、[リリースチェックリスト](docs/RELEASE_CHECKLIST.md) にある Windows、DPI、マルチモニター、Explorer 復旧シナリオの代わりにはなりません。
+自動チェックは、[リリースチェックリスト](../RELEASE_CHECKLIST.md) にある Windows、DPI、マルチモニター、Explorer 復旧シナリオの代わりにはなりません。
 
 ## ❤️ サポート
 
@@ -173,5 +173,5 @@ CodexPeek が時間の節約に役立っている場合は、開発支援をご�
 
 ## ライセンス
 
-このプロジェクトは [MIT License](LICENSE) のもとで提供されています。
-サードパーティ通知については [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+このプロジェクトは [MIT License](../../LICENSE) のもとで提供されています。
+サードパーティ通知については [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) を参照してください。

@@ -1,11 +1,11 @@
 # Monitor de Uso do Codex
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor é um pequeno widget nativo para Windows que permite verificar seu uso do Codex rapidamente.
 Ele mostra as janelas de limite de uso primária e secundária na barra de tarefas, em um widget flutuante e na bandeja do sistema.
 
-![Widget do Codex Usage Monitor na barra de tarefas](docs/images/taskbar-widget-en.png)
+![Widget do Codex Usage Monitor na barra de tarefas](../images/taskbar-widget-en.png)
 
 ## Destaques
 
@@ -108,7 +108,7 @@ atalho no menu Iniciar, mas não habilita a inicialização com o Windows por pa
 As primeiras releases não são assinadas por código e podem acionar o Microsoft Defender SmartScreen.
 Baixe somente da release oficial e verifique o arquivo com `SHA256SUMS.txt`.
 
-Consulte o [guia de instalação detalhado (em coreano)](docs/INSTALL.md) para verificação de hash,
+Consulte o [guia de instalação detalhado (em coreano)](../INSTALL.md) para verificação de hash,
 atualizações, comportamento de desinstalação, diagnósticos e solução de problemas.
 
 ## Usar o monitor
@@ -136,7 +136,7 @@ Tokens, IDs de conta, endereços de e-mail, conteúdo de arquivos de autenticaç
 As configurações são armazenadas em `%APPDATA%\CodexUsageMonitor\settings.json`.
 Um log de diagnóstico limitado é armazenado em `%TEMP%\codex-peek.log`.
 
-Para a orientação completa sobre tratamento de dados e relato de vulnerabilidades, consulte [SECURITY.md](SECURITY.md).
+Para a orientação completa sobre tratamento de dados e relato de vulnerabilidades, consulte [SECURITY.md](../../SECURITY.md).
 
 ## Solução de problemas
 
@@ -163,7 +163,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-As verificações automatizadas não substituem os cenários de recuperação de Windows, DPI, vários monitores e Explorer na [lista de verificação de release](docs/RELEASE_CHECKLIST.md).
+As verificações automatizadas não substituem os cenários de recuperação de Windows, DPI, vários monitores e Explorer na [lista de verificação de release](../RELEASE_CHECKLIST.md).
 
 ## ❤️ Apoio
 
@@ -176,5 +176,5 @@ Cada patrocínio ajuda a manter o projeto ativo.
 
 ## Licença
 
-Este projeto está disponível sob a [MIT License](LICENSE).
-Consulte [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) para avisos de terceiros.
+Este projeto está disponível sob a [MIT License](../../LICENSE).
+Consulte [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) para avisos de terceiros.

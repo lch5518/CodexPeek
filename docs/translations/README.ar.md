@@ -1,11 +1,11 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor هو ويدجت Windows أصلي صغير للتحقق من استخدام Codex بنظرة سريعة.
 يعرض نوافذ حدود المعدل الأساسية والثانوية في شريط المهام، وويدجت عائم، وعلبة النظام.
 
-![ويدجت Codex Usage Monitor في شريط المهام](docs/images/taskbar-widget-en.png)
+![ويدجت Codex Usage Monitor في شريط المهام](../images/taskbar-widget-en.png)
 
 ## أبرز الميزات
 
@@ -107,7 +107,7 @@ cargo build --release
 الإصدارات الأولى غير موقعة برمز وقد تؤدي إلى ظهور تحذير Microsoft Defender SmartScreen.
 نزل فقط من الإصدار الرسمي وتحقق من الملف مقابل `SHA256SUMS.txt`.
 
-راجع [دليل التثبيت التفصيلي (بالكورية)](docs/INSTALL.md) للتحقق من التجزئة،
+راجع [دليل التثبيت التفصيلي (بالكورية)](../INSTALL.md) للتحقق من التجزئة،
 والتحديثات، وسلوك إزالة التثبيت، والتشخيصات، واستكشاف الأخطاء وإصلاحها.
 
 ## استخدام المراقب
@@ -135,7 +135,7 @@ cargo build --release
 تخزن الإعدادات في `%APPDATA%\CodexUsageMonitor\settings.json`.
 ويخزن سجل تشخيص محدود في `%TEMP%\codex-peek.log`.
 
-للاطلاع على إرشادات معالجة البيانات والإبلاغ عن الثغرات كاملة، راجع [SECURITY.md](SECURITY.md).
+للاطلاع على إرشادات معالجة البيانات والإبلاغ عن الثغرات كاملة، راجع [SECURITY.md](../../SECURITY.md).
 
 ## استكشاف الأخطاء وإصلاحها
 
@@ -162,7 +162,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-لا تغني الفحوصات الآلية عن سيناريوهات Windows و DPI والشاشات المتعددة واسترداد Explorer في [قائمة تحقق الإصدار](docs/RELEASE_CHECKLIST.md).
+لا تغني الفحوصات الآلية عن سيناريوهات Windows و DPI والشاشات المتعددة واسترداد Explorer في [قائمة تحقق الإصدار](../RELEASE_CHECKLIST.md).
 
 ## ❤️ الدعم
 
@@ -175,5 +175,5 @@ cargo build --release
 
 ## الترخيص
 
-هذا المشروع متاح بموجب [ترخيص MIT](LICENSE).
-راجع [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) للاطلاع على إشعارات الجهات الخارجية.
+هذا المشروع متاح بموجب [ترخيص MIT](../../LICENSE).
+راجع [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) للاطلاع على إشعارات الجهات الخارجية.

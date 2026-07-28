@@ -1,11 +1,11 @@
 # Codex 사용량 모니터
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows 네이티브 위젯입니다.
 기본·보조 사용량 기간을 작업 표시줄, 플로팅 위젯, 시스템 트레이에 표시합니다.
 
-![Codex 사용량 모니터 작업 표시줄 위젯](docs/images/taskbar-widget.png)
+![Codex 사용량 모니터 작업 표시줄 위젯](../images/taskbar-widget.png)
 
 ## 주요 기능
 
@@ -107,7 +107,7 @@ Installer와 Portable은 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용�
 초기 릴리스는 코드 서명되지 않아 Microsoft Defender SmartScreen 경고가 나타날 수
 있습니다. 공식 Release에서만 다운로드하고 `SHA256SUMS.txt`로 파일을 검증하세요.
 
-해시 확인, 업데이트, 제거와 문제 해결은 [상세 설치 가이드](docs/INSTALL.md)를
+해시 확인, 업데이트, 제거와 문제 해결은 [상세 설치 가이드](../INSTALL.md)를
 참고하세요.
 
 ## 사용 방법
@@ -137,7 +137,7 @@ Explorer 재시작이나 작업 표시줄 배치 변경으로 위젯을 붙이�
 설정은 `%APPDATA%\CodexUsageMonitor\settings.json`에 저장합니다.
 크기가 제한된 진단 로그는 `%TEMP%\codex-peek.log`에 저장합니다.
 
-데이터 처리와 취약점 보고 안내는 [SECURITY.md](SECURITY.md)를 참고하세요.
+데이터 처리와 취약점 보고 안내는 [SECURITY.md](../../SECURITY.md)를 참고하세요.
 
 ## 문제 해결
 
@@ -164,7 +164,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-자동화된 검사는 [릴리스 체크리스트](docs/RELEASE_CHECKLIST.md)의 Windows, DPI, 다중 모니터, Explorer 복구 검증을 대체하지 않습니다.
+자동화된 검사는 [릴리스 체크리스트](../RELEASE_CHECKLIST.md)의 Windows, DPI, 다중 모니터, Explorer 복구 검증을 대체하지 않습니다.
 
 ## ❤️ 후원
 
@@ -177,5 +177,5 @@ CodexPeek가 시간을 절약해 드린다면 개발을 후원해 주세요.
 
 ## 라이선스
 
-이 프로젝트는 [MIT License](LICENSE)로 제공됩니다.
-서드파티 고지는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고하세요.
+이 프로젝트는 [MIT License](../../LICENSE)로 제공됩니다.
+서드파티 고지는 [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)를 참고하세요.

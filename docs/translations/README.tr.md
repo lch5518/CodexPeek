@@ -1,11 +1,11 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor, Codex kullanımınızı hızlıca kontrol etmek için hazırlanmış küçük bir yerel Windows aracıdır.
 Birincil ve ikincil hız sınırı pencerelerini görev çubuğunda, yüzen bir araçta ve sistem tepsisinde gösterir.
 
-![Codex Usage Monitor görev çubuğu aracı](docs/images/taskbar-widget-en.png)
+![Codex Usage Monitor görev çubuğu aracı](../images/taskbar-widget-en.png)
 
 ## Öne çıkanlar
 
@@ -109,7 +109,7 @@ ancak Windows başlangıcını varsayılan olarak etkinleştirmez.
 Yalnızca resmi sürümden indirin ve dosyayı `SHA256SUMS.txt` ile doğrulayın.
 
 Karma doğrulama, güncellemeler, kaldırma davranışı, tanılama ve sorun giderme için
-[ayrıntılı kurulum kılavuzuna (Korece)](docs/INSTALL.md) bakın.
+[ayrıntılı kurulum kılavuzuna (Korece)](../INSTALL.md) bakın.
 
 ## İzleyiciyi kullanma
 
@@ -136,7 +136,7 @@ Token'lar, hesap ID'leri, e-posta adresleri, kimlik doğrulama dosyası içerikl
 Ayarlar `%APPDATA%\CodexUsageMonitor\settings.json` içinde saklanır.
 Sınırlı tanılama günlüğü `%TEMP%\codex-peek.log` içinde saklanır.
 
-Eksiksiz veri işleme ve güvenlik açığı bildirme yönergeleri için [SECURITY.md](SECURITY.md) dosyasına bakın.
+Eksiksiz veri işleme ve güvenlik açığı bildirme yönergeleri için [SECURITY.md](../../SECURITY.md) dosyasına bakın.
 
 ## Sorun giderme
 
@@ -163,7 +163,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Otomatik kontroller, [sürüm kontrol listesindeki](docs/RELEASE_CHECKLIST.md) Windows, DPI, çoklu monitör ve Explorer kurtarma senaryolarının yerini tutmaz.
+Otomatik kontroller, [sürüm kontrol listesindeki](../RELEASE_CHECKLIST.md) Windows, DPI, çoklu monitör ve Explorer kurtarma senaryolarının yerini tutmaz.
 
 ## ❤️ Destek
 
@@ -176,5 +176,5 @@ Her sponsorluk projenin aktif olarak bakımının sürdürülmesine yardımcı o
 
 ## Lisans
 
-Bu proje [MIT Lisansı](LICENSE) kapsamında sunulur.
-Üçüncü taraf bildirimleri için [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) dosyasına bakın.
+Bu proje [MIT Lisansı](../../LICENSE) kapsamında sunulur.
+Üçüncü taraf bildirimleri için [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) dosyasına bakın.

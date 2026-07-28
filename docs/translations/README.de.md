@@ -1,11 +1,11 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor ist ein kleines natives Windows-Widget, mit dem du deine Codex-Nutzung auf einen Blick prüfen kannst.
 Es zeigt die primären und sekundären Rate-Limit-Zeitfenster in der Taskleiste, in einem schwebenden Widget und im System-Tray an.
 
-![Codex Usage Monitor taskbar widget](docs/images/taskbar-widget-en.png)
+![Codex Usage Monitor taskbar widget](../images/taskbar-widget-en.png)
 
 ## Highlights
 
@@ -111,7 +111,7 @@ aktiviert Windows-Autostart aber nicht standardmäßig.
 Erste Releases sind nicht code-signiert und können Microsoft Defender SmartScreen auslösen.
 Lade nur aus dem offiziellen Release herunter und verifiziere die Datei gegen `SHA256SUMS.txt`.
 
-Weitere Informationen zu Hash-Verifikation, Updates, Deinstallationsverhalten, Diagnosen und Fehlerbehebung findest du im [detaillierten Installationsleitfaden (Korean)](docs/INSTALL.md).
+Weitere Informationen zu Hash-Verifikation, Updates, Deinstallationsverhalten, Diagnosen und Fehlerbehebung findest du im [detaillierten Installationsleitfaden (Korean)](../INSTALL.md).
 
 ## Monitor verwenden
 
@@ -138,7 +138,7 @@ Tokens, Konto-IDs, E-Mail-Adressen, Inhalte von Authentifizierungsdateien und Pr
 Einstellungen werden in `%APPDATA%\CodexUsageMonitor\settings.json` gespeichert.
 Ein begrenztes Diagnose-Log wird in `%TEMP%\codex-peek.log` gespeichert.
 
-Die vollständigen Hinweise zu Datenverarbeitung und Vulnerability Reporting findest du in [SECURITY.md](SECURITY.md).
+Die vollständigen Hinweise zu Datenverarbeitung und Vulnerability Reporting findest du in [SECURITY.md](../../SECURITY.md).
 
 ## Fehlerbehebung
 
@@ -165,7 +165,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Automatisierte Checks ersetzen nicht die Windows-, DPI-, Multi-Monitor- und Explorer-Recovery-Szenarien in der [Release-Checkliste](docs/RELEASE_CHECKLIST.md).
+Automatisierte Checks ersetzen nicht die Windows-, DPI-, Multi-Monitor- und Explorer-Recovery-Szenarien in der [Release-Checkliste](../RELEASE_CHECKLIST.md).
 
 ## ❤️ Support
 
@@ -178,5 +178,5 @@ Jedes Sponsoring hilft, das Projekt aktiv zu pflegen.
 
 ## Lizenz
 
-Dieses Projekt ist unter der [MIT License](LICENSE) verfügbar.
-Hinweise zu Drittanbietern findest du in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Dieses Projekt ist unter der [MIT License](../../LICENSE) verfügbar.
+Hinweise zu Drittanbietern findest du in [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md).

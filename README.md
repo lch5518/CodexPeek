@@ -1,6 +1,6 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](README.md) · [한국어](docs/translations/README.ko.md) · [Español](docs/translations/README.es.md) · [Português (Brasil)](docs/translations/README.pt-BR.md) · [Bahasa Indonesia](docs/translations/README.id.md) · [日本語](docs/translations/README.ja.md) · [हिन्दी](docs/translations/README.hi.md) · [Deutsch](docs/translations/README.de.md) · [Français](docs/translations/README.fr.md) · [Tiếng Việt](docs/translations/README.vi.md) · [Türkçe](docs/translations/README.tr.md) · [العربية](docs/translations/README.ar.md)
 
 Codex Usage Monitor is a small native Windows widget for checking your Codex usage at a glance.
 It shows the primary and secondary rate-limit windows in the taskbar, a floating widget, and the system tray.

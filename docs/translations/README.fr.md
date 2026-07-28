@@ -1,11 +1,11 @@
 # Moniteur d'utilisation Codex
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor est un petit widget Windows natif qui permet de consulter rapidement votre utilisation de Codex.
 Il affiche les fenêtres de limite de débit principale et secondaire dans la barre des tâches, dans un widget flottant et dans la zone de notification système.
 
-![Widget Codex Usage Monitor dans la barre des tâches](docs/images/taskbar-widget-en.png)
+![Widget Codex Usage Monitor dans la barre des tâches](../images/taskbar-widget-en.png)
 
 ## Points forts
 
@@ -109,7 +109,7 @@ mais n'active pas le démarrage avec Windows par défaut.
 Les premières releases ne sont pas signées par code et peuvent déclencher Microsoft Defender SmartScreen.
 Téléchargez uniquement depuis la release officielle et vérifiez le fichier avec `SHA256SUMS.txt`.
 
-Consultez le [guide d'installation détaillé (coréen)](docs/INSTALL.md) pour la vérification des hachages,
+Consultez le [guide d'installation détaillé (coréen)](../INSTALL.md) pour la vérification des hachages,
 les mises à jour, le comportement de désinstallation, les diagnostics et le dépannage.
 
 ## Utiliser le moniteur
@@ -137,7 +137,7 @@ Les jetons, identifiants de compte, adresses e-mail, contenus des fichiers d'aut
 Les paramètres sont stockés dans `%APPDATA%\CodexUsageMonitor\settings.json`.
 Un journal de diagnostic borné est stocké dans `%TEMP%\codex-peek.log`.
 
-Pour les consignes complètes sur le traitement des données et le signalement des vulnérabilités, consultez [SECURITY.md](SECURITY.md).
+Pour les consignes complètes sur le traitement des données et le signalement des vulnérabilités, consultez [SECURITY.md](../../SECURITY.md).
 
 ## Dépannage
 
@@ -164,7 +164,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Les contrôles automatisés ne remplacent pas les scénarios Windows, DPI, multi-moniteur et récupération d'Explorer de la [checklist de release](docs/RELEASE_CHECKLIST.md).
+Les contrôles automatisés ne remplacent pas les scénarios Windows, DPI, multi-moniteur et récupération d'Explorer de la [checklist de release](../RELEASE_CHECKLIST.md).
 
 ## ❤️ Soutien
 
@@ -177,5 +177,5 @@ Chaque sponsoring aide à maintenir activement le projet.
 
 ## Licence
 
-Ce projet est disponible sous la [licence MIT](LICENSE).
-Consultez [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) pour les avis de tiers.
+Ce projet est disponible sous la [licence MIT](../../LICENSE).
+Consultez [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) pour les avis de tiers.

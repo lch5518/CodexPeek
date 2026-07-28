@@ -28,7 +28,8 @@ foreach ($requiredFile in @(
     $compilerPath
     $installerScript
     (Join-Path $repositoryRoot "README.md")
-    (Join-Path $repositoryRoot "README.ko.md")
+    # 한국어 README는 docs/translations에 있지만 아카이브에는 README.ko.md로 포함됨
+    (Join-Path $repositoryRoot "docs/translations/README.ko.md")
     (Join-Path $repositoryRoot "LICENSE")
     (Join-Path $repositoryRoot "SECURITY.md")
     (Join-Path $repositoryRoot "THIRD_PARTY_NOTICES.md")
@@ -59,15 +60,17 @@ try {
     New-Item -ItemType Directory -Path $stagingRoot | Out-Null
     Copy-Item -LiteralPath $executablePath `
         -Destination (Join-Path $stagingRoot "codex-peek.exe")
-    foreach ($document in @(
-        "README.md"
-        "README.ko.md"
-        "LICENSE"
-        "SECURITY.md"
-        "THIRD_PARTY_NOTICES.md"
-    )) {
-        Copy-Item -LiteralPath (Join-Path $repositoryRoot $document) `
-            -Destination (Join-Path $stagingRoot $document)
+    # Source: 리포지토리 루트 기준 원본 경로, Name: 아카이브에 포함될 파일명(릴리스 계약)
+    $releaseDocuments = @(
+        @{ Source = "README.md";                      Name = "README.md" }
+        @{ Source = "docs/translations/README.ko.md"; Name = "README.ko.md" }
+        @{ Source = "LICENSE";                        Name = "LICENSE" }
+        @{ Source = "SECURITY.md";                    Name = "SECURITY.md" }
+        @{ Source = "THIRD_PARTY_NOTICES.md";         Name = "THIRD_PARTY_NOTICES.md" }
+    )
+    foreach ($document in $releaseDocuments) {
+        Copy-Item -LiteralPath (Join-Path $repositoryRoot $document.Source) `
+            -Destination (Join-Path $stagingRoot $document.Name)
     }
     Compress-Archive -Path (Join-Path $stagingRoot "*") `
         -DestinationPath $portableArchive

@@ -1,6 +1,6 @@
 # Codex Usage Monitor 설치 가이드
 
-[README로 돌아가기](../README.ko.md)
+[README로 돌아가기](translations/README.ko.md)
 
 이 문서는 소스 코드를 직접 빌드하지 않고 Windows x64용 설치 프로그램 또는 Portable
 ZIP으로 Codex Usage Monitor를 설치하는 방법을 설명합니다.

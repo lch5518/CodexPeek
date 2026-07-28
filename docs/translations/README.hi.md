@@ -1,11 +1,11 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor एक छोटा मूल Windows विजेट है, जिससे आप अपना Codex उपयोग एक नज़र में देख सकते हैं।
 यह प्राथमिक और द्वितीयक दर-सीमा अवधियां टास्कबार, तैरते विजेट और सिस्टम ट्रे में दिखाता है।
 
-![Codex Usage Monitor टास्कबार विजेट](docs/images/taskbar-widget-en.png)
+![Codex Usage Monitor टास्कबार विजेट](../images/taskbar-widget-en.png)
 
 ## मुख्य बातें
 
@@ -108,7 +108,7 @@ UI खोले बिना बिल्ड और Codex CLI कनेक्श
 प्रारंभिक रिलीज code-signed नहीं हैं और Microsoft Defender SmartScreen चेतावनी दिखा सकता है।
 केवल आधिकारिक रिलीज से डाउनलोड करें और फ़ाइल को `SHA256SUMS.txt` से सत्यापित करें।
 
-हैश सत्यापन, अपडेट, अनइंस्टॉल व्यवहार, निदान और समस्या-निवारण के लिए [विस्तृत स्थापना मार्गदर्शिका (Korean)](docs/INSTALL.md) देखें।
+हैश सत्यापन, अपडेट, अनइंस्टॉल व्यवहार, निदान और समस्या-निवारण के लिए [विस्तृत स्थापना मार्गदर्शिका (Korean)](../INSTALL.md) देखें।
 
 ## मॉनिटर का उपयोग
 
@@ -135,7 +135,7 @@ Explorer पुनः शुरू होने या टास्कबार 
 सेटिंग्स `%APPDATA%\CodexUsageMonitor\settings.json` में संग्रहीत होती हैं।
 सीमित निदान लॉग `%TEMP%\codex-peek.log` में संग्रहीत होता है।
 
-पूरे डेटा-प्रबंधन और असुरक्षा-रिपोर्टिंग मार्गदर्शन के लिए [SECURITY.md](SECURITY.md) देखें।
+पूरे डेटा-प्रबंधन और असुरक्षा-रिपोर्टिंग मार्गदर्शन के लिए [SECURITY.md](../../SECURITY.md) देखें।
 
 ## समस्या-निवारण
 
@@ -162,7 +162,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-स्वचालित जांचें [रिलीज चेकलिस्ट](docs/RELEASE_CHECKLIST.md) में दिए Windows, DPI, बहु-मॉनिटर और Explorer पुनर्प्राप्ति परिदृश्यों की जगह नहीं लेतीं।
+स्वचालित जांचें [रिलीज चेकलिस्ट](../RELEASE_CHECKLIST.md) में दिए Windows, DPI, बहु-मॉनिटर और Explorer पुनर्प्राप्ति परिदृश्यों की जगह नहीं लेतीं।
 
 ## ❤️ सहयोग
 
@@ -175,5 +175,5 @@ cargo build --release
 
 ## अनुज्ञप्ति
 
-यह परियोजना [MIT License](LICENSE) के तहत उपलब्ध है।
-तृतीय-पक्ष सूचनाओं के लिए [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) देखें।
+यह परियोजना [MIT License](../../LICENSE) के तहत उपलब्ध है।
+तृतीय-पक्ष सूचनाओं के लिए [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) देखें।

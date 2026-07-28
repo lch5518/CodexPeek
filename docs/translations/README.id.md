@@ -1,11 +1,11 @@
 # Codex Usage Monitor
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor adalah widget native Windows kecil untuk memeriksa penggunaan Codex dengan cepat.
 Aplikasi ini menampilkan jendela batas penggunaan utama dan sekunder di taskbar, widget mengambang, dan system tray.
 
-![Widget taskbar Codex Usage Monitor](docs/images/taskbar-widget-en.png)
+![Widget taskbar Codex Usage Monitor](../images/taskbar-widget-en.png)
 
 ## Sorotan
 
@@ -108,7 +108,7 @@ tetapi tidak mengaktifkan startup Windows secara default.
 Rilis awal tidak ditandatangani kode dan dapat memicu Microsoft Defender SmartScreen.
 Unduh hanya dari release resmi dan verifikasi file terhadap `SHA256SUMS.txt`.
 
-Lihat [panduan instalasi terperinci (Korea)](docs/INSTALL.md) untuk verifikasi hash,
+Lihat [panduan instalasi terperinci (Korea)](../INSTALL.md) untuk verifikasi hash,
 pembaruan, perilaku uninstall, diagnostik, dan pemecahan masalah.
 
 ## Menggunakan monitor
@@ -136,7 +136,7 @@ Token, ID akun, alamat email, isi file autentikasi, dan nilai proxy tidak disimp
 Pengaturan disimpan di `%APPDATA%\CodexUsageMonitor\settings.json`.
 Log diagnostik berbatas disimpan di `%TEMP%\codex-peek.log`.
 
-Untuk panduan lengkap tentang penanganan data dan pelaporan kerentanan, lihat [SECURITY.md](SECURITY.md).
+Untuk panduan lengkap tentang penanganan data dan pelaporan kerentanan, lihat [SECURITY.md](../../SECURITY.md).
 
 ## Pemecahan masalah
 
@@ -163,7 +163,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Pemeriksaan otomatis tidak menggantikan skenario pemulihan Windows, DPI, multi-monitor, dan Explorer dalam [checklist release](docs/RELEASE_CHECKLIST.md).
+Pemeriksaan otomatis tidak menggantikan skenario pemulihan Windows, DPI, multi-monitor, dan Explorer dalam [checklist release](../RELEASE_CHECKLIST.md).
 
 ## ❤️ Dukungan
 
@@ -176,5 +176,5 @@ Setiap sponsor membantu menjaga proyek ini tetap aktif dipelihara.
 
 ## Lisensi
 
-Proyek ini tersedia di bawah [MIT License](LICENSE).
-Lihat [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) untuk pemberitahuan pihak ketiga.
+Proyek ini tersedia di bawah [MIT License](../../LICENSE).
+Lihat [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) untuk pemberitahuan pihak ketiga.

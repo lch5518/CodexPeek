@@ -1,11 +1,11 @@
 # Trình giám sát mức sử dụng Codex
 
-**Languages:** [English (default)](README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
+**Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
 Codex Usage Monitor là một widget Windows gốc nhỏ giúp bạn xem nhanh mức sử dụng Codex.
 Ứng dụng hiển thị các cửa sổ giới hạn tốc độ chính và phụ trên thanh tác vụ, trong widget nổi và trong khay hệ thống.
 
-![Widget Codex Usage Monitor trên thanh tác vụ](docs/images/taskbar-widget-en.png)
+![Widget Codex Usage Monitor trên thanh tác vụ](../images/taskbar-widget-en.png)
 
 ## Điểm nổi bật
 
@@ -108,7 +108,7 @@ nhưng không bật khởi động cùng Windows theo mặc định.
 Các release ban đầu chưa được ký mã và có thể kích hoạt Microsoft Defender SmartScreen.
 Chỉ tải xuống từ release chính thức và xác minh tệp với `SHA256SUMS.txt`.
 
-Xem [hướng dẫn cài đặt chi tiết (tiếng Hàn)](docs/INSTALL.md) để biết cách xác minh hash,
+Xem [hướng dẫn cài đặt chi tiết (tiếng Hàn)](../INSTALL.md) để biết cách xác minh hash,
 cập nhật, hành vi gỡ cài đặt, chẩn đoán và khắc phục sự cố.
 
 ## Sử dụng trình giám sát
@@ -136,7 +136,7 @@ Token, ID tài khoản, địa chỉ email, nội dung tệp xác thực và gi�
 Cài đặt được lưu trong `%APPDATA%\CodexUsageMonitor\settings.json`.
 Log chẩn đoán có giới hạn được lưu trong `%TEMP%\codex-peek.log`.
 
-Để xem hướng dẫn đầy đủ về xử lý dữ liệu và báo cáo lỗ hổng, hãy xem [SECURITY.md](SECURITY.md).
+Để xem hướng dẫn đầy đủ về xử lý dữ liệu và báo cáo lỗ hổng, hãy xem [SECURITY.md](../../SECURITY.md).
 
 ## Khắc phục sự cố
 
@@ -163,7 +163,7 @@ cargo test --all-targets
 cargo build --release
 ```
 
-Các kiểm tra tự động không thay thế các kịch bản Windows, DPI, nhiều màn hình và phục hồi Explorer trong [release checklist](docs/RELEASE_CHECKLIST.md).
+Các kiểm tra tự động không thay thế các kịch bản Windows, DPI, nhiều màn hình và phục hồi Explorer trong [release checklist](../RELEASE_CHECKLIST.md).
 
 ## ❤️ Hỗ trợ
 
@@ -176,5 +176,5 @@ Mỗi lượt tài trợ giúp dự án tiếp tục được duy trì tích c�
 
 ## Giấy phép
 
-Dự án này được cung cấp theo [Giấy phép MIT](LICENSE).
-Xem [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) để biết các thông báo của bên thứ ba.
+Dự án này được cung cấp theo [Giấy phép MIT](../../LICENSE).
+Xem [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md) để biết các thông báo của bên thứ ba.
