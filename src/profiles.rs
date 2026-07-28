@@ -172,11 +172,17 @@ impl UsageProfileCatalog {
         self.selected
     }
 
-    fn contains(&self, id: UsageProfileId) -> bool {
+    /// 프로필 식별자가 현재 카탈로그에서 유효한지 반환합니다.
+    pub(crate) fn contains(&self, id: UsageProfileId) -> bool {
         match id {
             UsageProfileId::System => true,
             UsageProfileId::Managed(sequence) => self.index_of(sequence).is_some(),
         }
+    }
+
+    /// 다음 add가 사용할 수 있는 관리 프로필 식별자를 반환합니다.
+    pub(crate) fn next_managed_id(&self) -> Option<UsageProfileId> {
+        (self.next_sequence != 0).then_some(UsageProfileId::Managed(self.next_sequence))
     }
 
     fn index_of(&self, sequence: u32) -> Option<usize> {

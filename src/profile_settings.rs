@@ -9,7 +9,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use crate::{Settings, SettingsStore, UsageProfileId, UsageProfileRoot};
+use crate::{Settings, SettingsStore, UsageProfileCatalog, UsageProfileId, UsageProfileRoot};
 
 static TOMBSTONE_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -49,8 +49,24 @@ pub trait ProfileFileSystem: Send + Sync {
 
     /// 시작 시 프로필 루트 아래의 검증된 tombstone만 정리합니다.
     ///
-    /// `root`의 프로필 부모만 열거하며 일반 프로필과 형식이 다른 항목은 그대로 둡니다.
-    fn cleanup_staged(&self, root: &UsageProfileRoot) -> io::Result<()>;
+    /// `root`의 프로필 부모만 열거합니다. `catalog`가 참조하는 프로필은 원래 위치로 복구하거나
+    /// 충돌 시 보존하고, catalog에서 삭제가 커밋된 프로필의 tombstone만 최종 제거합니다.
+    fn cleanup_staged(
+        &self,
+        root: &UsageProfileRoot,
+        catalog: &UsageProfileCatalog,
+    ) -> io::Result<()>;
+
+    /// 카탈로그에 없는 미완료 add의 빈 관리 홈을 안전하게 정리합니다.
+    ///
+    /// `root` 아래에서 `catalog`의 정확한 다음 숫자와 일치하는 디렉터리만 검사하고, catalog가
+    /// 참조하는 프로필·다른 sequence·비어 있지 않은 홈은 보존합니다. 성공하면 재시도 가능한
+    /// 빈 orphan만 제거됩니다.
+    fn cleanup_orphaned_homes(
+        &self,
+        root: &UsageProfileRoot,
+        catalog: &UsageProfileCatalog,
+    ) -> io::Result<()>;
 }
 
 /// 운영 체제 파일 시스템에서 관리 프로필 트랜잭션을 수행하는 안전 구현입니다.
@@ -88,9 +104,10 @@ impl ProfileFileSystem for NativeProfileFileSystem {
         require_safe_directory(&paths.profiles)?;
         require_safe_directory(&paths.profile)?;
         require_safe_directory(&paths.home)?;
+        reject_reparse_ancestors(&paths.home)?;
         fs::remove_dir(&paths.home)?;
+        reject_reparse_ancestors(&paths.profile)?;
         fs::remove_dir(&paths.profile)?;
-        let _ = fs::remove_dir(&paths.profiles);
         Ok(())
     }
 
@@ -112,6 +129,7 @@ impl ProfileFileSystem for NativeProfileFileSystem {
                 "profile tombstone already exists",
             ));
         }
+        reject_reparse_ancestors(&paths.profile)?;
         fs::rename(&paths.profile, &staged)?;
         self.staged
             .lock()
@@ -140,6 +158,8 @@ impl ProfileFileSystem for NativeProfileFileSystem {
                 "managed profile restore destination exists",
             ));
         }
+        reject_reparse_ancestors(&staged)?;
+        reject_reparse_ancestors(&destination)?;
         fs::rename(&staged, &destination)?;
         self.forget_authorized(&staged);
         Ok(())
@@ -150,12 +170,17 @@ impl ProfileFileSystem for NativeProfileFileSystem {
         self.require_authorized(&staged)?;
         validate_tombstone_path(&staged)?;
         require_safe_directory(&staged)?;
+        reject_reparse_ancestors(&staged)?;
         fs::remove_dir_all(&staged)?;
         self.forget_authorized(&staged);
         Ok(())
     }
 
-    fn cleanup_staged(&self, root: &UsageProfileRoot) -> io::Result<()> {
+    fn cleanup_staged(
+        &self,
+        root: &UsageProfileRoot,
+        catalog: &UsageProfileCatalog,
+    ) -> io::Result<()> {
         let profiles = profiles_directory(root)?;
         reject_reparse_ancestors(&profiles)?;
         let entries = match fs::read_dir(&profiles) {
@@ -167,11 +192,68 @@ impl ProfileFileSystem for NativeProfileFileSystem {
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
-            if parse_tombstone_name(&entry.file_name()).is_none() {
+            let Some(sequence) = parse_tombstone_name(&entry.file_name()) else {
+                continue;
+            };
+            require_safe_directory(&path)?;
+            let id = UsageProfileId::Managed(sequence);
+            if catalog.contains(id) {
+                let destination = ManagedPaths::derive(root, id)?.profile;
+                if destination.exists() {
+                    require_safe_directory(&destination)?;
+                    continue;
+                }
+                reject_reparse_ancestors(&path)?;
+                reject_reparse_ancestors(&destination)?;
+                fs::rename(path, destination)?;
+            } else {
+                reject_reparse_ancestors(&path)?;
+                fs::remove_dir_all(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn cleanup_orphaned_homes(
+        &self,
+        root: &UsageProfileRoot,
+        catalog: &UsageProfileCatalog,
+    ) -> io::Result<()> {
+        let profiles = profiles_directory(root)?;
+        reject_reparse_ancestors(&profiles)?;
+        let entries = match fs::read_dir(&profiles) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        require_safe_directory(&profiles)?;
+        for entry in entries {
+            let entry = entry?;
+            let Some(sequence) = parse_profile_directory_name(&entry.file_name()) else {
+                continue;
+            };
+            let id = UsageProfileId::Managed(sequence);
+            if catalog.contains(id) || catalog.next_managed_id() != Some(id) {
                 continue;
             }
-            require_safe_directory(&path)?;
-            fs::remove_dir_all(path)?;
+            let paths = ManagedPaths::derive(root, id)?;
+            require_safe_directory(&paths.profile)?;
+            match fs::symlink_metadata(&paths.home) {
+                Ok(_) => match self.remove_empty_home(root, id) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+                    Err(error) => return Err(error),
+                },
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    reject_reparse_ancestors(&paths.profile)?;
+                    match fs::remove_dir(&paths.profile) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     }
@@ -273,6 +355,19 @@ fn parse_tombstone_name(name: &std::ffi::OsStr) -> Option<u32> {
         || process_text != process.to_string()
         || nonce_text != nonce.to_string()
     {
+        return None;
+    }
+    Some(sequence)
+}
+
+fn parse_profile_directory_name(name: &std::ffi::OsStr) -> Option<u32> {
+    let name = name.to_str()?;
+    let sequence_text = name.strip_prefix("profile-")?;
+    if sequence_text.len() < 4 || !sequence_text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let sequence = sequence_text.parse::<u32>().ok()?;
+    if sequence == 0 || sequence_text != format!("{sequence:04}") {
         return None;
     }
     Some(sequence)
@@ -482,9 +577,15 @@ fn profile_settings_loop(
 ) -> io::Result<()> {
     let root = UsageProfileRoot::new(store.root().to_path_buf());
     let mut first_error: Option<io::ErrorKind> = None;
-    if let Err(error) = backend.cleanup_staged(&root) {
+    if let Err(error) = backend.cleanup_staged(&root, &settings.usage_profiles) {
         let _ = events.send(ProfileSettingsEvent::Failed {
             operation: "cleanup",
+            kind: error.kind(),
+        });
+    }
+    if let Err(error) = backend.cleanup_orphaned_homes(&root, &settings.usage_profiles) {
+        let _ = events.send(ProfileSettingsEvent::Failed {
+            operation: "add_cleanup",
             kind: error.kind(),
         });
     }
@@ -499,16 +600,25 @@ fn profile_settings_loop(
                     &mut settings,
                     &label,
                     &events,
+                    &mut first_error,
                 );
             }
             ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Rename { id, label }) => {
-                rename_profile(&store, &mut settings, id, &label, &events);
+                rename_profile(&store, &mut settings, id, &label, &events, &mut first_error);
             }
             ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Select { id }) => {
-                select_profile(&store, &mut settings, id, &events);
+                select_profile(&store, &mut settings, id, &events, &mut first_error);
             }
             ProfileSettingsCommand::Mutate(ProfileSettingsMutation::Delete { id }) => {
-                delete_profile(&store, &root, backend.as_ref(), &mut settings, id, &events);
+                delete_profile(
+                    &store,
+                    &root,
+                    backend.as_ref(),
+                    &mut settings,
+                    id,
+                    &events,
+                    &mut first_error,
+                );
             }
             ProfileSettingsCommand::SavePreferences(mut preferences) => {
                 preferences.schema_version = settings.schema_version;
@@ -516,9 +626,7 @@ fn profile_settings_loop(
                 match store.save(&preferences) {
                     Ok(()) => settings = preferences,
                     Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some(error.kind());
-                        }
+                        remember_first_save_error(&mut first_error, error.kind());
                         send_failed(&events, "preferences", error.kind());
                     }
                 }
@@ -543,6 +651,7 @@ fn rename_profile(
     id: UsageProfileId,
     label: &str,
     events: &mpsc::Sender<ProfileSettingsEvent>,
+    first_error: &mut Option<io::ErrorKind>,
 ) {
     let mut candidate = settings.clone();
     if candidate.usage_profiles.rename(id, label).is_err() {
@@ -550,6 +659,7 @@ fn rename_profile(
         return;
     }
     if let Err(error) = store.save(&candidate) {
+        remember_first_save_error(first_error, error.kind());
         send_failed(events, "rename", error.kind());
         return;
     }
@@ -565,6 +675,7 @@ fn select_profile(
     settings: &mut Settings,
     id: UsageProfileId,
     events: &mpsc::Sender<ProfileSettingsEvent>,
+    first_error: &mut Option<io::ErrorKind>,
 ) {
     let mut candidate = settings.clone();
     if candidate.usage_profiles.select(id).is_err() {
@@ -572,6 +683,7 @@ fn select_profile(
         return;
     }
     if let Err(error) = store.save(&candidate) {
+        remember_first_save_error(first_error, error.kind());
         send_failed(events, "select", error.kind());
         return;
     }
@@ -589,7 +701,12 @@ fn add_profile(
     settings: &mut Settings,
     label: &str,
     events: &mpsc::Sender<ProfileSettingsEvent>,
+    first_error: &mut Option<io::ErrorKind>,
 ) {
+    if let Err(error) = backend.cleanup_orphaned_homes(root, &settings.usage_profiles) {
+        send_failed(events, "add_cleanup", error.kind());
+        return;
+    }
     let mut candidate = settings.clone();
     let profile = match candidate.usage_profiles.add(label) {
         Ok(profile) => profile,
@@ -604,7 +721,11 @@ fn add_profile(
         return;
     }
     if let Err(error) = store.save(&candidate) {
-        let _ = backend.remove_empty_home(root, id);
+        remember_first_save_error(first_error, error.kind());
+        if let Err(rollback_error) = backend.remove_empty_home(root, id) {
+            send_failed(events, "add_rollback", rollback_error.kind());
+            return;
+        }
         send_failed(events, "add", error.kind());
         return;
     }
@@ -622,6 +743,7 @@ fn delete_profile(
     settings: &mut Settings,
     id: UsageProfileId,
     events: &mpsc::Sender<ProfileSettingsEvent>,
+    first_error: &mut Option<io::ErrorKind>,
 ) {
     let mut candidate = settings.clone();
     if candidate.usage_profiles.remove(id).is_err() {
@@ -636,6 +758,7 @@ fn delete_profile(
         }
     };
     if let Err(error) = store.save(&candidate) {
+        remember_first_save_error(first_error, error.kind());
         let destination = root.managed_directory(id).ok();
         if let Some(destination) = destination {
             if let Err(restore_error) = backend.restore_staged(&staged, &destination) {
@@ -652,6 +775,12 @@ fn delete_profile(
         settings: candidate,
         id,
     });
+}
+
+fn remember_first_save_error(first_error: &mut Option<io::ErrorKind>, kind: io::ErrorKind) {
+    if first_error.is_none() {
+        *first_error = Some(kind);
+    }
 }
 
 fn send_failed(
