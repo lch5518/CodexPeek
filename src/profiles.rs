@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -238,6 +241,68 @@ pub struct UsageProfileRoot {
     base: PathBuf,
 }
 
+/// 특정 사용량 프로필로 Codex 자식 프로세스를 실행하기 위한 격리된 컨텍스트입니다.
+///
+/// 관리 프로필의 실제 경로는 디버그 출력에 포함되지 않으며, 신뢰된 `UsageProfileRoot`에서만
+/// 파생됩니다. 시스템 프로필은 현재 프로세스의 Codex 환경을 그대로 사용합니다.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProfileExecutionContext {
+    id: UsageProfileId,
+    codex_home: Option<PathBuf>,
+    force_file_credentials: bool,
+}
+
+impl ProfileExecutionContext {
+    /// 현재 사용자 계정의 기본 Codex 환경을 사용하는 시스템 컨텍스트를 생성합니다.
+    ///
+    /// 반환된 컨텍스트는 자식 프로세스에 환경 변수나 자격 증명 저장소 설정을 추가하지 않습니다.
+    pub fn system() -> Self {
+        Self {
+            id: UsageProfileId::System,
+            codex_home: None,
+            force_file_credentials: false,
+        }
+    }
+
+    /// 관리 프로필 전용 Codex 환경을 사용하는 실행 컨텍스트를 생성합니다.
+    ///
+    /// `root`와 `id`로부터 격리 경로를 내부에서 파생합니다. 시스템 프로필이나 유효하지 않은 관리
+    /// 식별자는 거부하며, 호출자가 임의 경로를 주입할 수 없습니다.
+    pub fn managed(
+        root: &UsageProfileRoot,
+        id: UsageProfileId,
+    ) -> Result<Self, ProfileValidationError> {
+        Ok(Self {
+            id,
+            codex_home: Some(root.codex_home(id)?),
+            force_file_credentials: true,
+        })
+    }
+
+    /// 이 컨텍스트가 나타내는 안정적인 프로필 식별자를 반환합니다.
+    pub fn id(&self) -> UsageProfileId {
+        self.id
+    }
+
+    pub(crate) fn codex_home(&self) -> Option<&Path> {
+        self.codex_home.as_deref()
+    }
+
+    pub(crate) fn force_file_credentials(&self) -> bool {
+        self.force_file_credentials
+    }
+}
+
+impl fmt::Debug for ProfileExecutionContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProfileExecutionContext")
+            .field("id", &self.id)
+            .field("managed", &self.codex_home.is_some())
+            .finish()
+    }
+}
+
 impl UsageProfileRoot {
     /// 애플리케이션 데이터 루트를 사용해 프로필 경로 파생기를 생성합니다.
     pub fn new(base: PathBuf) -> Self {
@@ -266,5 +331,25 @@ impl UsageProfileRoot {
     /// 프로필 경로의 기준 애플리케이션 데이터 디렉터리를 반환합니다.
     pub fn base(&self) -> &Path {
         &self.base
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{ProfileExecutionContext, UsageProfileId, UsageProfileRoot};
+
+    #[test]
+    fn execution_context_debug_redacts_managed_profile_path() {
+        let root = UsageProfileRoot::new(PathBuf::from(r"C:\never-log-this"));
+        let context = ProfileExecutionContext::managed(&root, UsageProfileId::Managed(2)).unwrap();
+
+        let debug = format!("{context:?}");
+
+        assert!(debug.contains("Managed(2)"));
+        assert!(debug.contains("managed: true"));
+        assert!(!debug.contains("never-log-this"));
+        assert!(!debug.contains("codex-home"));
     }
 }

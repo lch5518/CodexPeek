@@ -22,8 +22,8 @@ pub use errors::UsageError;
 pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
 pub use profiles::{
-    normalize_profile_label, ManagedUsageProfile, ProfileValidationError, UsageProfileCatalog,
-    UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
+    normalize_profile_label, ManagedUsageProfile, ProfileExecutionContext, ProfileValidationError,
+    UsageProfileCatalog, UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
 };
 pub use update_check::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,
