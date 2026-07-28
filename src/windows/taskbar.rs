@@ -333,9 +333,10 @@ pub trait WidgetSurfaceBackend {
 
 /// 현재 작업표시줄 대상과 위젯 창을 조정하고 복구 가능한 attach 오류를 반환합니다.
 ///
-/// 대상이 없거나 최초 attach가 실패하면 정확히 한 플로팅 창을 유지합니다. 이후 대상이
-/// 나타나면 그 창을 먼저 재사용하므로 중복 창을 만들지 않습니다. 반환 벡터에는 플로팅
-/// fallback으로 복구한 attach 오류만 담기며 생성·분리·파괴 실패는 즉시 `Err`로 반환합니다.
+/// 대상이 없거나 하나 이상의 attach가 실패하면 정확히 한 플로팅 창을 유지합니다. 이후
+/// 대상이 나타나면 기존 attached 창과 fallback 창을 먼저 재사용하므로 중복 창을 만들지
+/// 않습니다. 반환 벡터에는 플로팅 fallback으로 복구한 attach 오류만 담기며
+/// 생성·분리·파괴 실패는 즉시 `Err`로 반환합니다.
 #[doc(hidden)]
 pub fn reconcile_widget_surfaces<B>(
     backend: &mut B,
@@ -377,35 +378,53 @@ where
         return Ok(Vec::new());
     }
 
-    let reusable_detached = (current.len() == 1)
-        .then(|| current[0])
-        .filter(|(_, surface)| matches!(surface, WidgetSurface::Detached))
-        .map(|(window, _)| window);
-    if reusable_detached.is_none() {
-        for (window, _) in current {
+    let mut attached_targets = Vec::new();
+    let mut detached = None;
+    for (window, surface) in current {
+        match surface {
+            WidgetSurface::Attached(target)
+                if targets.contains(&target) && !attached_targets.contains(&target) =>
+            {
+                attached_targets.push(target);
+            }
+            WidgetSurface::Detached if detached.is_none() => detached = Some(window),
+            _ => backend.destroy(window)?,
+        }
+    }
+    if attached_targets.len() == targets.len() {
+        if let Some(window) = detached {
             backend.destroy(window)?;
         }
+        return Ok(Vec::new());
     }
 
     let mut errors = Vec::new();
-    let mut attached_count = 0_usize;
-    for (index, target) in targets.iter().copied().enumerate() {
-        let window = if index == 0 {
-            match reusable_detached {
-                Some(window) => window,
-                None => backend.create_detached()?,
-            }
+    let mut fallback_locked = false;
+    for target in targets.iter().copied() {
+        if attached_targets.contains(&target) {
+            continue;
+        }
+        let window = if !fallback_locked {
+            detached
+                .take()
+                .map(Ok)
+                .unwrap_or_else(|| backend.create_detached())?
         } else {
             backend.create_detached()?
         };
         match backend.attach(window, target) {
-            Ok(()) => attached_count += 1,
+            Ok(()) => attached_targets.push(target),
             Err(error) => {
                 errors.push(error);
-                if attached_count == 0 {
+                if detached.is_none() {
+                    detached = Some(window);
+                    fallback_locked = true;
+                } else {
+                    backend.destroy(window)?;
+                }
+                if attached_targets.is_empty() {
                     break;
                 }
-                backend.destroy(window)?;
             }
         }
     }

@@ -680,7 +680,7 @@ fn periodic_recovery_keeps_a_valid_taskbar_attachment_stable() {
 struct RecordingWidgetSurfaceBackend {
     surfaces: Vec<(u32, WidgetSurface<u32>)>,
     next_window: u32,
-    fail_attach: bool,
+    failed_targets: Vec<u32>,
     operations: Vec<&'static str>,
 }
 
@@ -703,7 +703,7 @@ impl WidgetSurfaceBackend for RecordingWidgetSurfaceBackend {
 
     fn attach(&mut self, window: Self::Window, target: Self::Target) -> Result<(), Self::Error> {
         self.operations.push("attach");
-        if self.fail_attach {
+        if self.failed_targets.contains(&target) {
             return Err("attach failed");
         }
         self.surfaces
@@ -734,7 +734,7 @@ impl WidgetSurfaceBackend for RecordingWidgetSurfaceBackend {
 #[test]
 fn attachment_failure_keeps_one_detached_widget_and_later_reuses_it() {
     let mut backend = RecordingWidgetSurfaceBackend {
-        fail_attach: true,
+        failed_targets: vec![7],
         ..Default::default()
     };
 
@@ -760,7 +760,7 @@ fn attachment_failure_keeps_one_detached_widget_and_later_reuses_it() {
     let surface = widget_surface_layout(208, 72, 96, false);
     assert_eq!(profile_header_text(&view, surface), Some("Work"));
 
-    backend.fail_attach = false;
+    backend.failed_targets.clear();
     backend.operations.clear();
     assert_eq!(reconcile_widget_surfaces(&mut backend, &[7]), Ok(vec![]));
     assert_eq!(backend.surfaces, [(1, WidgetSurface::Attached(7))]);
@@ -773,12 +773,74 @@ fn no_taskbar_target_preserves_exactly_one_detached_widget() {
     assert_eq!(reconcile_widget_surfaces(&mut backend, &[]), Ok(vec![]));
     assert_eq!(backend.surfaces, [(1, WidgetSurface::Detached)]);
 
-    backend.fail_attach = false;
     reconcile_widget_surfaces(&mut backend, &[9]).unwrap();
     backend.operations.clear();
     assert_eq!(reconcile_widget_surfaces(&mut backend, &[]), Ok(vec![]));
     assert_eq!(backend.surfaces, [(1, WidgetSurface::Detached)]);
     assert_eq!(backend.operations, ["detach"]);
+}
+
+#[test]
+fn partial_multi_monitor_failure_keeps_one_fallback_and_reuses_every_live_window() {
+    let mut backend = RecordingWidgetSurfaceBackend {
+        failed_targets: vec![2, 3],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        reconcile_widget_surfaces(&mut backend, &[1, 2, 3]),
+        Ok(vec!["attach failed", "attach failed"])
+    );
+    assert_eq!(
+        backend.surfaces,
+        [
+            (1, WidgetSurface::Attached(1)),
+            (2, WidgetSurface::Detached),
+        ]
+    );
+    assert_eq!(
+        backend.operations,
+        [
+            "create_detached",
+            "attach",
+            "create_detached",
+            "attach",
+            "create_detached",
+            "attach",
+            "destroy",
+        ]
+    );
+
+    let view = WidgetViewModel {
+        usage_profile_label: "Work".to_string(),
+        primary: None,
+        secondary: None,
+        status: "Polling".to_string(),
+        last_success: String::new(),
+        is_stale: false,
+        taskbar_label: "Weekly usage".to_string(),
+        taskbar_tooltip: String::new(),
+        reset_credits_text: None,
+        data_state: WidgetDataState::Loading,
+    };
+    let detached = widget_surface_layout(208, 72, 96, false);
+    assert_eq!(profile_header_text(&view, detached), Some("Work"));
+
+    backend.failed_targets.clear();
+    backend.operations.clear();
+    assert_eq!(
+        reconcile_widget_surfaces(&mut backend, &[1, 2, 3]),
+        Ok(vec![])
+    );
+    assert_eq!(
+        backend.surfaces,
+        [
+            (1, WidgetSurface::Attached(1)),
+            (2, WidgetSurface::Attached(2)),
+            (4, WidgetSurface::Attached(3)),
+        ]
+    );
+    assert_eq!(backend.operations, ["attach", "create_detached", "attach"]);
 }
 
 #[test]
