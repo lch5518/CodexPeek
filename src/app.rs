@@ -331,6 +331,8 @@ impl UiBackend for AppRuntime {
             }
             UiAction::SetTaskbarDisplayMode(mode) => self.settings.taskbar_display_mode = mode,
             UiAction::SelectUsageProfile(_)
+            | UiAction::OpenAddUsageProfile
+            | UiAction::OpenManageUsageProfiles
             | UiAction::AddUsageProfile(_)
             | UiAction::RenameUsageProfile(_, _)
             | UiAction::LoginUsageProfile(_)

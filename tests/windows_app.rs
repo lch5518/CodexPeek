@@ -15,23 +15,24 @@ use codex_usage_monitor::{
             TaskbarPlacementError,
         },
         taskbar_widget::{
-            select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
+            profile_header_text, select_weekly_row, widget_surface_layout, HoverTransition,
+            TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
         },
         tray::{
             language_menu_label, tray_menu_entries, tray_menu_model, update_menu_text,
             TrayMenuEntry,
         },
         widget::{logical_to_physical, Rect},
-        LaunchMode, StartupStep, UiAction, UiSettings, UsageProfileView, MENU_ADD_USAGE_PROFILE,
-        MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT,
-        MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5,
-        MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH,
-        MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN,
-        MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL,
-        MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN,
-        MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY,
-        MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
-        MENU_WIDGET_VISIBLE,
+        LaunchMode, StartupStep, UiAction, UiSettings, UsageProfileView, WidgetDataState,
+        WidgetViewModel, MENU_ADD_USAGE_PROFILE, MENU_AUTH_REFRESH, MENU_AUTOSTART,
+        MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
+        MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC,
+        MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN,
+        MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE,
+        MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH,
+        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES,
+        MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
+        MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
     UsageProfileId,
@@ -314,6 +315,39 @@ fn popup_profile_action_keeps_the_profile_identity() {
         model.action(1001),
         Some(UiAction::SelectUsageProfile(UsageProfileId::Managed(1)))
     );
+    assert_eq!(
+        model.action(MENU_ADD_USAGE_PROFILE),
+        Some(UiAction::OpenAddUsageProfile)
+    );
+    assert_eq!(
+        model.action(MENU_MANAGE_USAGE_PROFILES),
+        Some(UiAction::OpenManageUsageProfiles)
+    );
+}
+
+#[test]
+fn detached_widget_persistently_consumes_the_selected_profile_label() {
+    let view = WidgetViewModel {
+        usage_profile_label: "Work".to_string(),
+        primary: None,
+        secondary: None,
+        status: "Polling".to_string(),
+        last_success: String::new(),
+        is_stale: false,
+        taskbar_label: "Weekly usage".to_string(),
+        taskbar_tooltip: String::new(),
+        reset_credits_text: None,
+        data_state: WidgetDataState::Loading,
+    };
+    let attached = widget_surface_layout(208, 48, 96, true);
+    let detached = widget_surface_layout(208, 48, 96, false);
+
+    assert_eq!(attached.profile_header, None);
+    assert_eq!(attached.content, Rect::new(0, 0, 208, 48));
+    assert_eq!(profile_header_text(&view, attached), None);
+    assert_eq!(detached.profile_header, Some(Rect::new(8, 2, 200, 18)));
+    assert_eq!(detached.content, Rect::new(0, 18, 208, 48));
+    assert_eq!(profile_header_text(&view, detached), Some("Work"));
 }
 
 #[test]

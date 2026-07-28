@@ -66,8 +66,8 @@ use super::super::{
         TASKBAR_LAYOUT_CHANGED,
     },
     taskbar_widget::{
-        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode,
-        TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
+        profile_header_text, progress_fill_width, select_weekly_row, widget_surface_layout,
+        HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
@@ -354,7 +354,13 @@ unsafe extern "system" fn owner_proc(
                 let snapshot = state.backend.snapshot();
                 let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
                 for widget in &state.widgets {
-                    let _ = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value(), rtl);
+                    let _ = paint_taskbar_widget(
+                        widget.hwnd,
+                        &snapshot,
+                        widget.hover.value(),
+                        rtl,
+                        widget_is_attached_to_taskbar(widget),
+                    );
                 }
             }
             LRESULT(0)
@@ -482,15 +488,18 @@ unsafe extern "system" fn widget_proc(
         }
         WM_PAINT => {
             let snapshot = (*pointer).backend.snapshot();
-            let hover = widget_slot(pointer, hwnd)
-                .map(|widget| (*widget).hover.value())
-                .unwrap_or_default();
+            let (hover, attached_to_taskbar) = widget_slot(pointer, hwnd)
+                .map(|widget| {
+                    let widget = &*widget;
+                    (widget.hover.value(), widget_is_attached_to_taskbar(widget))
+                })
+                .unwrap_or((0, false));
             let rtl = matches!(
                 (*pointer).settings.resolved_language,
                 crate::Language::Arabic
             );
             validate_paint(hwnd);
-            let _ = paint_taskbar_widget(hwnd, &snapshot, hover, rtl);
+            let _ = paint_taskbar_widget(hwnd, &snapshot, hover, rtl, attached_to_taskbar);
             LRESULT(0)
         }
         WM_DPICHANGED => {
@@ -521,6 +530,12 @@ unsafe fn widget_slot(state_pointer: *mut NativeState<'_>, hwnd: HWND) -> Option
         .iter_mut()
         .find(|widget| widget.hwnd == hwnd)
         .map(|widget| widget as *mut WidgetSlot)
+}
+
+unsafe fn widget_is_attached_to_taskbar(widget: &WidgetSlot) -> bool {
+    widget.taskbar_parent != HWND::default()
+        && IsWindow(Some(widget.taskbar_parent)).as_bool()
+        && GetParent(widget.hwnd).ok() == Some(widget.taskbar_parent)
 }
 
 unsafe fn store_state(hwnd: HWND, lparam: LPARAM) {
@@ -778,9 +793,13 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
         for widget in &state.widgets {
             let _ = ShowWindow(widget.hwnd, SW_SHOWNA);
-            if let Err(error) =
-                paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value(), rtl)
-            {
+            if let Err(error) = paint_taskbar_widget(
+                widget.hwnd,
+                &snapshot,
+                widget.hover.value(),
+                rtl,
+                widget_is_attached_to_taskbar(widget),
+            ) {
                 log_taskbar_render_error("compose", &error);
             }
         }
@@ -796,7 +815,7 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         match create_widget(state_pointer, target) {
             Ok(widget) => {
                 let _ = ShowWindow(widget, SW_SHOWNA);
-                if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0, rtl) {
+                if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0, rtl, true) {
                     log_taskbar_render_error("compose", &error);
                 }
             }
@@ -890,6 +909,7 @@ unsafe fn paint_taskbar_widget(
     view: &WidgetViewModel,
     hover: u8,
     rtl: bool,
+    attached_to_taskbar: bool,
 ) -> io::Result<()> {
     let mut client = RECT::default();
     GetClientRect(hwnd, &mut client).map_err(win_error)?;
@@ -953,19 +973,32 @@ unsafe fn paint_taskbar_widget(
     let old_bitmap = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
     let dpi = GetDpiForWindow(hwnd).max(96);
     let palette = taskbar_palette(system_uses_light_theme());
-    paint_compact_taskbar_content(
+    let background = CreateSolidBrush(COLORREF(palette.material));
+    FillRect(
         memory_dc,
-        RECT {
+        &RECT {
             left: 0,
             top: 0,
             right: width,
             bottom: height,
         },
+        background,
+    );
+    let _ = DeleteObject(HGDIOBJ(background.0));
+    let surface = widget_surface_layout(width, height, dpi, attached_to_taskbar);
+    paint_compact_taskbar_content(
+        memory_dc,
+        native_rect(surface.content),
         dpi,
         view,
         palette,
         rtl,
     );
+    if let (Some(header), Some(label)) =
+        (surface.profile_header, profile_header_text(view, surface))
+    {
+        paint_profile_header(memory_dc, header, label, dpi, palette, rtl);
+    }
     apply_glass_alpha(
         std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
         width,
@@ -1143,6 +1176,14 @@ unsafe fn paint_compact_taskbar_content(
     let width = client.right - client.left;
     let height = client.bottom - client.top;
     let layout = TaskbarLayout::for_size(width, height, dpi);
+    let positioned = |rect: Rect| {
+        Rect::new(
+            rect.left + client.left,
+            rect.top + client.top,
+            rect.right + client.left,
+            rect.bottom + client.top,
+        )
+    };
     let row = select_weekly_row(view.primary.as_ref(), view.secondary.as_ref());
     let risk = match view.data_state {
         WidgetDataState::Loading => TaskbarRisk::Loading,
@@ -1177,7 +1218,7 @@ unsafe fn paint_compact_taskbar_content(
                 w!("Segoe UI Variable"),
             );
             let old = SelectObject(dc, HGDIOBJ(font.0));
-            let mut dot = native_rect(dot);
+            let mut dot = native_rect(positioned(dot));
             draw_text(
                 dc,
                 "!",
@@ -1192,7 +1233,7 @@ unsafe fn paint_compact_taskbar_content(
         let brush = CreateSolidBrush(accent);
         let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
         let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-        let dot = native_rect(dot);
+        let dot = native_rect(positioned(dot));
         let _ = Ellipse(dc, dot.left, dot.top, dot.right, dot.bottom);
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
@@ -1217,7 +1258,7 @@ unsafe fn paint_compact_taskbar_content(
             w!("Segoe UI Variable"),
         );
         let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
-        let mut label = native_rect(label);
+        let mut label = native_rect(positioned(label));
         let alignment = if rtl {
             DT_RIGHT | DT_RTLREADING
         } else {
@@ -1251,7 +1292,7 @@ unsafe fn paint_compact_taskbar_content(
         w!("Segoe UI Variable"),
     );
     let old_font = SelectObject(dc, HGDIOBJ(percent_font.0));
-    let mut percent = native_rect(layout.percent);
+    let mut percent = native_rect(positioned(layout.percent));
     let percent_alignment = if layout.mode == TaskbarLayoutMode::Minimal {
         DT_CENTER
     } else {
@@ -1276,7 +1317,8 @@ unsafe fn paint_compact_taskbar_content(
     let _ = DeleteObject(HGDIOBJ(percent_font.0));
 
     let track = CreateSolidBrush(COLORREF(palette.track));
-    FillRect(dc, &native_rect(layout.progress), track);
+    let progress = positioned(layout.progress);
+    FillRect(dc, &native_rect(progress), track);
     let _ = DeleteObject(HGDIOBJ(track.0));
     if let Some(row) = row {
         let fill_width = progress_fill_width(layout.progress.width(), row.display_percent);
@@ -1285,14 +1327,62 @@ unsafe fn paint_compact_taskbar_content(
             FillRect(
                 dc,
                 &RECT {
-                    right: layout.progress.left + fill_width,
-                    ..native_rect(layout.progress)
+                    right: progress.left + fill_width,
+                    ..native_rect(progress)
                 },
                 fill,
             );
             let _ = DeleteObject(HGDIOBJ(fill.0));
         }
     }
+}
+
+unsafe fn paint_profile_header(
+    dc: HDC,
+    header: Rect,
+    label: &str,
+    dpi: u32,
+    palette: TaskbarPalette,
+    rtl: bool,
+) {
+    let header = native_rect(header);
+    let background = CreateSolidBrush(COLORREF(palette.material));
+    FillRect(dc, &header, background);
+    let _ = DeleteObject(HGDIOBJ(background.0));
+    let _ = SetBkMode(dc, TRANSPARENT);
+
+    let font = CreateFontW(
+        -logical_to_physical(11, dpi),
+        0,
+        0,
+        0,
+        FW_MEDIUM.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        PROOF_QUALITY,
+        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+        w!("Segoe UI Variable"),
+    );
+    let old_font = SelectObject(dc, HGDIOBJ(font.0));
+    let mut text_rect = header;
+    let alignment = if rtl {
+        DT_RIGHT | DT_RTLREADING
+    } else {
+        DT_LEFT
+    };
+    draw_text(
+        dc,
+        label,
+        &mut text_rect,
+        alignment | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+        COLORREF(palette.label),
+    );
+    SelectObject(dc, old_font);
+    let _ = DeleteObject(HGDIOBJ(font.0));
 }
 
 fn compact_percent_text(mode: TaskbarLayoutMode, risk: TaskbarRisk, percent: Option<&str>) -> &str {

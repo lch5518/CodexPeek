@@ -284,6 +284,10 @@ pub enum UiAction {
     ToggleShowRemaining,
     /// 작업표시줄 위젯을 표시할 모니터 범위를 변경합니다.
     SetTaskbarDisplayMode(TaskbarDisplayMode),
+    /// 새 사용량 프로필 입력 UI를 열도록 요청합니다.
+    OpenAddUsageProfile,
+    /// 사용량 프로필 관리 UI를 열도록 요청합니다.
+    OpenManageUsageProfiles,
     /// 표시할 사용량 프로필을 선택합니다.
     SelectUsageProfile(UsageProfileId),
     /// 검증된 표시 이름으로 사용량 프로필을 추가합니다.
@@ -336,6 +340,8 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_SHOW_REMAINING => UiAction::ToggleShowRemaining,
         MENU_TASKBAR_ALL => UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::All),
         MENU_TASKBAR_PRIMARY => UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::Primary),
+        MENU_ADD_USAGE_PROFILE => UiAction::OpenAddUsageProfile,
+        MENU_MANAGE_USAGE_PROFILES => UiAction::OpenManageUsageProfiles,
         MENU_EXIT => UiAction::Exit,
         _ => return None,
     })

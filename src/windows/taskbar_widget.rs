@@ -1,6 +1,6 @@
 //! 작업 표시줄 전용 주간 사용량 표현과 DPI 레이아웃입니다.
 
-use super::{widget::logical_to_physical, UsageRowView};
+use super::{widget::logical_to_physical, UsageRowView, WidgetViewModel};
 use crate::windows::widget::Rect;
 
 /// 작업 표시줄에 여유 공간이 있을 때 사용하는 위젯의 기본 논리 너비입니다.
@@ -8,6 +8,58 @@ pub const TASKBAR_WIDTH_LOGICAL: i32 = 208;
 
 /// 작업 표시줄 아이콘과 겹치지 않으면서 내용을 유지할 수 있는 최소 논리 너비입니다.
 pub const TASKBAR_MIN_WIDTH_LOGICAL: i32 = 88;
+
+/// 연결 상태에 따라 프로필 헤더와 기존 축약 본문을 분리한 위젯 표면 레이아웃입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WidgetSurfaceLayout {
+    /// 분리된 플로팅 위젯에서 선택 프로필 이름을 표시할 영역입니다.
+    pub profile_header: Option<Rect>,
+    /// 기존 축약 사용량 본문이 차지하는 영역입니다.
+    pub content: Rect,
+}
+
+/// 위젯의 작업표시줄 연결 상태에 맞는 표면 레이아웃을 계산합니다.
+///
+/// `attached_to_taskbar`가 참이면 기존 본문 영역을 한 픽셀도 변경하지 않습니다. 거짓이면
+/// 상단에 선택 프로필 헤더를 예약하며, 입력과 반환 좌표는 물리 픽셀입니다.
+pub fn widget_surface_layout(
+    width: i32,
+    height: i32,
+    dpi: u32,
+    attached_to_taskbar: bool,
+) -> WidgetSurfaceLayout {
+    let width = width.max(0);
+    let height = height.max(0);
+    if attached_to_taskbar {
+        return WidgetSurfaceLayout {
+            profile_header: None,
+            content: Rect::new(0, 0, width, height),
+        };
+    }
+
+    let header_bottom = logical_to_physical(18, dpi).min(height);
+    let horizontal_inset = logical_to_physical(8, dpi).min(width / 2);
+    let header_top = logical_to_physical(2, dpi).min(header_bottom);
+    WidgetSurfaceLayout {
+        profile_header: Some(Rect::new(
+            horizontal_inset,
+            header_top,
+            width - horizontal_inset,
+            header_bottom,
+        )),
+        content: Rect::new(0, header_bottom, width, height),
+    }
+}
+
+/// 표면 레이아웃이 프로필 헤더를 제공할 때 표시할 선택 프로필 이름을 반환합니다.
+///
+/// 작업표시줄에 연결된 축약 본문이나 빈 라벨에는 `None`을 반환합니다. 반환 문자열은
+/// `WidgetViewModel`이 소유하며 경로나 계정 식별 정보를 새로 만들지 않습니다.
+pub fn profile_header_text(view: &WidgetViewModel, layout: WidgetSurfaceLayout) -> Option<&str> {
+    layout
+        .profile_header
+        .and((!view.usage_profile_label.is_empty()).then_some(view.usage_profile_label.as_str()))
+}
 
 /// hover 밝기를 약 150ms 동안 현재 값에서 목표 값으로 이동시킵니다.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
