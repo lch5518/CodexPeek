@@ -499,4 +499,11 @@ pub trait UiBackend {
     fn settings(&self) -> UiSettings;
     /// UI 동작을 처리하고 갱신된 설정을 반환합니다.
     fn dispatch(&mut self, action: UiAction) -> UiSettings;
+    /// 사용자가 선택 프로필을 확인한 로그인 동작을 처리하고 갱신된 설정을 반환합니다.
+    ///
+    /// 네이티브 UI는 표시 이름과 CLI·IDE 비변경 안내를 보여 준 뒤에만 호출해야 합니다. 기본
+    /// 구현은 기존 backend 호환성을 위해 `dispatch`에 위임합니다.
+    fn dispatch_confirmed_profile_login(&mut self, action: UiAction) -> UiSettings {
+        self.dispatch(action)
+    }
 }

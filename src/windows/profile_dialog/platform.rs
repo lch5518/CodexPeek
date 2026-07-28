@@ -410,17 +410,9 @@ unsafe fn handle_command(hwnd: HWND, state: &mut DialogState, wparam: WPARAM) {
     let action = match control_id {
         ADD_ID => submit_label(hwnd, state, true),
         RENAME_ID => submit_label(hwnd, state, false),
-        LOGIN_ID => {
-            let Some(profile) = state.controller.selected_profile() else {
-                return;
-            };
-            match confirm_profile_login_owned(hwnd, &profile.label, state.language) {
-                Ok(confirmed) => Ok(state
-                    .controller
-                    .confirmed_command(ProfileDialogCommand::Login, confirmed)),
-                Err(error) => Err(error),
-            }
-        }
+        LOGIN_ID => Ok(state
+            .controller
+            .confirmed_command(ProfileDialogCommand::Login, true)),
         LOGOUT_ID => Ok(state
             .controller
             .confirmed_command(ProfileDialogCommand::Logout, true)),
@@ -525,7 +517,7 @@ unsafe fn set_enabled(hwnd: HWND, id: i32, enabled: bool) {
     }
 }
 
-unsafe fn confirm_profile_login_owned(
+pub(super) unsafe fn confirm_profile_login_owned(
     owner: HWND,
     label: &str,
     language: Language,

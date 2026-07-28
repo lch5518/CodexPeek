@@ -89,6 +89,7 @@ enum PendingProfileOperation {
     Settings {
         operation: ProfileSettingsOperation,
         request_id: Option<ProfileSettingsRequestId>,
+        login_after_add: bool,
     },
     Login(UsageProfileId),
     Logout(UsageProfileId),
@@ -142,10 +143,23 @@ impl ProfileRuntimeState {
 
     /// 새 프로필 이름을 검증하고 설정 worker의 add 명령만 생성합니다.
     ///
-    /// 프로필 컨텍스트 생성과 로그인은 `Added` 성공 이벤트 이후에만 생성됩니다.
+    /// 프로필 컨텍스트는 `Added` 성공 이벤트 이후에만 생성되며, 브라우저 로그인은 예약하지
+    /// 않습니다. 확인된 로그인까지 요청하려면 `request_add_with_login_confirmation`을 사용합니다.
     pub fn request_add(
         &mut self,
         label: String,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.request_add_with_login_confirmation(label, false)
+    }
+
+    /// 새 프로필을 추가하고 명시적으로 확인된 경우에만 저장 성공 뒤 로그인을 예약합니다.
+    ///
+    /// `login_confirmed`가 거짓이어도 프로필 추가는 계속되며 로그인 필요 상태로 남습니다. 참인 경우
+    /// 에도 설정 저장 성공 전에는 실행 컨텍스트나 로그인 명령을 만들지 않습니다.
+    pub fn request_add_with_login_confirmation(
+        &mut self,
+        label: String,
+        login_confirmed: bool,
     ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
         self.require_idle()?;
         let mut catalog = self.settings.usage_profiles.clone();
@@ -153,6 +167,7 @@ impl ProfileRuntimeState {
         self.pending = Some(PendingProfileOperation::Settings {
             operation: ProfileSettingsOperation::Add,
             request_id: None,
+            login_after_add: login_confirmed,
         });
         Ok(vec![ProfileRuntimeCommand::Settings(
             ProfileSettingsMutation::Add { label: normalized },
@@ -178,6 +193,7 @@ impl ProfileRuntimeState {
         self.pending = Some(PendingProfileOperation::Settings {
             operation: ProfileSettingsOperation::Rename,
             request_id: None,
+            login_after_add: false,
         });
         Ok(vec![ProfileRuntimeCommand::Settings(
             ProfileSettingsMutation::Rename {
@@ -200,6 +216,7 @@ impl ProfileRuntimeState {
         self.pending = Some(PendingProfileOperation::Settings {
             operation: ProfileSettingsOperation::Select,
             request_id: None,
+            login_after_add: false,
         });
         Ok(vec![ProfileRuntimeCommand::Settings(
             ProfileSettingsMutation::Select { id },
@@ -220,13 +237,31 @@ impl ProfileRuntimeState {
         Ok(vec![ProfileRuntimeCommand::Quiesce(id)])
     }
 
-    /// 존재하는 프로필의 로그인을 직렬 계정 worker에 제출하도록 명령을 생성합니다.
+    /// 확인되지 않은 기존 프로필 로그인 요청을 검증하되 작업은 생성하지 않습니다.
+    ///
+    /// 브라우저 계정 확인을 완료한 UI 경계는 `request_login_with_confirmation`에 `true`를 전달해야
+    /// 합니다. 이 호환 메서드는 확인 우회를 막기 위해 항상 로그인 명령 없이 반환합니다.
     pub fn request_login(
         &mut self,
         id: UsageProfileId,
     ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.request_login_with_confirmation(id, false)
+    }
+
+    /// 존재하는 프로필의 확인된 로그인을 직렬 계정 worker에 제출하도록 명령을 생성합니다.
+    ///
+    /// `confirmed`가 거짓이면 프로필 ID만 검증하고 상태나 명령을 바꾸지 않습니다. 참일 때만 로그인
+    /// 완료를 기다리는 상태로 전이하고 `Login` 명령 하나를 반환합니다.
+    pub fn request_login_with_confirmation(
+        &mut self,
+        id: UsageProfileId,
+        confirmed: bool,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
         self.require_idle()?;
         self.validate_id(id)?;
+        if !confirmed {
+            return Ok(Vec::new());
+        }
         self.pending = Some(PendingProfileOperation::Login(id));
         Ok(vec![ProfileRuntimeCommand::Login(id)])
     }
@@ -255,6 +290,7 @@ impl ProfileRuntimeState {
             Some(PendingProfileOperation::Settings {
                 operation: expected,
                 request_id: pending_id,
+                ..
             }) if *expected == operation && pending_id.is_none() => {
                 *pending_id = Some(request_id);
                 true
@@ -284,17 +320,31 @@ impl ProfileRuntimeState {
                 settings,
                 id,
             } if self.matches_settings_request(request_id, ProfileSettingsOperation::Add) => {
+                let login_after_add = matches!(
+                    self.pending,
+                    Some(PendingProfileOperation::Settings {
+                        operation: ProfileSettingsOperation::Add,
+                        request_id: Some(expected_id),
+                        login_after_add: true,
+                    }) if expected_id == request_id
+                );
                 self.settings.usage_profiles = settings.usage_profiles;
-                self.pending = Some(PendingProfileOperation::Login(id));
                 self.login_required.insert(id);
                 ProfileExecutionContext::managed(&self.root, id)
                     .map(|context| {
-                        vec![
-                            ProfileRuntimeCommand::AddPollContext(context),
-                            ProfileRuntimeCommand::Login(id),
-                        ]
+                        let mut commands = vec![ProfileRuntimeCommand::AddPollContext(context)];
+                        if login_after_add {
+                            self.pending = Some(PendingProfileOperation::Login(id));
+                            commands.push(ProfileRuntimeCommand::Login(id));
+                        } else {
+                            self.pending = None;
+                        }
+                        commands
                     })
-                    .unwrap_or_default()
+                    .unwrap_or_else(|_| {
+                        self.pending = None;
+                        Vec::new()
+                    })
             }
             CorrelatedProfileSettingsEvent::Renamed {
                 request_id,
@@ -377,6 +427,7 @@ impl ProfileRuntimeState {
                     self.pending = Some(PendingProfileOperation::Settings {
                         operation: ProfileSettingsOperation::Select,
                         request_id: None,
+                        login_after_add: false,
                     });
                     self.login_required.remove(&id);
                     vec![ProfileRuntimeCommand::Settings(
@@ -421,6 +472,7 @@ impl ProfileRuntimeState {
             Some(PendingProfileOperation::Settings {
                 operation: expected,
                 request_id: Some(expected_id),
+                ..
             }) => expected == operation && expected_id == request_id,
             Some(PendingProfileOperation::DeleteSettings {
                 request_id: Some(expected_id),
@@ -886,8 +938,6 @@ impl UiBackend for AppRuntime {
                     .refresh_selected(PollTrigger::ForcedAuth);
             }
             UiAction::Login => {
-                let selected = self.settings_snapshot().usage_profiles.selected();
-                self.submit_profile_request(|state| state.request_login(selected));
                 save_preferences = false;
             }
             UiAction::ToggleAutoAuthRefresh => {
@@ -940,7 +990,7 @@ impl UiBackend for AppRuntime {
                 save_preferences = false;
             }
             UiAction::LoginUsageProfile(id) => {
-                self.submit_profile_request(|state| state.request_login(id));
+                let _ = id;
                 save_preferences = false;
             }
             UiAction::LogoutUsageProfile(id) => {
@@ -967,6 +1017,28 @@ impl UiBackend for AppRuntime {
             self.profile_poller(),
             &self.profile_state,
         )
+    }
+
+    fn dispatch_confirmed_profile_login(&mut self, action: UiAction) -> UiSettings {
+        self.drain_profile_events();
+        match action {
+            UiAction::AddUsageProfile(label) => self.submit_profile_request(|state| {
+                state.request_add_with_login_confirmation(label, true)
+            }),
+            UiAction::Login => {
+                let selected = self.settings_snapshot().usage_profiles.selected();
+                self.submit_profile_request(|state| {
+                    state.request_login_with_confirmation(selected, true)
+                });
+            }
+            UiAction::LoginUsageProfile(id) => {
+                self.submit_profile_request(|state| {
+                    state.request_login_with_confirmation(id, true)
+                });
+            }
+            _ => self.enqueue_diagnostic(SafeDiagnostic::Settings { valid: false }),
+        }
+        self.settings()
     }
 }
 

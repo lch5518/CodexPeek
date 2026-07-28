@@ -62,7 +62,7 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
-    profile_dialog::show_profile_manager_owned,
+    profile_dialog::{confirm_profile_login_owned, show_profile_manager_owned},
     taskbar::{
         attach_to_taskbar, reconcile_widget_surfaces, reposition_taskbar_widget, TaskbarObserver,
         TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
@@ -75,7 +75,7 @@ use super::super::{
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
 };
-use super::profile_dialog_ui_action;
+use super::{profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch};
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
@@ -558,7 +558,46 @@ unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction)
         open_profile_dialog(state_pointer);
         return;
     }
-    let settings = (*state_pointer).backend.dispatch(action);
+    let settings = if matches!(
+        action,
+        UiAction::AddUsageProfile(_) | UiAction::Login | UiAction::LoginUsageProfile(_)
+    ) {
+        let latest = (*state_pointer).backend.settings();
+        (*state_pointer).settings = latest;
+        let Some(request) = profile_login_confirmation_request(&action, &(*state_pointer).settings)
+        else {
+            show_profile_dialog_error(
+                (*state_pointer).owner,
+                (*state_pointer).settings.resolved_language,
+            );
+            return;
+        };
+        let confirmed = match confirm_profile_login_owned(
+            (*state_pointer).owner,
+            request.label(),
+            (*state_pointer).settings.resolved_language,
+        ) {
+            Ok(confirmed) => confirmed,
+            Err(_) => {
+                show_profile_dialog_error(
+                    (*state_pointer).owner,
+                    (*state_pointer).settings.resolved_language,
+                );
+                return;
+            }
+        };
+        let Some(dispatch) = request.resolve(confirmed) else {
+            return;
+        };
+        match dispatch {
+            ProfileLoginDispatch::Normal(action) => (*state_pointer).backend.dispatch(action),
+            ProfileLoginDispatch::Confirmed(action) => (*state_pointer)
+                .backend
+                .dispatch_confirmed_profile_login(action),
+        }
+    } else {
+        (*state_pointer).backend.dispatch(action)
+    };
     (*state_pointer).settings = settings;
     update_window_titles(state_pointer);
     let _ = apply_window_policy(state_pointer);

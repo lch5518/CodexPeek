@@ -362,6 +362,19 @@ pub(crate) unsafe fn show_profile_manager_owned(
     platform::show_profile_manager_owned(owner, profiles, mutation_pending, language)
 }
 
+/// 숨은 메시지 루프 창을 소유자로 사용해 선택 프로필의 브라우저 로그인을 한 번 확인합니다.
+///
+/// `label`은 확인 창에만 표시하며, 문구는 Codex CLI와 IDE 로그인이 바뀌지 않음을 함께 안내합니다.
+/// 실제 로그인·브라우저 작업은 수행하지 않습니다.
+#[cfg(windows)]
+pub(crate) unsafe fn confirm_profile_login_owned(
+    owner: windows::Win32::Foundation::HWND,
+    label: &str,
+    language: Language,
+) -> io::Result<bool> {
+    platform::confirm_profile_login_owned(owner, label, language)
+}
+
 /// 선택된 프로필의 브라우저 로그인을 시작할지 확인합니다.
 ///
 /// 확인 창은 Codex CLI와 IDE 로그인이 바뀌지 않음을 안내합니다. 비 Windows 플랫폼에서는

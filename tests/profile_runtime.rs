@@ -292,6 +292,18 @@ impl RecordingProfileRuntime {
         Ok(())
     }
 
+    fn request_add_with_login_confirmation(
+        &mut self,
+        label: String,
+        confirmed: bool,
+    ) -> Result<(), ProfileValidationError> {
+        let commands = self
+            .state
+            .request_add_with_login_confirmation(label, confirmed)?;
+        self.record(commands);
+        Ok(())
+    }
+
     fn request_delete(&mut self, id: UsageProfileId) -> Result<(), ProfileValidationError> {
         let commands = self.state.request_delete(id)?;
         self.record(commands);
@@ -424,7 +436,9 @@ fn selected_managed_profile_fixture() -> RecordingProfileRuntime {
 fn added_profile_is_logged_in_only_after_durable_settings_success() {
     let mut runtime = profile_runtime_fixture();
 
-    runtime.request_add("개인".into()).unwrap();
+    runtime
+        .request_add_with_login_confirmation("개인".into(), true)
+        .unwrap();
     assert!(runtime.poll_commands().is_empty());
 
     runtime.apply_settings_event(RuntimeSettingsEvent::Added {
@@ -435,6 +449,45 @@ fn added_profile_is_logged_in_only_after_durable_settings_success() {
     assert_eq!(
         runtime.poll_commands(),
         ["add:managed-1", "login:managed-1"]
+    );
+}
+
+#[test]
+fn cancelled_post_add_login_keeps_login_required_profile_without_login_operation() {
+    let mut runtime = profile_runtime_fixture();
+
+    runtime.request_add("개인".into()).unwrap();
+    runtime.apply_settings_event(RuntimeSettingsEvent::Added {
+        request_id: runtime.last_request_id(),
+        settings: settings_with_profile(1, "개인"),
+        id: UsageProfileId::Managed(1),
+    });
+
+    assert_eq!(runtime.poll_commands(), ["add:managed-1"]);
+    assert!(runtime.state.login_required(UsageProfileId::Managed(1)));
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::System
+    );
+}
+
+#[test]
+fn existing_profile_login_requires_explicit_confirmation_to_emit_operation() {
+    let id = UsageProfileId::Managed(1);
+    let mut state = ProfileRuntimeState::new(
+        settings_with_profile(1, "Work"),
+        UsageProfileRoot::new(test_root("confirmed-existing-login")),
+    );
+
+    assert!(state.request_login(id).unwrap().is_empty());
+    assert!(!state.mutation_pending());
+    assert!(state
+        .request_login_with_confirmation(id, false)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        state.request_login_with_confirmation(id, true).unwrap(),
+        [ProfileRuntimeCommand::Login(id)]
     );
 }
 
@@ -550,7 +603,9 @@ fn mismatched_success_event_cannot_update_pending_selection() {
 #[test]
 fn successful_login_selects_durably_before_forced_refresh() {
     let mut runtime = profile_runtime_fixture();
-    runtime.request_add("개인".into()).unwrap();
+    runtime
+        .request_add_with_login_confirmation("개인".into(), true)
+        .unwrap();
     runtime.apply_settings_event(RuntimeSettingsEvent::Added {
         request_id: runtime.last_request_id(),
         settings: settings_with_profile(1, "개인"),
@@ -585,7 +640,9 @@ fn successful_login_selects_durably_before_forced_refresh() {
 #[test]
 fn cancelled_login_retains_login_required_without_selecting_profile() {
     let mut runtime = profile_runtime_fixture();
-    runtime.request_add("개인".into()).unwrap();
+    runtime
+        .request_add_with_login_confirmation("개인".into(), true)
+        .unwrap();
     runtime.apply_settings_event(RuntimeSettingsEvent::Added {
         request_id: runtime.last_request_id(),
         settings: settings_with_profile(1, "개인"),

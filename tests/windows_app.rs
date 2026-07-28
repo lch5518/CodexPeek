@@ -9,7 +9,9 @@ use codex_usage_monitor::{
         initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
         menu_action,
-        native::profile_dialog_ui_action,
+        native::{
+            profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch,
+        },
         profile_dialog::{
             available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
             profile_login_confirmation, validated_label, ModalCleanupAction, ModalDialogLifecycle,
@@ -366,6 +368,56 @@ fn profile_dialog_actions_map_to_task_six_ui_intents() {
     for (dialog, expected) in cases {
         assert_eq!(profile_dialog_ui_action(dialog), expected);
     }
+}
+
+#[test]
+fn add_profile_confirmation_identifies_label_and_cancel_still_creates_without_login() {
+    let settings = tray_settings_with_profiles();
+    let action = UiAction::AddUsageProfile("Personal".to_string());
+    let request = profile_login_confirmation_request(&action, &settings).unwrap();
+
+    assert_eq!(request.label(), "Personal");
+    assert_eq!(
+        request.clone().resolve(false),
+        Some(ProfileLoginDispatch::Normal(action.clone()))
+    );
+    assert_eq!(
+        request.resolve(true),
+        Some(ProfileLoginDispatch::Confirmed(action))
+    );
+}
+
+#[test]
+fn top_level_login_confirmation_uses_selected_profile_and_cancel_dispatches_nothing() {
+    let mut settings = tray_settings_with_profiles();
+    settings.usage_profiles[0].selected = false;
+    settings.usage_profiles[1].selected = true;
+    let request = profile_login_confirmation_request(&UiAction::Login, &settings).unwrap();
+
+    assert_eq!(request.label(), "Work");
+    assert_eq!(request.clone().resolve(false), None);
+    assert_eq!(
+        request.resolve(true),
+        Some(ProfileLoginDispatch::Confirmed(
+            UiAction::LoginUsageProfile(UsageProfileId::Managed(1))
+        ))
+    );
+}
+
+#[test]
+fn manager_login_confirmation_is_centralized_and_resolves_once() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    let settings = tray_settings_with_profiles();
+    let action = profile_dialog_ui_action(ProfileDialogAction::Login(UsageProfileId::Managed(1)));
+    let request = profile_login_confirmation_request(&action, &settings).unwrap();
+
+    assert_eq!(request.label(), "Work");
+    assert_eq!(request.clone().resolve(false), None);
+    assert_eq!(
+        request.resolve(true),
+        Some(ProfileLoginDispatch::Confirmed(action))
+    );
 }
 
 #[test]
