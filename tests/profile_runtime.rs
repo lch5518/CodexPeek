@@ -1324,6 +1324,19 @@ fn profile_labels_are_trimmed_bounded_and_case_insensitively_unique() {
 }
 
 #[test]
+fn profile_labels_allow_embedded_periods_but_reject_dot_components() {
+    assert_eq!(normalize_profile_label("Work 2.0").unwrap(), "Work 2.0");
+    assert_eq!(
+        normalize_profile_label("."),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+    assert_eq!(
+        normalize_profile_label(" .. "),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+}
+
+#[test]
 fn managed_paths_are_derived_only_from_numeric_ids() {
     let root = UsageProfileRoot::new(std::path::PathBuf::from(r"C:\safe\appdata"));
     assert_eq!(

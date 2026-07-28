@@ -225,16 +225,17 @@ pub enum ProfileValidationError {
 
 /// 사용자 입력 프로필 이름을 저장 가능한 표시 이름으로 검증하고 공백을 제거합니다.
 ///
-/// 앞뒤 공백을 제거한 결과가 1~40개의 유니코드 스칼라 값이어야 하며, 제어 문자와 경로 구분자,
-/// 마침표는 허용하지 않습니다.
+/// 앞뒤 공백을 제거한 결과가 1~40개의 유니코드 스칼라 값이어야 하며, 제어 문자와 경로 구분자는
+/// 허용하지 않습니다. `.`과 `..` 전체 일치는 거부하지만 표시 이름 안의 마침표는 허용합니다.
 pub fn normalize_profile_label(label: &str) -> Result<String, ProfileValidationError> {
     let normalized = label.trim();
     if label.chars().any(char::is_control)
         || normalized.is_empty()
+        || matches!(normalized, "." | "..")
         || normalized.chars().count() > MAX_PROFILE_LABEL_SCALARS
         || normalized
             .chars()
-            .any(|character| matches!(character, '/' | '\\' | '.'))
+            .any(|character| matches!(character, '/' | '\\'))
     {
         return Err(ProfileValidationError::InvalidLabel);
     }
