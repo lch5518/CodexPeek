@@ -170,6 +170,18 @@ pub enum LocalizationKey {
     UsageProfileDeleteConfirm,
     /// 프로필 개수 제한 안내입니다.
     UsageProfileLimitReached,
+    /// 프로필 관리 대화상자의 닫기 동작입니다.
+    UsageProfileClose,
+    /// 프로필 표시 이름 입력 레이블입니다.
+    UsageProfileName,
+    /// 프로필 표시 이름 검증 실패 안내입니다.
+    UsageProfileInvalidLabel,
+    /// 프로필 로그인과 기존 CLI·IDE 로그인의 격리 안내입니다.
+    UsageProfileCliIdeUnchanged,
+    /// 로컬 프로필 데이터 삭제의 복구 불가 안내입니다.
+    UsageProfileDeleteIrrecoverable,
+    /// 프로필 대화상자 작업 실패의 안전한 안내입니다.
+    UsageProfileOperationFailed,
 }
 
 impl LocalizationKey {
@@ -236,6 +248,12 @@ impl LocalizationKey {
         Self::UsageProfileDelete,
         Self::UsageProfileDeleteConfirm,
         Self::UsageProfileLimitReached,
+        Self::UsageProfileClose,
+        Self::UsageProfileName,
+        Self::UsageProfileInvalidLabel,
+        Self::UsageProfileCliIdeUnchanged,
+        Self::UsageProfileDeleteIrrecoverable,
+        Self::UsageProfileOperationFailed,
     ];
 
     const fn index(self) -> usize {
@@ -301,11 +319,17 @@ impl LocalizationKey {
             Self::UsageProfileDelete => 58,
             Self::UsageProfileDeleteConfirm => 59,
             Self::UsageProfileLimitReached => 60,
+            Self::UsageProfileClose => 61,
+            Self::UsageProfileName => 62,
+            Self::UsageProfileInvalidLabel => 63,
+            Self::UsageProfileCliIdeUnchanged => 64,
+            Self::UsageProfileDeleteIrrecoverable => 65,
+            Self::UsageProfileOperationFailed => 66,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 61;
+const LOCALIZATION_KEY_COUNT: usize = 67;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -369,6 +393,12 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "삭제",
     "이 사용량 프로필을 삭제할까요?",
     "최대 사용량 프로필 수에 도달했습니다",
+    "닫기",
+    "프로필 이름",
+    "프로필 이름을 확인하세요",
+    "Codex CLI와 IDE 로그인은 변경되지 않습니다",
+    "로컬 프로필 데이터는 복구할 수 없습니다",
+    "프로필 작업을 완료할 수 없습니다",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -433,6 +463,12 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Delete",
     "Delete this usage profile?",
     "The usage profile limit has been reached",
+    "Close",
+    "Profile name",
+    "Check the profile name",
+    "Codex CLI and IDE sign-ins are unchanged",
+    "local profile data cannot be recovered",
+    "The profile operation could not be completed",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -497,6 +533,12 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Eliminar",
     "¿Eliminar este perfil de uso?",
     "Se alcanzó el límite de perfiles de uso",
+    "Cerrar",
+    "Nombre del perfil",
+    "Comprueba el nombre del perfil",
+    "Los inicios de sesión de Codex CLI e IDE no cambian",
+    "Los datos locales del perfil no se pueden recuperar",
+    "No se pudo completar la operación del perfil",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -561,6 +603,12 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Excluir",
     "Excluir este perfil de uso?",
     "O limite de perfis de uso foi atingido",
+    "Fechar",
+    "Nome do perfil",
+    "Verifique o nome do perfil",
+    "Os logins do Codex CLI e da IDE não são alterados",
+    "Os dados locais do perfil não podem ser recuperados",
+    "Não foi possível concluir a operação do perfil",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -625,6 +673,12 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Hapus",
     "Hapus profil penggunaan ini?",
     "Batas profil penggunaan telah tercapai",
+    "Tutup",
+    "Nama profil",
+    "Periksa nama profil",
+    "Login Codex CLI dan IDE tidak berubah",
+    "Data profil lokal tidak dapat dipulihkan",
+    "Operasi profil tidak dapat diselesaikan",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -689,6 +743,12 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "削除",
     "この使用量プロファイルを削除しますか？",
     "使用量プロファイルの上限に達しました",
+    "閉じる",
+    "プロファイル名",
+    "プロファイル名を確認してください",
+    "Codex CLI と IDE のサインインは変更されません",
+    "ローカルプロファイルデータは復元できません",
+    "プロファイル操作を完了できませんでした",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -753,6 +813,12 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "हटाएँ",
     "यह उपयोग प्रोफ़ाइल हटाएँ?",
     "उपयोग प्रोफ़ाइल की सीमा पूरी हो गई है",
+    "बंद करें",
+    "प्रोफ़ाइल का नाम",
+    "प्रोफ़ाइल का नाम जाँचें",
+    "Codex CLI और IDE साइन-इन अपरिवर्तित रहते हैं",
+    "स्थानीय प्रोफ़ाइल डेटा पुनर्प्राप्त नहीं किया जा सकता",
+    "प्रोफ़ाइल कार्रवाई पूरी नहीं हो सकी",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -817,6 +883,12 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Löschen",
     "Dieses Nutzungsprofil löschen?",
     "Das Limit für Nutzungsprofile ist erreicht",
+    "Schließen",
+    "Profilname",
+    "Überprüfen Sie den Profilnamen",
+    "Codex-CLI- und IDE-Anmeldungen bleiben unverändert",
+    "Lokale Profildaten können nicht wiederhergestellt werden",
+    "Der Profilvorgang konnte nicht abgeschlossen werden",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -881,6 +953,12 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Supprimer",
     "Supprimer ce profil d'utilisation ?",
     "La limite de profils d'utilisation est atteinte",
+    "Fermer",
+    "Nom du profil",
+    "Vérifiez le nom du profil",
+    "Les connexions à Codex CLI et à l'IDE restent inchangées",
+    "Les données locales du profil sont irrécupérables",
+    "L'opération de profil n'a pas pu être effectuée",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -945,6 +1023,12 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Xóa",
     "Xóa hồ sơ sử dụng này?",
     "Đã đạt giới hạn hồ sơ sử dụng",
+    "Đóng",
+    "Tên hồ sơ",
+    "Kiểm tra tên hồ sơ",
+    "Đăng nhập Codex CLI và IDE không thay đổi",
+    "Không thể khôi phục dữ liệu hồ sơ cục bộ",
+    "Không thể hoàn tất thao tác hồ sơ",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1009,6 +1093,12 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Sil",
     "Bu kullanım profili silinsin mi?",
     "Kullanım profili sınırına ulaşıldı",
+    "Kapat",
+    "Profil adı",
+    "Profil adını kontrol edin",
+    "Codex CLI ve IDE oturumları değişmez",
+    "Yerel profil verileri kurtarılamaz",
+    "Profil işlemi tamamlanamadı",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1073,6 +1163,12 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "حذف",
     "هل تريد حذف ملف تعريف الاستخدام هذا؟",
     "تم بلوغ حد ملفات تعريف الاستخدام",
+    "إغلاق",
+    "اسم ملف التعريف",
+    "تحقق من اسم ملف التعريف",
+    "لا تتغير عمليات تسجيل الدخول في Codex CLI وIDE",
+    "لا يمكن استعادة بيانات ملف التعريف المحلية",
+    "تعذر إكمال عملية ملف التعريف",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.

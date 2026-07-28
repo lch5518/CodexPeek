@@ -62,6 +62,7 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
+    profile_dialog::show_profile_manager_owned,
     taskbar::{
         attach_to_taskbar, reconcile_widget_surfaces, reposition_taskbar_widget, TaskbarObserver,
         TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
@@ -74,6 +75,7 @@ use super::super::{
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
 };
+use super::profile_dialog_ui_action;
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
@@ -549,12 +551,58 @@ unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction)
         begin_exit(state_pointer);
         return;
     }
+    if matches!(
+        action,
+        UiAction::OpenAddUsageProfile | UiAction::OpenManageUsageProfiles
+    ) {
+        open_profile_dialog(state_pointer);
+        return;
+    }
     let settings = (*state_pointer).backend.dispatch(action);
     (*state_pointer).settings = settings;
     update_window_titles(state_pointer);
     let _ = apply_window_policy(state_pointer);
     let _ = refresh_tray(state_pointer, false);
     update_tooltips(state_pointer);
+}
+
+/// 현재 UI 복사본으로 프로필 관리 창을 열고 검증된 결과만 백엔드에 전달합니다.
+///
+/// 대화상자 자체는 파일·설정·Codex 작업을 수행하지 않습니다. `UiBackend`는 반환된 타입 지정
+/// 의도를 받아 장시간 작업을 워커에 예약해야 하며, 오류 문구에는 OS 코드나 프로필 식별 정보를
+/// 포함하지 않습니다.
+unsafe fn open_profile_dialog(state_pointer: *mut NativeState<'_>) {
+    let settings = (*state_pointer).backend.settings();
+    (*state_pointer).settings = settings;
+    let state = &*state_pointer;
+    let result = show_profile_manager_owned(
+        state.owner,
+        &state.settings.usage_profiles,
+        state.settings.usage_profile_mutation_pending,
+        state.settings.resolved_language,
+    );
+    match result {
+        Ok(Some(action)) => dispatch_action(state_pointer, profile_dialog_ui_action(action)),
+        Ok(None) => {}
+        Err(_) => show_profile_dialog_error(state.owner, state.settings.resolved_language),
+    }
+}
+
+unsafe fn show_profile_dialog_error(owner: HWND, language: crate::Language) {
+    let title = localized_window_title(language);
+    let message: Vec<u16> = crate::localized_text(
+        crate::LocalizationKey::UsageProfileOperationFailed,
+        language,
+    )
+    .encode_utf16()
+    .chain(Some(0))
+    .collect();
+    let _ = MessageBoxW(
+        Some(owner),
+        PCWSTR(message.as_ptr()),
+        PCWSTR(title.as_ptr()),
+        MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR,
+    );
 }
 
 /// 트레이 아이콘 삭제가 끝난 뒤에만 owner 창을 파괴하도록 비동기 종료를 시작합니다.

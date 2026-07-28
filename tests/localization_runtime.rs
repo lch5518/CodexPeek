@@ -64,6 +64,12 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::UsageProfileDelete,
         LocalizationKey::UsageProfileDeleteConfirm,
         LocalizationKey::UsageProfileLimitReached,
+        LocalizationKey::UsageProfileClose,
+        LocalizationKey::UsageProfileName,
+        LocalizationKey::UsageProfileInvalidLabel,
+        LocalizationKey::UsageProfileCliIdeUnchanged,
+        LocalizationKey::UsageProfileDeleteIrrecoverable,
+        LocalizationKey::UsageProfileOperationFailed,
     ];
     let required_languages = [
         Language::Korean,
@@ -80,7 +86,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Arabic,
     ];
 
-    assert_eq!(LocalizationKey::ALL.len(), 61);
+    assert_eq!(LocalizationKey::ALL.len(), 67);
     assert_eq!(LocalizationKey::ALL.len(), required_keys.len());
     for required_key in required_keys {
         assert!(LocalizationKey::ALL.contains(&required_key));

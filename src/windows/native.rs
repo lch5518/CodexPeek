@@ -2,7 +2,7 @@
 
 use std::io;
 
-use super::UiBackend;
+use super::{profile_dialog::ProfileDialogAction, UiAction, UiBackend};
 
 #[cfg(windows)]
 mod platform;
@@ -37,6 +37,20 @@ pub fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             io::ErrorKind::Unsupported,
             "native Windows UI is unavailable",
         ))
+    }
+}
+
+/// 프로필 대화상자의 검증된 결과를 애플리케이션 계층의 타입 지정 UI 의도로 변환합니다.
+///
+/// 입력에 포함된 프로필 식별자와 정규화된 표시 이름을 그대로 보존하며 I/O나 프로세스 변경은
+/// 수행하지 않습니다. 실제 작업은 `UiBackend`가 UI 스레드 밖에서 예약해야 합니다.
+pub fn profile_dialog_ui_action(action: ProfileDialogAction) -> UiAction {
+    match action {
+        ProfileDialogAction::Add(label) => UiAction::AddUsageProfile(label),
+        ProfileDialogAction::Rename(id, label) => UiAction::RenameUsageProfile(id, label),
+        ProfileDialogAction::Login(id) => UiAction::LoginUsageProfile(id),
+        ProfileDialogAction::Logout(id) => UiAction::LogoutUsageProfile(id),
+        ProfileDialogAction::Delete(id) => UiAction::DeleteUsageProfile(id),
     }
 }
 

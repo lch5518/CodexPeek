@@ -3,6 +3,7 @@
 pub mod autostart;
 pub mod lifecycle;
 pub mod native;
+pub mod profile_dialog;
 pub mod taskbar;
 pub mod taskbar_widget;
 pub(crate) mod time;

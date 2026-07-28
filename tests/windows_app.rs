@@ -8,7 +8,13 @@ use codex_usage_monitor::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
         initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
-        menu_action, profile_taskbar_tooltip, resolve_windows_language, startup_plan,
+        menu_action,
+        native::profile_dialog_ui_action,
+        profile_dialog::{
+            available_profile_actions, profile_delete_confirmation, profile_login_confirmation,
+            validated_label, ProfileDialogCommand, ProfileDialogController,
+        },
+        profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
             place_taskbar_widget, reconcile_widget_surfaces, run_taskbar_attachment,
             taskbar_widget_size, TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
@@ -34,9 +40,171 @@ use codex_usage_monitor::{
         MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
         MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
-    Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
-    UsageProfileId,
+    Language, LanguagePreference, ProfileValidationError, StartupView, TaskbarDisplayMode,
+    UpdatePresentationStatus, UsageProfileId,
 };
+
+fn system_profile_view() -> UsageProfileView {
+    UsageProfileView {
+        id: UsageProfileId::System,
+        label: "Default Codex account".to_string(),
+        summary: "Displayed".to_string(),
+        selected: true,
+        login_required: false,
+        managed: false,
+    }
+}
+
+#[test]
+fn system_profile_never_offers_rename_or_delete() {
+    let actions = available_profile_actions(&system_profile_view());
+
+    assert!(!actions.contains(&ProfileDialogCommand::Rename));
+    assert!(!actions.contains(&ProfileDialogCommand::Delete));
+    assert!(actions.contains(&ProfileDialogCommand::Login));
+
+    let mut inconsistent_view = system_profile_view();
+    inconsistent_view.managed = true;
+    let actions = available_profile_actions(&inconsistent_view);
+    assert!(!actions.contains(&ProfileDialogCommand::Rename));
+    assert!(!actions.contains(&ProfileDialogCommand::Delete));
+}
+
+#[test]
+fn dialog_labels_use_shared_validation() {
+    assert_eq!(validated_label("  Work  ").unwrap(), "Work");
+    assert_eq!(
+        validated_label("bad\\name"),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+}
+
+#[test]
+fn pending_profile_mutation_disables_every_mutating_control() {
+    let controller = ProfileDialogController::new(&[system_profile_view()], true);
+
+    assert!(!controller.can_add());
+    for command in [
+        ProfileDialogCommand::Rename,
+        ProfileDialogCommand::Login,
+        ProfileDialogCommand::Logout,
+        ProfileDialogCommand::Delete,
+    ] {
+        assert!(!controller.command_enabled(command));
+    }
+}
+
+#[test]
+fn profile_dialog_enforces_the_eight_profile_limit() {
+    let mut profiles = vec![system_profile_view()];
+    for sequence in 1..8 {
+        profiles.push(UsageProfileView {
+            id: UsageProfileId::Managed(sequence),
+            label: format!("Profile {sequence}"),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        });
+    }
+
+    assert!(!ProfileDialogController::new(&profiles, false).can_add());
+    profiles.pop();
+    assert!(ProfileDialogController::new(&profiles, false).can_add());
+}
+
+#[test]
+fn dialog_controller_emits_only_confirmed_typed_profile_actions() {
+    let managed = UsageProfileView {
+        id: UsageProfileId::Managed(7),
+        label: "Work".to_string(),
+        summary: "Displayed".to_string(),
+        selected: true,
+        login_required: false,
+        managed: true,
+    };
+    let controller = ProfileDialogController::new(&[managed], false);
+
+    assert_eq!(
+        controller.submit_add("  Personal  "),
+        Ok(Some(
+            codex_usage_monitor::windows::profile_dialog::ProfileDialogAction::Add(
+                "Personal".to_string()
+            )
+        ))
+    );
+    assert_eq!(
+        controller.submit_rename("  Team  "),
+        Ok(Some(
+            codex_usage_monitor::windows::profile_dialog::ProfileDialogAction::Rename(
+                UsageProfileId::Managed(7),
+                "Team".to_string()
+            )
+        ))
+    );
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Login, false),
+        None
+    );
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Delete, true),
+        Some(
+            codex_usage_monitor::windows::profile_dialog::ProfileDialogAction::Delete(
+                UsageProfileId::Managed(7)
+            )
+        )
+    );
+}
+
+#[test]
+fn profile_confirmations_name_the_chosen_profile_and_scope_side_effects() {
+    let login = profile_login_confirmation("Work", Language::English);
+    let delete = profile_delete_confirmation("Work", Language::English);
+
+    assert!(login.contains("Work"));
+    assert!(login.contains("browser"));
+    assert!(login.contains("CLI and IDE sign-ins are unchanged"));
+    assert!(delete.contains("Work"));
+    assert!(delete.contains("local profile data cannot be recovered"));
+
+    for language in Language::ALL {
+        assert!(profile_login_confirmation("Work", *language).contains("Work"));
+        assert!(profile_delete_confirmation("Work", *language).contains("Work"));
+    }
+}
+
+#[test]
+fn profile_dialog_actions_map_to_task_six_ui_intents() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    let id = UsageProfileId::Managed(3);
+    let cases = [
+        (
+            ProfileDialogAction::Add("Work".to_string()),
+            UiAction::AddUsageProfile("Work".to_string()),
+        ),
+        (
+            ProfileDialogAction::Rename(id, "Team".to_string()),
+            UiAction::RenameUsageProfile(id, "Team".to_string()),
+        ),
+        (
+            ProfileDialogAction::Login(id),
+            UiAction::LoginUsageProfile(id),
+        ),
+        (
+            ProfileDialogAction::Logout(id),
+            UiAction::LogoutUsageProfile(id),
+        ),
+        (
+            ProfileDialogAction::Delete(id),
+            UiAction::DeleteUsageProfile(id),
+        ),
+    ];
+
+    for (dialog, expected) in cases {
+        assert_eq!(profile_dialog_ui_action(dialog), expected);
+    }
+}
 
 #[test]
 fn update_menu_labels_surface_every_presentation_status() {
