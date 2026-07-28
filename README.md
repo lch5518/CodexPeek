@@ -1,4 +1,4 @@
-# Codex Usage Monitor
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](README.md) · [한국어](docs/translations/README.ko.md) · [Español](docs/translations/README.es.md) · [Português (Brasil)](docs/translations/README.pt-BR.md) · [Bahasa Indonesia](docs/translations/README.id.md) · [日本語](docs/translations/README.ja.md) · [हिन्दी](docs/translations/README.hi.md) · [Deutsch](docs/translations/README.de.md) · [Français](docs/translations/README.fr.md) · [Tiếng Việt](docs/translations/README.vi.md) · [Türkçe](docs/translations/README.tr.md) · [العربية](docs/translations/README.ar.md)
 
