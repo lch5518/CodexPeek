@@ -9,14 +9,14 @@ use windows::{
         System::LibraryLoader::GetModuleHandleW,
         UI::{
             Controls::EM_SETLIMITTEXT,
-            Input::KeyboardAndMouse::{EnableWindow, SetFocus},
+            Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetDlgItem,
                 GetMessageW, GetWindowLongPtrW, GetWindowTextW, IsDialogMessageW, IsWindow,
                 LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW,
                 SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
                 TranslateMessage, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-                GWLP_USERDATA, HMENU, IDC_ARROW, IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY,
+                GWLP_USERDATA, HMENU, IDCANCEL, IDC_ARROW, IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY,
                 LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, MB_ICONERROR, MB_ICONWARNING, MB_OK,
                 MB_OKCANCEL, MB_YESNO, MSG, SW_SHOW, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
                 WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
@@ -29,8 +29,10 @@ use windows::{
 use crate::{localized_text, Language, LocalizationKey};
 
 use super::{
-    profile_delete_confirmation, profile_login_confirmation, ProfileDialogAction,
-    ProfileDialogCommand, ProfileDialogController, UsageProfileView,
+    profile_delete_confirmation, profile_dialog_keyboard_result, profile_login_confirmation,
+    ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+    ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
+    UsageProfileView, PROFILE_LABEL_MAX_UTF16_UNITS,
 };
 
 const DIALOG_CLASS: PCWSTR = w!("CodexUsageMonitor.ProfileDialog.v1");
@@ -42,7 +44,6 @@ const LOGIN_ID: i32 = 4104;
 const LOGOUT_ID: i32 = 4105;
 const DELETE_ID: i32 = 4106;
 const CLOSE_ID: i32 = 4107;
-const MAX_LABEL_UTF16_UNITS: usize = 40;
 
 struct DialogState {
     controller: ProfileDialogController,
@@ -50,6 +51,57 @@ struct DialogState {
     result: Option<ProfileDialogAction>,
     list: HWND,
     edit: HWND,
+}
+
+struct ModalWindowGuard {
+    dialog: HWND,
+    owner: HWND,
+    lifecycle: ModalDialogLifecycle,
+}
+
+impl ModalWindowGuard {
+    unsafe fn new(dialog: HWND, owner: HWND) -> Self {
+        let owner_present = owner != HWND::default() && IsWindow(Some(owner)).as_bool();
+        let owner_was_enabled = owner_present && IsWindowEnabled(owner).as_bool();
+        let mut lifecycle = ModalDialogLifecycle::new(owner_present, owner_was_enabled);
+        lifecycle.window_created();
+        Self {
+            dialog,
+            owner,
+            lifecycle,
+        }
+    }
+
+    unsafe fn disable_owner(&mut self) {
+        if self.lifecycle.should_disable_owner() {
+            let _ = EnableWindow(self.owner, false);
+            self.lifecycle.owner_disabled();
+        }
+    }
+}
+
+impl Drop for ModalWindowGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if !IsWindow(Some(self.dialog)).as_bool() {
+                self.lifecycle.window_destroyed();
+            }
+            for action in self.lifecycle.cleanup_actions() {
+                match action {
+                    ModalCleanupAction::ClearWindowState => {
+                        SetWindowLongPtrW(self.dialog, GWLP_USERDATA, 0);
+                    }
+                    ModalCleanupAction::DestroyWindow => {
+                        let _ = DestroyWindow(self.dialog);
+                    }
+                    ModalCleanupAction::RestoreOwner => {
+                        let _ = EnableWindow(self.owner, true);
+                        let _ = SetForegroundWindow(self.owner);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(super) fn show_profile_manager(
@@ -98,17 +150,11 @@ pub(super) unsafe fn show_profile_manager_owned(
         Some(state_pointer.cast_const()),
     )
     .map_err(win_error)?;
+    let mut window_guard = ModalWindowGuard::new(dialog, owner);
 
-    let setup_result = setup_controls(dialog, instance, profiles, &mut state);
-    if let Err(error) = setup_result {
-        let _ = DestroyWindow(dialog);
-        return Err(error);
-    }
+    setup_controls(dialog, instance, profiles, &mut state)?;
 
-    let owner_disabled = owner != HWND::default() && IsWindow(Some(owner)).as_bool();
-    if owner_disabled {
-        let _ = EnableWindow(owner, false);
-    }
+    window_guard.disable_owner();
     let _ = ShowWindow(dialog, SW_SHOW);
     let _ = SetForegroundWindow(dialog);
     let _ = SetFocus(Some(state.edit));
@@ -118,9 +164,6 @@ pub(super) unsafe fn show_profile_manager_owned(
         let mut message = MSG::default();
         let status = GetMessageW(&mut message, None, 0, 0);
         if status.0 == -1 {
-            if owner_disabled {
-                let _ = EnableWindow(owner, true);
-            }
             return Err(io::Error::last_os_error());
         }
         if status.0 == 0 {
@@ -133,13 +176,6 @@ pub(super) unsafe fn show_profile_manager_owned(
         }
     }
 
-    if IsWindow(Some(dialog)).as_bool() {
-        let _ = DestroyWindow(dialog);
-    }
-    if owner_disabled {
-        let _ = EnableWindow(owner, true);
-        let _ = SetForegroundWindow(owner);
-    }
     if let Some(code) = quit_code {
         PostQuitMessage(code);
     }
@@ -228,7 +264,7 @@ unsafe fn setup_controls(
     let _ = SendMessageW(
         state.edit,
         EM_SETLIMITTEXT,
-        Some(WPARAM(MAX_LABEL_UTF16_UNITS)),
+        Some(WPARAM(PROFILE_LABEL_MAX_UTF16_UNITS)),
         None,
     );
 
@@ -348,6 +384,21 @@ unsafe extern "system" fn dialog_proc(
 unsafe fn handle_command(hwnd: HWND, state: &mut DialogState, wparam: WPARAM) {
     let control_id = (wparam.0 & 0xffff) as i32;
     let notification = ((wparam.0 >> 16) & 0xffff) as u32;
+    let keyboard_command = if control_id == IDCANCEL.0 {
+        Some(ProfileDialogKeyboardCommand::Cancel)
+    } else if control_id == IDOK.0 {
+        Some(ProfileDialogKeyboardCommand::Accept)
+    } else {
+        None
+    };
+    if let Some(command) = keyboard_command {
+        if profile_dialog_keyboard_result(command)
+            == ProfileDialogKeyboardResult::CloseWithoutAction
+        {
+            let _ = DestroyWindow(hwnd);
+        }
+        return;
+    }
     if control_id == PROFILE_LIST_ID && notification == LBN_SELCHANGE {
         let selected = SendMessageW(state.list, LB_GETCURSEL, None, None).0;
         if selected >= 0 && state.controller.select(selected as usize) {
@@ -406,7 +457,7 @@ unsafe fn submit_label(
     state: &DialogState,
     add: bool,
 ) -> Result<Option<ProfileDialogAction>, io::Error> {
-    let mut buffer = [0_u16; MAX_LABEL_UTF16_UNITS + 1];
+    let mut buffer = [0_u16; PROFILE_LABEL_MAX_UTF16_UNITS + 1];
     let length = GetWindowTextW(state.edit, &mut buffer);
     if length < 0 {
         return Err(io::Error::last_os_error());

@@ -12,6 +12,13 @@ use super::UsageProfileView;
 #[cfg(windows)]
 mod platform;
 
+/// 40개 유니코드 스칼라 프로필 이름을 손실 없이 보관하는 최대 UTF-16 코드 단위 수입니다.
+///
+/// 모든 스칼라가 보조 평면 문자여도 각각 서로게이트 쌍 두 단위를 사용하므로 80단위면 공용
+/// `normalize_profile_label` 제한을 자르지 않고 수용합니다. 네이티브 edit 버퍼는 널 종료를 위해
+/// 한 단위를 추가로 확보해야 합니다.
+pub const PROFILE_LABEL_MAX_UTF16_UNITS: usize = 80;
+
 /// 프로필 관리 대화상자가 애플리케이션 계층에 전달하는 변경 요청입니다.
 ///
 /// 문자열은 공용 프로필 이름 검증을 통과한 값만 포함하며, 실제 파일·설정·로그인 I/O는
@@ -41,6 +48,110 @@ pub enum ProfileDialogCommand {
     Logout,
     /// 관리 프로필을 삭제합니다.
     Delete,
+}
+
+/// `IsDialogMessageW`가 변환한 표준 모달 키보드 명령입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileDialogKeyboardCommand {
+    /// Enter 키가 생성하는 표준 확인 명령입니다.
+    Accept,
+    /// Escape 키가 생성하는 표준 취소 명령입니다.
+    Cancel,
+}
+
+/// 표준 모달 키보드 명령을 처리한 뒤의 대화상자 동작입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileDialogKeyboardResult {
+    /// 기본 mutation을 추론하지 않고 현재 대화상자를 유지합니다.
+    Ignore,
+    /// 작업을 만들지 않고 대화상자를 닫습니다.
+    CloseWithoutAction,
+}
+
+/// 표준 모달 키보드 명령을 안전한 대화상자 결과로 변환합니다.
+///
+/// Escape는 취소로 닫고, Enter는 명시적인 기본 mutation 버튼을 두지 않았으므로 무시합니다.
+/// 이 함수는 프로필 작업을 생성하거나 I/O를 수행하지 않습니다.
+pub const fn profile_dialog_keyboard_result(
+    command: ProfileDialogKeyboardCommand,
+) -> ProfileDialogKeyboardResult {
+    match command {
+        ProfileDialogKeyboardCommand::Accept => ProfileDialogKeyboardResult::Ignore,
+        ProfileDialogKeyboardCommand::Cancel => ProfileDialogKeyboardResult::CloseWithoutAction,
+    }
+}
+
+/// 모달 프로필 창 종료 시 Win32 계층이 수행해야 하는 정리 작업입니다.
+///
+/// 작업 순서는 사용자 데이터 포인터 제거, 살아 있는 창 파괴, 이 대화상자가 직접 비활성화한
+/// 소유자 복원 순서입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalCleanupAction {
+    /// 창의 `GWLP_USERDATA` 포인터를 먼저 제거합니다.
+    ClearWindowState,
+    /// 아직 살아 있는 모달 창을 파괴합니다.
+    DestroyWindow,
+    /// 이 모달이 비활성화했던 소유자 창을 다시 활성화합니다.
+    RestoreOwner,
+}
+
+/// 모달 프로필 창과 소유자 활성 상태의 플랫폼 독립 수명 모델입니다.
+///
+/// Win32 호출 성공 여부와 무관하게 정리 순서를 결정하며, 이미 비활성화된 소유자는 이 모달이
+/// 소유하지 않는 상태이므로 복원 대상으로 기록하지 않습니다.
+#[derive(Clone, Debug)]
+pub struct ModalDialogLifecycle {
+    owner_present: bool,
+    owner_was_enabled: bool,
+    owner_disabled_by_dialog: bool,
+    window_alive: bool,
+}
+
+impl ModalDialogLifecycle {
+    /// 모달 시작 전 소유자 존재 여부와 활성 상태를 기록합니다.
+    pub const fn new(owner_present: bool, owner_was_enabled: bool) -> Self {
+        Self {
+            owner_present,
+            owner_was_enabled,
+            owner_disabled_by_dialog: false,
+            window_alive: false,
+        }
+    }
+
+    /// 네이티브 창이 생성되어 사용자 데이터 포인터를 보유하기 시작했음을 기록합니다.
+    pub fn window_created(&mut self) {
+        self.window_alive = true;
+    }
+
+    /// 네이티브 창 파괴가 완료되어 포인터 제거·창 파괴가 더 필요하지 않음을 기록합니다.
+    pub fn window_destroyed(&mut self) {
+        self.window_alive = false;
+    }
+
+    /// 현재 모달이 소유자 창을 비활성화해야 하는지 반환합니다.
+    pub const fn should_disable_owner(&self) -> bool {
+        self.owner_present && self.owner_was_enabled && !self.owner_disabled_by_dialog
+    }
+
+    /// 이 모달이 활성 상태였던 소유자 창을 직접 비활성화했음을 기록합니다.
+    pub fn owner_disabled(&mut self) {
+        if self.should_disable_owner() {
+            self.owner_disabled_by_dialog = true;
+        }
+    }
+
+    /// 현재 수명 상태에서 필요한 정리 작업을 안전한 실행 순서로 반환합니다.
+    pub fn cleanup_actions(&self) -> Vec<ModalCleanupAction> {
+        let mut actions = Vec::with_capacity(3);
+        if self.window_alive {
+            actions.push(ModalCleanupAction::ClearWindowState);
+            actions.push(ModalCleanupAction::DestroyWindow);
+        }
+        if self.owner_disabled_by_dialog {
+            actions.push(ModalCleanupAction::RestoreOwner);
+        }
+        actions
+    }
 }
 
 /// 프로필 관리 대화상자의 선택과 컨트롤 활성 상태를 결정하는 순수 모델입니다.
@@ -78,7 +189,7 @@ impl ProfileDialogController {
 
     /// 현재 선택된 프로필에서 지정 명령을 실행할 수 있는지 반환합니다.
     ///
-    /// 변경 작업이 진행 중이면 모든 명령을 거부하고, 시스템 프로필의 이름 변경·삭제도
+    /// 변경 작업이 진행 중이면 모든 명령을 거부하고, 시스템 프로필의 이름 변경·로그아웃·삭제도
     /// 항상 거부합니다.
     pub fn command_enabled(&self, command: ProfileDialogCommand) -> bool {
         if self.mutation_pending {
@@ -161,7 +272,7 @@ impl ProfileDialogController {
 
 /// 프로필 종류와 로그인 상태에 따라 허용되는 관리 명령을 반환합니다.
 ///
-/// 시스템 프로필에는 이름 변경과 삭제를 절대 제공하지 않습니다. 반환값 계산은 I/O나
+/// 시스템 프로필에는 이름 변경, 로그아웃, 삭제를 절대 제공하지 않습니다. 반환값 계산은 I/O나
 /// 환경 변경을 수행하지 않습니다.
 pub fn available_profile_actions(profile: &UsageProfileView) -> Vec<ProfileDialogCommand> {
     let mut actions = Vec::with_capacity(5);
@@ -171,7 +282,7 @@ pub fn available_profile_actions(profile: &UsageProfileView) -> Vec<ProfileDialo
         actions.push(ProfileDialogCommand::Rename);
     }
     actions.push(ProfileDialogCommand::Login);
-    if !profile.login_required {
+    if mutable_managed_profile && !profile.login_required {
         actions.push(ProfileDialogCommand::Logout);
     }
     if mutable_managed_profile {

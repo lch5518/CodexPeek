@@ -11,8 +11,10 @@ use codex_usage_monitor::{
         menu_action,
         native::profile_dialog_ui_action,
         profile_dialog::{
-            available_profile_actions, profile_delete_confirmation, profile_login_confirmation,
-            validated_label, ProfileDialogCommand, ProfileDialogController,
+            available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
+            profile_login_confirmation, validated_label, ModalCleanupAction, ModalDialogLifecycle,
+            ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
+            ProfileDialogKeyboardResult, PROFILE_LABEL_MAX_UTF16_UNITS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -61,6 +63,7 @@ fn system_profile_never_offers_rename_or_delete() {
 
     assert!(!actions.contains(&ProfileDialogCommand::Rename));
     assert!(!actions.contains(&ProfileDialogCommand::Delete));
+    assert!(!actions.contains(&ProfileDialogCommand::Logout));
     assert!(actions.contains(&ProfileDialogCommand::Login));
 
     let mut inconsistent_view = system_profile_view();
@@ -68,6 +71,7 @@ fn system_profile_never_offers_rename_or_delete() {
     let actions = available_profile_actions(&inconsistent_view);
     assert!(!actions.contains(&ProfileDialogCommand::Rename));
     assert!(!actions.contains(&ProfileDialogCommand::Delete));
+    assert!(!actions.contains(&ProfileDialogCommand::Logout));
 }
 
 #[test]
@@ -77,6 +81,33 @@ fn dialog_labels_use_shared_validation() {
         validated_label("bad\\name"),
         Err(ProfileValidationError::InvalidLabel)
     );
+}
+
+#[test]
+fn dialog_edit_capacity_preserves_labels_across_the_old_astral_boundary() {
+    let twenty_astral = "😀".repeat(20);
+    let twenty_one_astral = "😀".repeat(21);
+
+    assert_eq!(twenty_astral.encode_utf16().count(), 40);
+    assert_eq!(twenty_one_astral.encode_utf16().count(), 42);
+    assert_eq!(validated_label(&twenty_astral).unwrap(), twenty_astral);
+    assert_eq!(
+        validated_label(&twenty_one_astral).unwrap(),
+        twenty_one_astral
+    );
+    assert!(twenty_one_astral.encode_utf16().count() <= PROFILE_LABEL_MAX_UTF16_UNITS);
+}
+
+#[test]
+fn dialog_edit_capacity_preserves_the_worst_case_forty_scalar_label() {
+    let forty_astral = "😀".repeat(40);
+
+    assert_eq!(forty_astral.chars().count(), 40);
+    assert_eq!(
+        forty_astral.encode_utf16().count(),
+        PROFILE_LABEL_MAX_UTF16_UNITS
+    );
+    assert_eq!(validated_label(&forty_astral).unwrap(), forty_astral);
 }
 
 #[test]
@@ -92,6 +123,51 @@ fn pending_profile_mutation_disables_every_mutating_control() {
     ] {
         assert!(!controller.command_enabled(command));
     }
+}
+
+#[test]
+fn modal_cleanup_destroys_live_window_and_restores_only_an_owner_it_disabled() {
+    let mut active_owner = ModalDialogLifecycle::new(true, true);
+    active_owner.window_created();
+    assert!(active_owner.should_disable_owner());
+    active_owner.owner_disabled();
+    assert_eq!(
+        active_owner.cleanup_actions(),
+        vec![
+            ModalCleanupAction::ClearWindowState,
+            ModalCleanupAction::DestroyWindow,
+            ModalCleanupAction::RestoreOwner,
+        ]
+    );
+
+    active_owner.window_destroyed();
+    assert_eq!(
+        active_owner.cleanup_actions(),
+        vec![ModalCleanupAction::RestoreOwner]
+    );
+
+    let mut already_disabled_owner = ModalDialogLifecycle::new(true, false);
+    already_disabled_owner.window_created();
+    assert!(!already_disabled_owner.should_disable_owner());
+    assert_eq!(
+        already_disabled_owner.cleanup_actions(),
+        vec![
+            ModalCleanupAction::ClearWindowState,
+            ModalCleanupAction::DestroyWindow,
+        ]
+    );
+}
+
+#[test]
+fn dialog_keyboard_cancel_closes_without_action_and_accept_is_explicitly_ignored() {
+    assert_eq!(
+        profile_dialog_keyboard_result(ProfileDialogKeyboardCommand::Cancel),
+        ProfileDialogKeyboardResult::CloseWithoutAction
+    );
+    assert_eq!(
+        profile_dialog_keyboard_result(ProfileDialogKeyboardCommand::Accept),
+        ProfileDialogKeyboardResult::Ignore
+    );
 }
 
 #[test]
@@ -111,6 +187,92 @@ fn profile_dialog_enforces_the_eight_profile_limit() {
     assert!(!ProfileDialogController::new(&profiles, false).can_add());
     profiles.pop();
     assert!(ProfileDialogController::new(&profiles, false).can_add());
+}
+
+#[test]
+fn profile_dialog_controls_follow_the_selected_profile_state() {
+    let profiles = vec![
+        system_profile_view(),
+        UsageProfileView {
+            id: UsageProfileId::Managed(1),
+            label: "Signed in".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: false,
+            managed: true,
+        },
+        UsageProfileView {
+            id: UsageProfileId::Managed(2),
+            label: "Signed out".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        },
+    ];
+    let mut controller = ProfileDialogController::new(&profiles, false);
+
+    assert!(!controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Delete));
+
+    assert!(controller.select(1));
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(controller.command_enabled(ProfileDialogCommand::Delete));
+
+    assert!(controller.select(2));
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(controller.command_enabled(ProfileDialogCommand::Delete));
+}
+
+#[test]
+fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    let profiles = vec![
+        system_profile_view(),
+        UsageProfileView {
+            id: UsageProfileId::Managed(11),
+            label: "One".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: false,
+            managed: true,
+        },
+        UsageProfileView {
+            id: UsageProfileId::Managed(12),
+            label: "Two".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        },
+    ];
+    let mut controller = ProfileDialogController::new(&profiles, false);
+
+    assert!(controller.select(1));
+    assert_eq!(
+        controller.submit_rename("First"),
+        Ok(Some(ProfileDialogAction::Rename(
+            UsageProfileId::Managed(11),
+            "First".to_string(),
+        )))
+    );
+
+    assert!(controller.select(2));
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Delete, true),
+        Some(ProfileDialogAction::Delete(UsageProfileId::Managed(12)))
+    );
+    assert!(!controller.select(99));
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Login, true),
+        Some(ProfileDialogAction::Login(UsageProfileId::Managed(12)))
+    );
 }
 
 #[test]
