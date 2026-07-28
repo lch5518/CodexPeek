@@ -268,7 +268,7 @@ impl SettingsStore {
                 return Ok(Settings::default());
             }
         };
-        let loaded = (|| match schema_version {
+        let loaded = match schema_version {
             SCHEMA_VERSION => serde_json::from_slice::<Settings>(&contents).and_then(|settings| {
                 settings
                     .validate()
@@ -291,7 +291,7 @@ impl SettingsStore {
                 io::ErrorKind::InvalidData,
                 "unsupported settings schema",
             ))),
-        })();
+        };
         match loaded {
             Ok(settings) if settings.schema_version == SCHEMA_VERSION => {
                 if schema_version == 1 {
