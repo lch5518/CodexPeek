@@ -11,6 +11,7 @@ Aplikasi ini menampilkan jendela batas penggunaan utama dan sekunder di taskbar,
 
 - Menampilkan jendela penggunaan Codex utama dan sekunder, termasuk waktu reset.
 - Menggunakan antarmuka `app-server` dari Codex CLI yang terpasang, bukan mem-parsing file autentikasi.
+- Memungkinkan Anda memilih secara manual dari maksimal delapan profil penggunaan yang terisolasi.
 - Mendukung tampilan widget di setiap taskbar atau hanya di monitor utama.
 - Beralih dengan aman ke widget mengambang dan ikon tray ketika penempelan ke taskbar tidak tersedia.
 - Mendukung refresh manual, interval refresh otomatis, startup Windows, diagnostik, dan UI terlokalisasi.
@@ -22,6 +23,29 @@ Codex CLI yang terpasang menangani autentikasinya sendiri dan dapat menghubungi 
 
 Monitor hanya meminta status masuk dan jendela penggunaan yang diperlukan untuk tampilan.
 Aplikasi ini tidak memulai tugas Codex atau memanggil `codex exec`.
+
+## Profil penggunaan
+
+Profil sistem **Akun Codex default** yang tidak dapat dihapus memakai Codex home yang diwarisi
+saat CodexPeek dimulai, atau nilai bawaan CLI jika `CODEX_HOME` tidak ditetapkan. Setiap
+profil terkelola memakai Codex home terpisah di bawah
+`%APPDATA%\CodexUsageMonitor\profiles`. Batasnya delapan profil secara keseluruhan,
+termasuk profil sistem.
+
+Label profil Anda tentukan sendiri. CodexPeek tidak memeriksa email atau ID akun, jadi
+konfirmasikan akun ChatGPT yang dimaksud di browser saat menambah profil atau masuk lagi.
+Pemilihan hanya mengubah penggunaan yang diambil dan ditampilkan CodexPeek. Login di
+terminal, IDE, aplikasi Codex, WSL, Remote SSH, dan Dev Containers tidak berubah.
+
+Pemilihan selalu manual. CodexPeek tidak memilih atau merotasi profil secara otomatis
+berdasarkan sisa batas dan tidak merutekan pekerjaan Codex melalui profil. Menghapus
+profil terkelola akan menghapus permanen data lokalnya, termasuk kredensial CLI yang
+disimpan terpisah; periksa konfirmasi dengan cermat.
+
+CodexPeek tidak pernah membaca, mem-parsing, atau menyalin `auth.json` profil mana pun.
+Hanya proses anak `app-server` untuk profil terkelola yang menerima `CODEX_HOME` dan
+pengaturan penyimpanan kredensial file miliknya. Diagnostik hanya mencatat jumlah agregat,
+tanpa label, jalur, atau data akun.
 
 ## Persyaratan
 

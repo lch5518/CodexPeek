@@ -11,6 +11,7 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 
 - Shows primary and secondary Codex usage windows, including reset times.
 - Uses the installed Codex CLI's `app-server` interface instead of parsing authentication files.
+- Lets you manually choose among as many as eight isolated usage profiles.
 - Supports showing the widget on every taskbar or only on the primary monitor.
 - Falls back safely to a floating widget and tray icon when taskbar attachment is unavailable.
 - Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and localized UI.
@@ -22,6 +23,25 @@ The installed Codex CLI handles its own authentication and may contact OpenAI un
 
 The monitor requests only the signed-in state and usage windows needed for display.
 It does not start a Codex task or call `codex exec`.
+
+## Usage profiles
+
+The non-removable **Default Codex account** system profile uses the Codex home inherited when
+CodexPeek starts, or the CLI default when `CODEX_HOME` is not set. You can add managed
+profiles, each with a separate Codex home under
+`%APPDATA%\CodexUsageMonitor\profiles`. The limit is eight profiles in total, including
+the system profile.
+
+Profile labels are names you provide. CodexPeek does not inspect account email addresses
+or IDs, so confirm the intended ChatGPT account in the browser when adding or signing in
+again. Selecting a profile changes only the usage that CodexPeek polls and displays. It
+does not change sign-in for terminals, IDEs, the Codex app, WSL, Remote SSH, or Dev
+Containers.
+
+Selection is always manual. CodexPeek does not rotate profiles automatically, select one
+from its remaining limit, or route Codex work through a profile. Deleting a managed
+profile permanently removes its local profile data, including the separate CLI
+credentials stored there; check the confirmation carefully.
 
 ## Requirements
 
@@ -133,6 +153,13 @@ Diagnostics check only whether that path exists.
 Raw RPC responses are processed only long enough to extract the login type and the displayed rate-limit fields.
 Tokens, account IDs, email addresses, authentication-file contents, and proxy values are not stored or written to logs.
 
+CodexPeek never reads, parses, or copies any profile's `auth.json`. For a managed profile,
+only the corresponding child `codex app-server` process receives its isolated
+`CODEX_HOME` and the file credential-store override. Windows environment variables, the
+system profile, CLI/IDE configuration, and default authentication files are not changed.
+Diagnostics report aggregate profile counts and result categories only; they do not
+include labels, internal profile IDs, paths, or account details.
+
 Settings are stored in `%APPDATA%\CodexUsageMonitor\settings.json`.
 A bounded diagnostic log is stored in `%TEMP%\codex-peek.log`.
 
@@ -145,6 +172,8 @@ For the full data-handling and vulnerability-reporting guidance, see [SECURITY.m
 | Codex CLI is not found | Run `codex --version` and `where.exe codex`, then ensure Codex CLI is on `PATH`. |
 | The CLI is unsupported | Update Codex CLI. Required RPC support matters more than the displayed version number. |
 | Logged out or authentication expired | Complete the normal login flow in Codex CLI, then choose **Refresh authentication** in the tray menu. |
+| A managed usage profile needs login | Open **Usage profiles**, choose the profile, and start login again. Confirm the intended account in the browser. Cancelling leaves the profile available for retry or explicit deletion. |
+| One profile cannot refresh | Select another profile if needed. Each profile keeps independent last-good usage and retry state, so one failure does not clear the others. |
 | The taskbar widget is on the wrong monitor | Choose **Widget: all monitors** or **Widget: primary monitor only** from the tray menu. |
 | The taskbar widget is missing | Use the floating widget or tray icon, restart Explorer if needed, and select the preferred widget monitor mode. |
 | More detail is needed | Run `--diagnose` or open **Diagnostics** from the tray menu. |

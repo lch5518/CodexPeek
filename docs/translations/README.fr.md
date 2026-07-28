@@ -1,4 +1,4 @@
-# CodexPeek – Moniteur d'utilisation Codex pour Windows
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Il affiche les fenêtres de limite de débit principale et secondaire dans la ba
 
 - Affiche les fenêtres d'utilisation Codex principale et secondaire, y compris les heures de réinitialisation.
 - Utilise l'interface `app-server` du Codex CLI installé au lieu d'analyser les fichiers d'authentification.
+- Permet de choisir manuellement parmi huit profils d'utilisation isolés au maximum.
 - Permet d'afficher le widget sur toutes les barres des tâches ou uniquement sur le moniteur principal.
 - Bascule de façon sûre vers un widget flottant et une icône de zone de notification lorsque l'attachement à la barre des tâches n'est pas disponible.
 - Prend en charge l'actualisation manuelle, les intervalles d'actualisation automatique, le démarrage avec Windows, les diagnostics et l'interface localisée.
@@ -22,6 +23,30 @@ Le Codex CLI installé gère sa propre authentification et peut contacter OpenAI
 
 Le moniteur demande uniquement l'état de connexion et les fenêtres d'utilisation nécessaires à l'affichage.
 Il ne démarre aucune tâche Codex et n'appelle pas `codex exec`.
+
+## Profils d'utilisation
+
+Le profil système **Compte Codex par défaut**, non supprimable, utilise le répertoire Codex hérité au
+démarrage de CodexPeek, ou la valeur CLI par défaut si `CODEX_HOME` n'est pas défini.
+Chaque profil géré possède un répertoire Codex distinct sous
+`%APPDATA%\CodexUsageMonitor\profiles`. Huit profils au total sont autorisés, profil
+système compris.
+
+Vous fournissez vous-même les libellés. CodexPeek n'inspecte ni l'adresse e-mail ni l'ID
+du compte : lors d'un ajout ou d'une reconnexion, vérifiez donc dans le navigateur le
+compte ChatGPT à utiliser. La sélection change uniquement l'utilisation interrogée et
+affichée par CodexPeek. Les connexions du terminal, de l'IDE, de l'application Codex, de
+WSL, de Remote SSH et des Dev Containers restent inchangées.
+
+La sélection est toujours manuelle. CodexPeek ne sélectionne ni ne fait tourner les
+profils automatiquement selon la limite restante et n'achemine aucune tâche Codex par un
+profil. Supprimer un profil géré efface définitivement ses données locales, y compris les
+identifiants CLI stockés séparément ; vérifiez attentivement la confirmation.
+
+CodexPeek ne lit, n'analyse et ne copie jamais le fichier `auth.json` d'un profil. Seul le
+processus enfant `app-server` du profil géré reçoit son `CODEX_HOME` et le réglage de
+stockage des identifiants dans un fichier. Les diagnostics ne contiennent que des nombres
+agrégés, sans libellé, chemin ni donnée de compte.
 
 ## Prérequis
 

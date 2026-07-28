@@ -1,4 +1,4 @@
-# CodexPeek – Trình giám sát mức sử dụng Codex cho Windows
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Codex Usage Monitor là một widget Windows gốc nhỏ giúp bạn xem nhanh m
 
 - Hiển thị các cửa sổ mức sử dụng Codex chính và phụ, bao gồm thời điểm đặt lại.
 - Dùng giao diện `app-server` của Codex CLI đã cài đặt thay vì phân tích các tệp xác thực.
+- Cho phép chọn thủ công trong tối đa tám hồ sơ sử dụng được cô lập.
 - Hỗ trợ hiển thị widget trên mọi thanh tác vụ hoặc chỉ trên màn hình chính.
 - Tự động chuyển an toàn sang widget nổi và biểu tượng khay khi không thể gắn vào thanh tác vụ.
 - Hỗ trợ làm mới thủ công, khoảng thời gian làm mới tự động, khởi động cùng Windows, chẩn đoán và giao diện đã bản địa hóa.
@@ -22,6 +23,27 @@ Codex CLI đã cài đặt tự xử lý xác thực của nó và có thể li�
 
 Trình giám sát chỉ yêu cầu trạng thái đăng nhập và các cửa sổ mức sử dụng cần thiết để hiển thị.
 Ứng dụng không bắt đầu tác vụ Codex và không gọi `codex exec`.
+
+## Hồ sơ sử dụng
+
+Hồ sơ hệ thống **Tài khoản Codex mặc định** không thể xóa dùng thư mục Codex được kế thừa khi
+CodexPeek khởi động, hoặc giá trị mặc định của CLI nếu chưa đặt `CODEX_HOME`. Mỗi hồ sơ
+được quản lý dùng một thư mục Codex riêng bên dưới
+`%APPDATA%\CodexUsageMonitor\profiles`. Tổng giới hạn là tám hồ sơ, bao gồm hồ sơ hệ thống.
+
+Nhãn hồ sơ do bạn tự đặt. CodexPeek không kiểm tra email hoặc ID tài khoản, vì vậy hãy xác
+nhận tài khoản ChatGPT dự định dùng trong trình duyệt khi thêm hồ sơ hoặc đăng nhập lại.
+Việc chọn hồ sơ chỉ thay đổi mức sử dụng mà CodexPeek truy vấn và hiển thị. Đăng nhập trong
+terminal, IDE, ứng dụng Codex, WSL, Remote SSH và Dev Containers không thay đổi.
+
+Việc chọn luôn là thủ công. CodexPeek không tự động chọn hoặc luân phiên hồ sơ theo hạn mức
+còn lại và không định tuyến công việc Codex qua hồ sơ. Xóa hồ sơ được quản lý sẽ xóa vĩnh
+viễn dữ liệu cục bộ, bao gồm thông tin xác thực CLI được lưu riêng; hãy đọc kỹ xác nhận.
+
+CodexPeek không bao giờ đọc, phân tích cú pháp hoặc sao chép `auth.json` của bất kỳ hồ sơ
+nào. Chỉ tiến trình con `app-server` của hồ sơ được quản lý nhận `CODEX_HOME` và thiết lập
+kho thông tin xác thực dạng tệp của hồ sơ đó. Chẩn đoán chỉ ghi số lượng tổng hợp, không
+ghi nhãn, đường dẫn hay dữ liệu tài khoản.
 
 ## Yêu cầu
 

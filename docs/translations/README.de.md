@@ -11,6 +11,7 @@ Es zeigt die primären und sekundären Rate-Limit-Zeitfenster in der Taskleiste,
 
 - Zeigt primäre und sekundäre Codex-Nutzungsfenster einschließlich Reset-Zeiten.
 - Verwendet die `app-server`-Schnittstelle der installierten Codex CLI, statt Authentifizierungsdateien zu parsen.
+- Ermöglicht die manuelle Auswahl aus bis zu acht isolierten Nutzungsprofilen.
 - Unterstützt die Anzeige des Widgets auf jeder Taskleiste oder nur auf dem primären Monitor.
 - Fällt sicher auf ein schwebendes Widget und ein Tray-Symbol zurück, wenn die Taskleisten-Anbindung nicht verfügbar ist.
 - Unterstützt manuelles Aktualisieren, automatische Aktualisierungsintervalle, Windows-Autostart, Diagnosen und eine lokalisierte UI.
@@ -22,6 +23,29 @@ Die installierte Codex CLI übernimmt ihre eigene Authentifizierung und kann unt
 
 Der Monitor fragt nur den Anmeldestatus und die für die Anzeige benötigten Nutzungsfenster ab.
 Er startet keine Codex-Aufgabe und ruft `codex exec` nicht auf.
+
+## Nutzungsprofile
+
+Das nicht löschbare Systemprofil **Standard-Codex-Konto** verwendet das beim Start von
+CodexPeek geerbte Codex-Home oder den CLI-Standard, wenn `CODEX_HOME` nicht gesetzt ist.
+Jedes verwaltete Profil erhält ein separates Codex-Home unter
+`%APPDATA%\CodexUsageMonitor\profiles`. Insgesamt sind einschließlich des Systemprofils
+höchstens acht Profile möglich.
+
+Profilnamen werden von dir vergeben. CodexPeek prüft weder E-Mail-Adresse noch Konto-ID;
+bestätige deshalb beim Hinzufügen oder erneuten Anmelden das gewünschte ChatGPT-Konto im
+Browser. Die Auswahl ändert nur, welche Nutzung CodexPeek abfragt und anzeigt. Anmeldungen
+in Terminal, IDE, Codex-App, WSL, Remote SSH und Dev Containers bleiben unverändert.
+
+Die Auswahl erfolgt immer manuell. CodexPeek wählt oder rotiert Profile nicht automatisch
+anhand des verbleibenden Limits und leitet keine Codex-Aufgaben über ein Profil. Beim
+Löschen eines verwalteten Profils gehen seine lokalen Daten einschließlich der separat
+gespeicherten CLI-Anmeldedaten unwiederbringlich verloren; prüfe die Bestätigung sorgfältig.
+
+CodexPeek liest, parst oder kopiert niemals die `auth.json` eines Profils. Nur der
+zugehörige `app-server`-Child eines verwalteten Profils erhält dessen `CODEX_HOME` und die
+Datei-Credential-Store-Einstellung. Diagnosen enthalten nur aggregierte Anzahlen, keine
+Labels, Pfade oder Kontodaten.
 
 ## Voraussetzungen
 

@@ -36,6 +36,57 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
   process tree is terminated on timeout or monitor shutdown. It never invokes
   `codex exec` and does not start a user task.
 
+## Usage-profile isolation / 사용량 프로필 격리
+
+- The non-removable system profile preserves the Codex home inherited by CodexPeek at
+  startup, or the Codex CLI default when `CODEX_HOME` is absent. Managed profiles use
+  application-owned Codex homes below `%APPDATA%\CodexUsageMonitor\profiles`; arbitrary
+  external paths are not accepted. At most eight profiles, including the system profile,
+  are allowed.
+- Only the `codex app-server` child launched for a managed profile receives that profile's
+  `CODEX_HOME` and the `cli_auth_credentials_store="file"` configuration override. The
+  system profile does not receive the override. CodexPeek does not change its own process
+  environment, Windows user or system environment, `PATH`, the default Codex home,
+  terminal or IDE settings, or Codex CLI sign-in.
+- CodexPeek never opens, reads, parses, imports, exports, or copies any system or managed
+  profile `auth.json`. Authentication files are created and consumed only by the Codex CLI
+  inside the selected child-process context. Profile labels are user-provided because the
+  monitor does not inspect account email addresses or IDs.
+- Managed-profile creation and deletion derive the exact path from a validated internal
+  profile ID and the application-owned root. Path separators, traversal, arbitrary
+  absolute paths, and reparse points are rejected. Deletion quiesces profile work, moves
+  only the exact validated directory to an internal tombstone, then saves settings. A save
+  failure rolls the directory back; a post-save cleanup failure leaves a validated
+  tombstone for recovery on the next startup.
+- Deleting a managed profile permanently removes its local profile data, including CLI
+  credentials stored inside that isolated home. The UI requires explicit confirmation.
+  Selection and deletion never alter terminal, IDE, Codex app, WSL, Remote SSH, or Dev
+  Container sign-in, and profiles are never selected or rotated automatically.
+- Diagnostics expose only bounded aggregate counts such as configured, healthy,
+  login-required, and request-failed profiles. They do not record labels, internal IDs,
+  managed paths, account details, authentication-file contents, or raw RPC payloads.
+
+- 삭제할 수 없는 시스템 프로필은 CodexPeek 시작 시 상속한 Codex 홈을 유지하며,
+  `CODEX_HOME`이 없으면 Codex CLI 기본값을 사용합니다. 관리 프로필은
+  `%APPDATA%\CodexUsageMonitor\profiles` 아래의 앱 전용 Codex 홈만 사용하고 임의의 외부 경로는
+  받지 않습니다. 시스템 프로필을 포함한 전체 한도는 8개입니다.
+- 관리 프로필의 자식 `codex app-server`에만 해당 `CODEX_HOME`과
+  `cli_auth_credentials_store="file"` 설정 오버라이드를 적용합니다. 시스템 프로필에는 적용하지
+  않습니다. CodexPeek 프로세스와 Windows 사용자·시스템 환경, `PATH`, 기본 Codex 홈, 터미널·IDE
+  설정, Codex CLI 로그인은 변경하지 않습니다.
+- CodexPeek은 시스템 또는 관리 프로필의 `auth.json`을 열거나 읽거나 파싱하거나 가져오기·내보내기·
+  복사하지 않습니다. 인증 파일은 선택한 자식 프로세스 문맥 안에서 Codex CLI만 생성하고 사용합니다.
+  계정 이메일이나 ID를 확인하지 않으므로 프로필 표시명은 사용자가 직접 지정합니다.
+- 관리 프로필 생성·삭제 경로는 검증된 내부 ID와 앱 전용 루트에서만 계산합니다. 경로 구분자, 상위
+  경로 이동, 임의 절대 경로, reparse point를 거절합니다. 삭제는 작업을 중단한 뒤 정확히 검증된
+  디렉터리만 내부 tombstone으로 이동하고 설정을 저장합니다. 저장 실패 시 원래 위치로 되돌리며,
+  저장 후 정리만 실패하면 검증된 tombstone을 다음 시작 때 복구 정리합니다.
+- 삭제하면 격리된 홈 안의 CLI 인증 정보를 포함한 로컬 프로필 데이터를 복구할 수 없으므로 UI에서
+  명시적으로 확인합니다. 선택·삭제는 터미널, IDE, Codex 앱, WSL, Remote SSH, Dev Containers의
+  로그인을 바꾸지 않으며 프로필을 자동 선택·순환하지 않습니다.
+- 진단은 설정됨·정상·로그인 필요·요청 실패 같은 제한된 집계 개수만 노출합니다. 표시명, 내부 ID,
+  관리 경로, 계정 정보, 인증 파일 내용, 원본 RPC payload는 기록하지 않습니다.
+
 ## Network and updates / 네트워크 및 업데이트
 
 Codex account and usage access is delegated to the installed Codex CLI. The monitor does

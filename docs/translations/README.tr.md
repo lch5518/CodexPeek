@@ -11,6 +11,7 @@ Birincil ve ikincil hız sınırı pencerelerini görev çubuğunda, yüzen bir 
 
 - Birincil ve ikincil Codex kullanım pencerelerini, sıfırlanma zamanlarıyla birlikte gösterir.
 - Kimlik doğrulama dosyalarını ayrıştırmak yerine yüklü Codex CLI'nin `app-server` arayüzünü kullanır.
+- En fazla sekiz yalıtılmış kullanım profili arasından elle seçim yapmanızı sağlar.
 - Aracı her görev çubuğunda veya yalnızca birincil monitörde göstermeyi destekler.
 - Görev çubuğuna ekleme kullanılamadığında güvenli şekilde yüzen araca ve tepsi simgesine geri döner.
 - Elle yenileme, otomatik yenileme aralıkları, Windows başlangıcı, tanılama ve yerelleştirilmiş kullanıcı arayüzünü destekler.
@@ -22,6 +23,29 @@ Yüklü Codex CLI kendi kimlik doğrulamasını yönetir ve mevcut yapılandırm
 
 İzleyici yalnızca görüntüleme için gereken oturum durumunu ve kullanım pencerelerini ister.
 Bir Codex görevi başlatmaz veya `codex exec` çağırmaz.
+
+## Kullanım profilleri
+
+Silinemeyen sistem profili **Varsayılan Codex hesabı**, CodexPeek başlarken devralınan Codex ana
+dizinini veya `CODEX_HOME` ayarlı değilse CLI varsayılanını kullanır. Her yönetilen profil
+`%APPDATA%\CodexUsageMonitor\profiles` altında ayrı bir Codex ana dizini kullanır. Sistem
+profili dahil toplam profil sınırı sekizdir.
+
+Profil etiketlerini siz belirlersiniz. CodexPeek hesap e-postasını veya kimliğini incelemez;
+bu nedenle profil eklerken ya da yeniden oturum açarken tarayıcıda kullanılacak ChatGPT
+hesabını doğrulayın. Profil seçimi yalnızca CodexPeek'in sorguladığı ve gösterdiği kullanımı
+değiştirir. Terminal, IDE, Codex uygulaması, WSL, Remote SSH ve Dev Containers oturumları
+değişmez.
+
+Seçim her zaman elledir. CodexPeek kalan sınıra göre profilleri otomatik seçmez veya
+döndürmez ve Codex işlerini bir profil üzerinden yönlendirmez. Yönetilen bir profili silmek,
+ayrı saklanan CLI kimlik bilgileri dahil yerel verilerini kalıcı olarak kaldırır; onayı
+dikkatle inceleyin.
+
+CodexPeek hiçbir profilin `auth.json` dosyasını okumaz, ayrıştırmaz veya kopyalamaz. Yalnızca
+yönetilen profilin `app-server` alt süreci o profile ait `CODEX_HOME` ve dosya kimlik bilgisi
+deposu ayarını alır. Tanılama etiket, yol veya hesap verisi yerine yalnızca toplu sayıları
+kaydeder.
 
 ## Gereksinimler
 

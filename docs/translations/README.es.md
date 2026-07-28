@@ -1,4 +1,4 @@
-# CodexPeek – Monitor de Uso de Codex para Windows
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Muestra las ventanas de límite de uso primaria y secundaria en la barra de tare
 
 - Muestra las ventanas de uso primaria y secundaria de Codex, incluidos los horarios de restablecimiento.
 - Usa la interfaz `app-server` del Codex CLI instalado en lugar de analizar archivos de autenticación.
+- Permite elegir manualmente entre un máximo de ocho perfiles de uso aislados.
 - Permite mostrar el widget en todas las barras de tareas o solo en el monitor principal.
 - Recurre de forma segura a un widget flotante y a un icono de bandeja cuando no puede acoplarse a la barra de tareas.
 - Admite actualización manual, intervalos de actualización automática, inicio con Windows, diagnósticos e interfaz localizada.
@@ -22,6 +23,30 @@ El Codex CLI instalado gestiona su propia autenticación y puede comunicarse con
 
 El monitor solicita únicamente el estado de sesión iniciada y las ventanas de uso necesarias para mostrarlas.
 No inicia una tarea de Codex ni llama a `codex exec`.
+
+## Perfiles de uso
+
+El perfil del sistema **Cuenta predeterminada de Codex**, que no se puede eliminar, usa el directorio principal
+de Codex heredado al iniciar CodexPeek o el valor predeterminado del CLI si `CODEX_HOME`
+no está definido. Cada perfil administrado usa un directorio principal de Codex separado
+bajo `%APPDATA%\CodexUsageMonitor\profiles`. Se admiten ocho perfiles en total, incluido
+el perfil del sistema.
+
+Tú proporcionas las etiquetas de los perfiles. CodexPeek no inspecciona el correo ni el
+ID de la cuenta, así que confirma en el navegador qué cuenta de ChatGPT quieres usar al
+añadir un perfil o volver a iniciar sesión. La selección solo cambia el uso que CodexPeek
+consulta y muestra. No cambia las sesiones del terminal, IDE, aplicación Codex, WSL,
+Remote SSH ni Dev Containers.
+
+La selección siempre es manual. CodexPeek no selecciona ni rota perfiles automáticamente
+según el límite restante y no dirige trabajos de Codex mediante un perfil. Al eliminar un
+perfil administrado se borran de forma irreversible sus datos locales, incluidas las
+credenciales del CLI almacenadas por separado; revisa atentamente la confirmación.
+
+CodexPeek nunca lee, analiza ni copia el `auth.json` de ningún perfil. Solo el proceso hijo
+`app-server` del perfil administrado recibe su `CODEX_HOME` y la configuración de almacén
+de credenciales en archivo. Los diagnósticos incluyen únicamente recuentos agregados, sin
+etiquetas, rutas ni datos de cuenta.
 
 ## Requisitos
 
