@@ -23,10 +23,11 @@ use crate::{
         LaunchMode, UiAction, UiBackend, UiSettings, UsageRowView, WidgetDataState,
         WidgetViewModel,
     },
-    AsyncSettingsWriter, DiagnosticCode, DiagnosticLogger, Language, LanguagePreference,
-    LocalizationKey, PollSnapshot, PollingService, ResetCredits, SafeDiagnostic, Settings,
-    SettingsStore, UpdateCheckIntent, UpdateCheckStart, UpdateChecker, UpdatePresentation,
-    UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError, UsageWindow,
+    DiagnosticCode, DiagnosticLogger, Language, LanguagePreference, LocalizationKey,
+    NativeProfileFileSystem, PollSnapshot, PollingService, ProfileSettingsService, ResetCredits,
+    SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckStart, UpdateChecker,
+    UpdatePresentation, UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError,
+    UsageWindow,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -54,7 +55,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
 }
 
 struct AppRuntime {
-    settings_writer: AsyncSettingsWriter,
+    settings_writer: ProfileSettingsService,
     logger: DiagnosticLogger,
     settings: Settings,
     poller: PollingService,
@@ -69,7 +70,11 @@ impl AppRuntime {
         let usage_provider = Arc::new(AppServerUsageProvider::new());
         let poller = start_poller(&settings, Arc::clone(&usage_provider))?;
         Ok(Self {
-            settings_writer: AsyncSettingsWriter::start(store),
+            settings_writer: ProfileSettingsService::start(
+                store,
+                settings.clone(),
+                NativeProfileFileSystem::default(),
+            ),
             logger: DiagnosticLogger::new(),
             settings,
             poller,
@@ -81,7 +86,11 @@ impl AppRuntime {
     }
 
     fn save_settings(&self) {
-        if self.settings_writer.save(self.settings.clone()).is_err() {
+        if self
+            .settings_writer
+            .save_preferences(self.settings.clone())
+            .is_err()
+        {
             let _ = self
                 .logger
                 .record_safe(SafeDiagnostic::Settings { valid: false });

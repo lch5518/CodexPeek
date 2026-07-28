@@ -4,8 +4,9 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    AsyncSettingsWriter, LanguagePreference, Settings, SettingsStore, StartupView,
-    TaskbarDisplayMode, UsageProfileId,
+    LanguagePreference, NativeProfileFileSystem, ProfileSettingsEvent, ProfileSettingsMutation,
+    ProfileSettingsService, Settings, SettingsStore, StartupView, TaskbarDisplayMode,
+    UsageProfileId,
 };
 
 fn test_root(label: &str) -> std::path::PathBuf {
@@ -127,13 +128,17 @@ fn schema_v3_is_backed_up_and_reset_to_defaults() {
 }
 
 #[test]
-fn asynchronous_settings_writer_preserves_submission_order() {
+fn profile_settings_writer_preserves_preference_submission_order() {
     let root = test_root("async-ordered");
     let store = SettingsStore::for_root(&root);
-    let writer = AsyncSettingsWriter::start(store.clone());
+    let writer = ProfileSettingsService::start(
+        store.clone(),
+        Settings::default(),
+        NativeProfileFileSystem::default(),
+    );
     for offset in [10, 20, 30] {
         writer
-            .save(Settings {
+            .save_preferences(Settings {
                 taskbar_offset: offset,
                 ..Settings::default()
             })
@@ -142,6 +147,42 @@ fn asynchronous_settings_writer_preserves_submission_order() {
     writer.flush().unwrap();
     assert_eq!(store.load().unwrap().taskbar_offset, 30);
     writer.stop().unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn profile_settings_preference_write_preserves_newer_profile_catalog() {
+    let root = test_root("profile-settings-preference-order");
+    let store = SettingsStore::for_root(&root);
+    let original = Settings::default();
+    let service = ProfileSettingsService::start(
+        store.clone(),
+        original.clone(),
+        NativeProfileFileSystem::default(),
+    );
+    service
+        .submit(ProfileSettingsMutation::Add {
+            label: "Work".to_owned(),
+        })
+        .unwrap();
+    assert!(matches!(
+        service.wait_for_event().unwrap(),
+        ProfileSettingsEvent::Added { .. }
+    ));
+
+    service
+        .save_preferences(Settings {
+            taskbar_offset: 42,
+            ..original
+        })
+        .unwrap();
+    service.flush().unwrap();
+
+    let saved = store.load().unwrap();
+    assert_eq!(saved.taskbar_offset, 42);
+    assert_eq!(saved.usage_profiles.managed().len(), 1);
+    assert_eq!(saved.usage_profiles.managed()[0].label(), "Work");
+    service.stop().unwrap();
     let _ = fs::remove_dir_all(root);
 }
 

@@ -314,6 +314,17 @@ impl UsageProfileRoot {
     /// 시스템 프로필과 숫자 0은 외부 경로를 만들 수 없도록 거부하며, 사용자 입력은 경로에 직접
     /// 포함하지 않습니다.
     pub fn codex_home(&self, id: UsageProfileId) -> Result<PathBuf, ProfileValidationError> {
+        Ok(self.managed_directory(id)?.join("codex-home"))
+    }
+
+    /// 관리 프로필 하나를 소유하는 앱 전용 디렉터리를 숫자 식별자에서 파생합니다.
+    ///
+    /// 파일 시스템 트랜잭션 내부에서만 사용하며 시스템 프로필과 숫자 0은 거부합니다. 반환 경로는
+    /// 프로필 전체를 같은 볼륨에서 격리 이동하기 위한 경계이고 사용자 입력을 포함하지 않습니다.
+    pub(crate) fn managed_directory(
+        &self,
+        id: UsageProfileId,
+    ) -> Result<PathBuf, ProfileValidationError> {
         let UsageProfileId::Managed(sequence) = id else {
             return Err(ProfileValidationError::InvalidId);
         };
@@ -324,8 +335,7 @@ impl UsageProfileRoot {
         Ok(self
             .base
             .join("profiles")
-            .join(format!("profile-{sequence:04}"))
-            .join("codex-home"))
+            .join(format!("profile-{sequence:04}")))
     }
 
     /// 프로필 경로의 기준 애플리케이션 데이터 디렉터리를 반환합니다.

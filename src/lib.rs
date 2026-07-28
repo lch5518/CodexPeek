@@ -7,14 +7,12 @@ mod errors;
 mod localization;
 mod poller;
 mod profile_poller;
+mod profile_settings;
 mod profiles;
 mod update_check;
 pub mod windows;
 
-pub use config::{
-    AsyncSettingsWriter, LanguagePreference, Settings, SettingsStore, StartupView,
-    TaskbarDisplayMode,
-};
+pub use config::{LanguagePreference, Settings, SettingsStore, StartupView, TaskbarDisplayMode};
 pub use diagnostics::{
     inspect_settings_for_diagnostics, DiagnosticCode, DiagnosticLogger, SafeDiagnostic,
 };
@@ -23,6 +21,10 @@ pub use errors::UsageError;
 pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
 pub use profile_poller::{ProfilePollEvent, ProfilePollingService};
+pub use profile_settings::{
+    NativeProfileFileSystem, ProfileFileSystem, ProfileSettingsEvent, ProfileSettingsMutation,
+    ProfileSettingsService,
+};
 pub use profiles::{
     normalize_profile_label, ManagedUsageProfile, ProfileExecutionContext, ProfileValidationError,
     UsageProfileCatalog, UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
