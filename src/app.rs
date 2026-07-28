@@ -18,16 +18,16 @@ use crate::{
     inspect_settings_for_diagnostics, localized_text,
     windows::{
         autostart::{set_autostart, WindowsRegistry},
-        initial_widget_visible, native, resolve_windows_language, taskbar,
+        initial_widget_visible, native, profile_taskbar_tooltip, resolve_windows_language, taskbar,
         time::local_reset_time,
-        LaunchMode, UiAction, UiBackend, UiSettings, UsageRowView, WidgetDataState,
-        WidgetViewModel,
+        LaunchMode, UiAction, UiBackend, UiSettings, UsageProfileView, UsageRowView,
+        WidgetDataState, WidgetViewModel,
     },
     DiagnosticCode, DiagnosticLogger, Language, LanguagePreference, LocalizationKey,
     NativeProfileFileSystem, PollSnapshot, PollingService, ProfileSettingsService, ResetCredits,
     SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckStart, UpdateChecker,
     UpdatePresentation, UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError,
-    UsageWindow,
+    UsageProfileId, UsageWindow,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -236,6 +236,9 @@ impl UiBackend for AppRuntime {
             self.settings.show_remaining_percent,
             reset_credits_text.as_deref(),
         );
+        let usage_profile_label = selected_usage_profile_label(&self.settings, language);
+        let taskbar_tooltip =
+            profile_taskbar_tooltip(&usage_profile_label, &taskbar.tooltip, language);
         let data_state = if snapshot.last_error.is_some() {
             WidgetDataState::Error
         } else if weekly.is_none() && snapshot.is_fetching {
@@ -244,13 +247,14 @@ impl UiBackend for AppRuntime {
             WidgetDataState::Ready
         };
         WidgetViewModel {
+            usage_profile_label,
             primary,
             secondary,
             status,
             last_success,
             is_stale: snapshot.is_stale,
             taskbar_label: taskbar.label,
-            taskbar_tooltip: taskbar.tooltip,
+            taskbar_tooltip,
             reset_credits_text,
             data_state,
         }
@@ -326,6 +330,20 @@ impl UiBackend for AppRuntime {
                 self.settings.show_remaining_percent = !self.settings.show_remaining_percent;
             }
             UiAction::SetTaskbarDisplayMode(mode) => self.settings.taskbar_display_mode = mode,
+            UiAction::SelectUsageProfile(_)
+            | UiAction::AddUsageProfile(_)
+            | UiAction::RenameUsageProfile(_, _)
+            | UiAction::LoginUsageProfile(_)
+            | UiAction::LogoutUsageProfile(_)
+            | UiAction::DeleteUsageProfile(_) => {
+                // 프로필 런타임 연결은 후속 통합 단계에서 설정/폴링 워커를 통해 처리합니다.
+                return ui_settings(
+                    &self.settings,
+                    self.startup_hidden,
+                    self.update_presentation.status(),
+                    self.login_required(),
+                );
+            }
         }
         self.save_settings();
         ui_settings(
@@ -355,6 +373,7 @@ fn ui_settings(
     update_status: UpdatePresentationStatus,
     login_required: bool,
 ) -> UiSettings {
+    let resolved_language = effective_language(settings.language);
     UiSettings {
         widget_visible: settings.widget_visible && !startup_hidden,
         refresh_interval_minutes: settings.refresh_interval_minutes,
@@ -362,12 +381,74 @@ fn ui_settings(
         startup_view: settings.startup_view,
         auto_auth_refresh: settings.auto_auth_refresh,
         language: settings.language,
-        resolved_language: effective_language(settings.language),
+        resolved_language,
         taskbar_offset: settings.taskbar_offset,
         taskbar_display_mode: settings.taskbar_display_mode,
         update_status,
         show_remaining_percent: settings.show_remaining_percent,
         login_required,
+        usage_profiles: usage_profile_views(settings, resolved_language, login_required),
+        usage_profile_mutation_pending: false,
+    }
+}
+
+fn usage_profile_views(
+    settings: &Settings,
+    language: Language,
+    selected_login_required: bool,
+) -> Vec<UsageProfileView> {
+    let selected = settings.usage_profiles.selected();
+    let summary = |id| {
+        if id == selected {
+            localized_text(
+                if selected_login_required {
+                    LocalizationKey::UsageProfileLoginRequired
+                } else {
+                    LocalizationKey::UsageProfileDisplayed
+                },
+                language,
+            )
+            .to_string()
+        } else {
+            String::new()
+        }
+    };
+    let mut profiles = vec![UsageProfileView {
+        id: UsageProfileId::System,
+        label: localized_text(LocalizationKey::UsageProfileSystem, language).to_string(),
+        summary: summary(UsageProfileId::System),
+        selected: selected == UsageProfileId::System,
+        login_required: selected == UsageProfileId::System && selected_login_required,
+        managed: false,
+    }];
+    profiles.extend(settings.usage_profiles.managed().iter().map(|profile| {
+        let id = profile.id();
+        UsageProfileView {
+            id,
+            label: profile.label().to_string(),
+            summary: summary(id),
+            selected: id == selected,
+            login_required: id == selected && selected_login_required,
+            managed: true,
+        }
+    }));
+    profiles
+}
+
+fn selected_usage_profile_label(settings: &Settings, language: Language) -> String {
+    match settings.usage_profiles.selected() {
+        UsageProfileId::System => {
+            localized_text(LocalizationKey::UsageProfileSystem, language).to_string()
+        }
+        selected => settings
+            .usage_profiles
+            .managed()
+            .iter()
+            .find(|profile| profile.id() == selected)
+            .map(|profile| profile.label().to_string())
+            .unwrap_or_else(|| {
+                localized_text(LocalizationKey::UsageProfileSystem, language).to_string()
+            }),
     }
 }
 

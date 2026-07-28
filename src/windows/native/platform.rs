@@ -379,10 +379,10 @@ unsafe extern "system" fn owner_proc(
                     let state = &*pointer;
                     (state.owner, state.settings.clone())
                 };
-                let command =
+                let action =
                     TrayIcon::show_menu(owner, &settings, snapshot.reset_credits_text.as_deref());
-                if let Some(command) = command {
-                    dispatch_menu(pointer, command);
+                if let Some(action) = action {
+                    dispatch_action(pointer, action);
                 }
             }
             LRESULT(0)
@@ -528,10 +528,7 @@ unsafe fn store_state(hwnd: HWND, lparam: LPARAM) {
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
 }
 
-unsafe fn dispatch_menu(state_pointer: *mut NativeState<'_>, menu_id: u16) {
-    let Some(action) = super::super::menu_action(menu_id) else {
-        return;
-    };
+unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction) {
     if action == UiAction::Exit {
         begin_exit(state_pointer);
         return;

@@ -26,7 +26,10 @@ use windows::{
     },
 };
 
-use super::{super::UiSettings, TrayMenuEntry};
+use super::{
+    super::{UiAction, UiSettings},
+    TrayMenuEntry,
+};
 
 pub(crate) const TRAY_CALLBACK: u32 = WM_APP + 1;
 const ICON_ID: u32 = 1;
@@ -214,15 +217,15 @@ impl TrayIcon {
         owner: HWND,
         settings: &UiSettings,
         reset_credits_text: Option<&str>,
-    ) -> Option<u16> {
+    ) -> Option<UiAction> {
         let menu = CreatePopupMenu().ok()?;
+        let model = super::tray_menu_model(settings);
         let result = (|| {
             if let Some(text) = reset_credits_text {
                 add_info_banner(menu, text)?;
                 separator(menu)?;
             }
-            let entries = super::tray_menu_entries(settings);
-            append_entries(menu, &entries)?;
+            append_entries(menu, &model.entries)?;
             let mut point = POINT::default();
             GetCursorPos(&mut point).ok()?;
             let _ = SetForegroundWindow(owner);
@@ -235,7 +238,9 @@ impl TrayIcon {
                 owner,
                 None,
             );
-            (command.0 > 0).then_some(command.0 as u16)
+            (command.0 > 0)
+                .then(|| model.action(command.0 as u16))
+                .flatten()
         })();
         let _ = PostMessageW(Some(owner), WM_NULL, Default::default(), Default::default());
         let _ = DestroyMenu(menu);

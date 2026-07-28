@@ -8,7 +8,7 @@ use codex_usage_monitor::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
         initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
-        menu_action, resolve_windows_language, startup_plan,
+        menu_action, profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
             place_taskbar_widget, run_taskbar_attachment, taskbar_widget_size,
             TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
@@ -17,19 +17,24 @@ use codex_usage_monitor::{
         taskbar_widget::{
             select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
         },
-        tray::{language_menu_label, tray_menu_entries, update_menu_text, TrayMenuEntry},
+        tray::{
+            language_menu_label, tray_menu_entries, tray_menu_model, update_menu_text,
+            TrayMenuEntry,
+        },
         widget::{logical_to_physical, Rect},
-        LaunchMode, StartupStep, UiAction, UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART,
-        MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
-        MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC,
-        MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN,
-        MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE,
-        MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH,
-        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_REFRESH,
-        MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
-        MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+        LaunchMode, StartupStep, UiAction, UiSettings, UsageProfileView, MENU_ADD_USAGE_PROFILE,
+        MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT,
+        MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5,
+        MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH,
+        MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN,
+        MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL,
+        MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN,
+        MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY,
+        MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
+        MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
+    UsageProfileId,
 };
 
 #[test]
@@ -95,6 +100,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
             .map(|submenu| submenu.label.as_str())
             .collect::<Vec<_>>(),
         [
+            "Usage profiles",
             "Refresh interval",
             "Startup view",
             "Language",
@@ -103,6 +109,10 @@ fn tray_menu_groups_major_settings_into_submenus() {
     );
     assert_eq!(
         submenu_command_ids(submenus[0]),
+        [1000, MENU_ADD_USAGE_PROFILE, MENU_MANAGE_USAGE_PROFILES]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[1]),
         [
             MENU_INTERVAL_1,
             MENU_INTERVAL_5,
@@ -112,11 +122,11 @@ fn tray_menu_groups_major_settings_into_submenus() {
         ]
     );
     assert_eq!(
-        submenu_command_ids(submenus[1]),
+        submenu_command_ids(submenus[2]),
         [MENU_STARTUP_WIDGET, MENU_STARTUP_TRAY]
     );
     assert_eq!(
-        submenu_command_ids(submenus[2]),
+        submenu_command_ids(submenus[3]),
         [
             MENU_LANGUAGE_AUTO,
             MENU_LANGUAGE_KOREAN,
@@ -134,7 +144,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
         ]
     );
     assert_eq!(
-        submenu_command_ids(submenus[3]),
+        submenu_command_ids(submenus[4]),
         [MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY]
     );
 }
@@ -148,6 +158,17 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
     assert_eq!(
         commands,
         vec![
+            (1000, "Default Codex account    Displayed".to_string(), true),
+            (
+                MENU_ADD_USAGE_PROFILE,
+                "Add usage profile".to_string(),
+                false
+            ),
+            (
+                MENU_MANAGE_USAGE_PROFILES,
+                "Manage usage profiles".to_string(),
+                false
+            ),
             (MENU_REFRESH, "Refresh now".to_string(), false),
             (MENU_INTERVAL_1, "1 min".to_string(), false),
             (MENU_INTERVAL_5, "5 min".to_string(), false),
@@ -213,7 +234,7 @@ fn tray_menu_entries_localize_korean_labels_and_preserve_endonyms() {
 
     let commands = tray_commands(&settings);
 
-    assert_eq!(commands[0], (MENU_REFRESH, "지금 갱신".to_string(), false));
+    assert!(commands.contains(&(MENU_REFRESH, "지금 갱신".to_string(), false)));
     assert!(commands.contains(&(MENU_INTERVAL_15, "15분".to_string(), true)));
     assert!(commands.contains(&(MENU_AUTOSTART, "Windows 시작 시 실행".to_string(), true)));
     assert!(commands.contains(&(MENU_STARTUP_TRAY, "트레이에만 표시".to_string(), true)));
@@ -234,10 +255,7 @@ fn tray_menu_entries_offer_login_instead_of_auth_refresh_when_signed_out() {
 
     let commands = tray_commands(&settings);
 
-    assert_eq!(
-        commands[0],
-        (MENU_LOGIN, "Sign in to Codex".to_string(), false)
-    );
+    assert!(commands.contains(&(MENU_LOGIN, "Sign in to Codex".to_string(), false)));
     assert!(!commands.iter().any(|(id, _, _)| *id == MENU_AUTH_REFRESH));
 }
 
@@ -255,7 +273,81 @@ fn tray_settings(language: Language) -> UiSettings {
         update_status: UpdatePresentationStatus::Failed,
         show_remaining_percent: true,
         login_required: false,
+        usage_profiles: vec![UsageProfileView {
+            id: UsageProfileId::System,
+            label: codex_usage_monitor::localized_text(
+                codex_usage_monitor::LocalizationKey::UsageProfileSystem,
+                language,
+            )
+            .to_string(),
+            summary: if language == Language::Korean {
+                "표시 중".to_string()
+            } else {
+                "Displayed".to_string()
+            },
+            selected: true,
+            login_required: false,
+            managed: false,
+        }],
+        usage_profile_mutation_pending: false,
     }
+}
+
+fn tray_settings_with_profiles() -> UiSettings {
+    let mut settings = tray_settings(Language::English);
+    settings.usage_profiles.push(UsageProfileView {
+        id: UsageProfileId::Managed(1),
+        label: "Work".to_string(),
+        summary: "Weekly 72% remaining".to_string(),
+        selected: false,
+        login_required: false,
+        managed: true,
+    });
+    settings
+}
+
+#[test]
+fn popup_profile_action_keeps_the_profile_identity() {
+    let model = tray_menu_model(&tray_settings_with_profiles());
+
+    assert_eq!(
+        model.action(1001),
+        Some(UiAction::SelectUsageProfile(UsageProfileId::Managed(1)))
+    );
+}
+
+#[test]
+fn profile_mutation_actions_keep_ids_and_validated_labels_typed() {
+    let id = UsageProfileId::Managed(7);
+    let actions = [
+        UiAction::AddUsageProfile("Personal".to_string()),
+        UiAction::RenameUsageProfile(id, "Work".to_string()),
+        UiAction::LoginUsageProfile(id),
+        UiAction::LogoutUsageProfile(id),
+        UiAction::DeleteUsageProfile(id),
+    ];
+
+    assert_eq!(
+        actions[0],
+        UiAction::AddUsageProfile("Personal".to_string())
+    );
+    assert_eq!(
+        actions[1],
+        UiAction::RenameUsageProfile(id, "Work".to_string())
+    );
+    assert_eq!(actions[2], UiAction::LoginUsageProfile(id));
+    assert_eq!(actions[3], UiAction::LogoutUsageProfile(id));
+    assert_eq!(actions[4], UiAction::DeleteUsageProfile(id));
+}
+
+#[test]
+fn profile_tooltip_adds_identity_without_changing_taskbar_dimensions() {
+    let tooltip =
+        profile_taskbar_tooltip("Work", "Codex 7d usage\nRemaining: 72%", Language::English);
+
+    assert!(tooltip.starts_with("Usage profiles: Work\nCodex CLI sign-in is unchanged\n"));
+    assert!(tooltip.ends_with("Codex 7d usage\nRemaining: 72%"));
+    assert_eq!(taskbar_widget_size(48, 96), Ok((208, 48)));
 }
 
 fn tray_commands(settings: &UiSettings) -> Vec<(u16, String, bool)> {

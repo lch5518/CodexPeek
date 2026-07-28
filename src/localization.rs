@@ -140,6 +140,36 @@ pub enum LocalizationKey {
     MenuShowRemaining,
     /// 주간 사용량 표시 전환 메뉴입니다.
     MenuShowWeekly,
+    /// 사용량 프로필 선택 메뉴입니다.
+    MenuUsageProfiles,
+    /// 사용량 프로필 추가 메뉴입니다.
+    MenuAddUsageProfile,
+    /// 사용량 프로필 관리 메뉴입니다.
+    MenuManageUsageProfiles,
+    /// 시스템 Codex 프로필 이름입니다.
+    UsageProfileSystem,
+    /// 현재 표시 중인 프로필 상태입니다.
+    UsageProfileDisplayed,
+    /// Codex CLI 로그인이 바뀌지 않는다는 안내입니다.
+    UsageProfileCliUnchanged,
+    /// 프로필 로그인이 필요하다는 상태입니다.
+    UsageProfileLoginRequired,
+    /// 사용량 프로필 추가 창 제목입니다.
+    UsageProfileAddTitle,
+    /// 브라우저에서 계정을 확인하라는 안내입니다.
+    UsageProfileConfirmBrowserAccount,
+    /// 프로필 이름 변경 동작입니다.
+    UsageProfileRename,
+    /// 프로필 로그인 동작입니다.
+    UsageProfileLogin,
+    /// 프로필 로그아웃 동작입니다.
+    UsageProfileLogout,
+    /// 프로필 삭제 동작입니다.
+    UsageProfileDelete,
+    /// 프로필 삭제 확인 문구입니다.
+    UsageProfileDeleteConfirm,
+    /// 프로필 개수 제한 안내입니다.
+    UsageProfileLimitReached,
 }
 
 impl LocalizationKey {
@@ -191,6 +221,21 @@ impl LocalizationKey {
         Self::DiagnosticTaskbar,
         Self::MenuShowRemaining,
         Self::MenuShowWeekly,
+        Self::MenuUsageProfiles,
+        Self::MenuAddUsageProfile,
+        Self::MenuManageUsageProfiles,
+        Self::UsageProfileSystem,
+        Self::UsageProfileDisplayed,
+        Self::UsageProfileCliUnchanged,
+        Self::UsageProfileLoginRequired,
+        Self::UsageProfileAddTitle,
+        Self::UsageProfileConfirmBrowserAccount,
+        Self::UsageProfileRename,
+        Self::UsageProfileLogin,
+        Self::UsageProfileLogout,
+        Self::UsageProfileDelete,
+        Self::UsageProfileDeleteConfirm,
+        Self::UsageProfileLimitReached,
     ];
 
     const fn index(self) -> usize {
@@ -241,11 +286,26 @@ impl LocalizationKey {
             Self::DiagnosticTaskbar => 43,
             Self::MenuShowRemaining => 44,
             Self::MenuShowWeekly => 45,
+            Self::MenuUsageProfiles => 46,
+            Self::MenuAddUsageProfile => 47,
+            Self::MenuManageUsageProfiles => 48,
+            Self::UsageProfileSystem => 49,
+            Self::UsageProfileDisplayed => 50,
+            Self::UsageProfileCliUnchanged => 51,
+            Self::UsageProfileLoginRequired => 52,
+            Self::UsageProfileAddTitle => 53,
+            Self::UsageProfileConfirmBrowserAccount => 54,
+            Self::UsageProfileRename => 55,
+            Self::UsageProfileLogin => 56,
+            Self::UsageProfileLogout => 57,
+            Self::UsageProfileDelete => 58,
+            Self::UsageProfileDeleteConfirm => 59,
+            Self::UsageProfileLimitReached => 60,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 46;
+const LOCALIZATION_KEY_COUNT: usize = 61;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -294,6 +354,21 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "작업 표시줄 상태를 확인할 수 없습니다",
     "남은 사용량 표시",
     "주간 사용량 표시",
+    "사용량 프로필",
+    "사용량 프로필 추가",
+    "사용량 프로필 관리",
+    "기본 Codex 계정",
+    "표시 중",
+    "Codex CLI 로그인은 변경되지 않습니다",
+    "로그인 필요",
+    "사용량 프로필 추가",
+    "브라우저에서 사용할 계정을 확인하세요",
+    "이름 변경",
+    "로그인",
+    "로그아웃",
+    "삭제",
+    "이 사용량 프로필을 삭제할까요?",
+    "최대 사용량 프로필 수에 도달했습니다",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -343,6 +418,21 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Taskbar status could not be verified",
     "Show remaining usage",
     "Show weekly usage",
+    "Usage profiles",
+    "Add usage profile",
+    "Manage usage profiles",
+    "Default Codex account",
+    "Displayed",
+    "Codex CLI sign-in is unchanged",
+    "Sign-in required",
+    "Add usage profile",
+    "Confirm the account to use in your browser",
+    "Rename",
+    "Sign in",
+    "Sign out",
+    "Delete",
+    "Delete this usage profile?",
+    "The usage profile limit has been reached",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -392,6 +482,21 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "No se pudo verificar el estado de la barra de tareas",
     "Mostrar uso restante",
     "Mostrar uso semanal",
+    "Perfiles de uso",
+    "Añadir perfil de uso",
+    "Administrar perfiles de uso",
+    "Cuenta predeterminada de Codex",
+    "Mostrado",
+    "El inicio de sesión de Codex CLI no cambia",
+    "Inicio de sesión necesario",
+    "Añadir perfil de uso",
+    "Confirma en el navegador la cuenta que quieres usar",
+    "Cambiar nombre",
+    "Iniciar sesión",
+    "Cerrar sesión",
+    "Eliminar",
+    "¿Eliminar este perfil de uso?",
+    "Se alcanzó el límite de perfiles de uso",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -441,6 +546,21 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Não foi possível verificar o status da barra de tarefas",
     "Mostrar uso restante",
     "Mostrar uso semanal",
+    "Perfis de uso",
+    "Adicionar perfil de uso",
+    "Gerenciar perfis de uso",
+    "Conta padrão do Codex",
+    "Exibido",
+    "O login do Codex CLI não é alterado",
+    "Login necessário",
+    "Adicionar perfil de uso",
+    "Confirme no navegador a conta que deseja usar",
+    "Renomear",
+    "Entrar",
+    "Sair",
+    "Excluir",
+    "Excluir este perfil de uso?",
+    "O limite de perfis de uso foi atingido",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -490,6 +610,21 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Status taskbar tidak dapat diverifikasi",
     "Tampilkan sisa penggunaan",
     "Tampilkan penggunaan mingguan",
+    "Profil penggunaan",
+    "Tambah profil penggunaan",
+    "Kelola profil penggunaan",
+    "Akun Codex default",
+    "Ditampilkan",
+    "Login Codex CLI tidak berubah",
+    "Perlu login",
+    "Tambah profil penggunaan",
+    "Konfirmasikan akun yang akan digunakan di browser",
+    "Ganti nama",
+    "Masuk",
+    "Keluar",
+    "Hapus",
+    "Hapus profil penggunaan ini?",
+    "Batas profil penggunaan telah tercapai",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -539,6 +674,21 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "タスクバーの状態を確認できませんでした",
     "残り使用量を表示",
     "週間使用量を表示",
+    "使用量プロファイル",
+    "使用量プロファイルを追加",
+    "使用量プロファイルを管理",
+    "デフォルトの Codex アカウント",
+    "表示中",
+    "Codex CLI のサインインは変更されません",
+    "サインインが必要です",
+    "使用量プロファイルを追加",
+    "ブラウザーで使用するアカウントを確認してください",
+    "名前を変更",
+    "サインイン",
+    "サインアウト",
+    "削除",
+    "この使用量プロファイルを削除しますか？",
+    "使用量プロファイルの上限に達しました",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -588,6 +738,21 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "टास्कबार स्थिति सत्यापित नहीं हो सकी",
     "शेष उपयोग दिखाएँ",
     "साप्ताहिक उपयोग दिखाएँ",
+    "उपयोग प्रोफ़ाइल",
+    "उपयोग प्रोफ़ाइल जोड़ें",
+    "उपयोग प्रोफ़ाइल प्रबंधित करें",
+    "डिफ़ॉल्ट Codex खाता",
+    "प्रदर्शित",
+    "Codex CLI साइन-इन अपरिवर्तित रहता है",
+    "साइन-इन आवश्यक",
+    "उपयोग प्रोफ़ाइल जोड़ें",
+    "ब्राउज़र में उपयोग करने वाला खाता सुनिश्चित करें",
+    "नाम बदलें",
+    "साइन इन करें",
+    "साइन आउट करें",
+    "हटाएँ",
+    "यह उपयोग प्रोफ़ाइल हटाएँ?",
+    "उपयोग प्रोफ़ाइल की सीमा पूरी हो गई है",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -637,6 +802,21 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Taskleistenstatus konnte nicht verifiziert werden",
     "Verbleibende Nutzung anzeigen",
     "Wöchentliche Nutzung anzeigen",
+    "Nutzungsprofile",
+    "Nutzungsprofil hinzufügen",
+    "Nutzungsprofile verwalten",
+    "Standard-Codex-Konto",
+    "Angezeigt",
+    "Die Codex-CLI-Anmeldung bleibt unverändert",
+    "Anmeldung erforderlich",
+    "Nutzungsprofil hinzufügen",
+    "Bestätigen Sie im Browser das zu verwendende Konto",
+    "Umbenennen",
+    "Anmelden",
+    "Abmelden",
+    "Löschen",
+    "Dieses Nutzungsprofil löschen?",
+    "Das Limit für Nutzungsprofile ist erreicht",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -686,6 +866,21 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "L'état de la barre des tâches n'a pas pu être vérifié",
     "Afficher l'utilisation restante",
     "Afficher l'utilisation hebdomadaire",
+    "Profils d'utilisation",
+    "Ajouter un profil d'utilisation",
+    "Gérer les profils d'utilisation",
+    "Compte Codex par défaut",
+    "Affiché",
+    "La connexion à Codex CLI reste inchangée",
+    "Connexion requise",
+    "Ajouter un profil d'utilisation",
+    "Confirmez dans le navigateur le compte à utiliser",
+    "Renommer",
+    "Se connecter",
+    "Se déconnecter",
+    "Supprimer",
+    "Supprimer ce profil d'utilisation ?",
+    "La limite de profils d'utilisation est atteinte",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -735,6 +930,21 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Không thể xác minh trạng thái thanh tác vụ",
     "Hiển thị mức sử dụng còn lại",
     "Hiển thị mức sử dụng hằng tuần",
+    "Hồ sơ sử dụng",
+    "Thêm hồ sơ sử dụng",
+    "Quản lý hồ sơ sử dụng",
+    "Tài khoản Codex mặc định",
+    "Đang hiển thị",
+    "Đăng nhập Codex CLI không thay đổi",
+    "Cần đăng nhập",
+    "Thêm hồ sơ sử dụng",
+    "Xác nhận tài khoản sẽ dùng trong trình duyệt",
+    "Đổi tên",
+    "Đăng nhập",
+    "Đăng xuất",
+    "Xóa",
+    "Xóa hồ sơ sử dụng này?",
+    "Đã đạt giới hạn hồ sơ sử dụng",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -784,6 +994,21 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Görev çubuğu durumu doğrulanamadı",
     "Kalan kullanımı göster",
     "Haftalık kullanımı göster",
+    "Kullanım profilleri",
+    "Kullanım profili ekle",
+    "Kullanım profillerini yönet",
+    "Varsayılan Codex hesabı",
+    "Gösteriliyor",
+    "Codex CLI oturumu değişmez",
+    "Oturum açılması gerekiyor",
+    "Kullanım profili ekle",
+    "Tarayıcıda kullanılacak hesabı doğrulayın",
+    "Yeniden adlandır",
+    "Oturum aç",
+    "Oturumu kapat",
+    "Sil",
+    "Bu kullanım profili silinsin mi?",
+    "Kullanım profili sınırına ulaşıldı",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -833,6 +1058,21 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "تعذر التحقق من حالة شريط المهام",
     "إظهار الاستخدام المتبقي",
     "إظهار الاستخدام الأسبوعي",
+    "ملفات تعريف الاستخدام",
+    "إضافة ملف تعريف استخدام",
+    "إدارة ملفات تعريف الاستخدام",
+    "حساب Codex الافتراضي",
+    "معروض",
+    "لا يتغير تسجيل الدخول إلى Codex CLI",
+    "تسجيل الدخول مطلوب",
+    "إضافة ملف تعريف استخدام",
+    "أكد الحساب المراد استخدامه في المتصفح",
+    "إعادة التسمية",
+    "تسجيل الدخول",
+    "تسجيل الخروج",
+    "حذف",
+    "هل تريد حذف ملف تعريف الاستخدام هذا؟",
+    "تم بلوغ حد ملفات تعريف الاستخدام",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.

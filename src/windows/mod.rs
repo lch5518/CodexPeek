@@ -9,7 +9,7 @@ pub(crate) mod time;
 pub mod tray;
 pub mod widget;
 
-use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode};
+use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode, UsageProfileId};
 
 /// 즉시 갱신 메뉴 식별자입니다.
 pub const MENU_REFRESH: u16 = 100;
@@ -67,6 +67,10 @@ pub const MENU_DIAGNOSTICS: u16 = 220;
 pub const MENU_UPDATE_CHECK: u16 = 230;
 /// 위젯 표시 전환 메뉴 식별자입니다.
 pub const MENU_WIDGET_VISIBLE: u16 = 240;
+/// 사용량 프로필 추가 메뉴 식별자입니다.
+pub const MENU_ADD_USAGE_PROFILE: u16 = 260;
+/// 사용량 프로필 관리 메뉴 식별자입니다.
+pub const MENU_MANAGE_USAGE_PROFILES: u16 = 261;
 /// 남은 한도 표시 토글 메뉴 식별자입니다.
 pub const MENU_SHOW_REMAINING: u16 = 241;
 /// 모든 모니터 작업표시줄 표시 메뉴 식별자입니다.
@@ -280,6 +284,18 @@ pub enum UiAction {
     ToggleShowRemaining,
     /// 작업표시줄 위젯을 표시할 모니터 범위를 변경합니다.
     SetTaskbarDisplayMode(TaskbarDisplayMode),
+    /// 표시할 사용량 프로필을 선택합니다.
+    SelectUsageProfile(UsageProfileId),
+    /// 검증된 표시 이름으로 사용량 프로필을 추가합니다.
+    AddUsageProfile(String),
+    /// 지정한 사용량 프로필의 표시 이름을 변경합니다.
+    RenameUsageProfile(UsageProfileId, String),
+    /// 지정한 사용량 프로필의 브라우저 로그인을 시작합니다.
+    LoginUsageProfile(UsageProfileId),
+    /// 지정한 사용량 프로필에서 로그아웃합니다.
+    LogoutUsageProfile(UsageProfileId),
+    /// 지정한 관리 사용량 프로필을 삭제합니다.
+    DeleteUsageProfile(UsageProfileId),
     /// 프로그램을 종료합니다.
     Exit,
 }
@@ -342,6 +358,26 @@ pub struct UsageRowView {
     pub level: crate::UsageLevel,
 }
 
+/// UI에 노출할 수 있는 비민감 사용량 프로필 표시 정보입니다.
+///
+/// 내부 경로와 계정 식별 정보는 포함하지 않으며, `label`과 `summary`만 사용자 화면에
+/// 표시합니다. `id`는 형식화된 UI 동작을 런타임 프로필에 연결하는 데만 사용합니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageProfileView {
+    /// 설정과 폴링 상태를 연결하는 안정적인 프로필 식별자입니다.
+    pub id: UsageProfileId,
+    /// 사용자에게 표시할 지역화 또는 검증된 프로필 이름입니다.
+    pub label: String,
+    /// 사용량 또는 로그인 상태를 요약한 지역화 문구입니다.
+    pub summary: String,
+    /// 현재 위젯이 이 프로필의 사용량을 표시하는지 나타냅니다.
+    pub selected: bool,
+    /// 이 프로필에 Codex 로그인이 필요한지 나타냅니다.
+    pub login_required: bool,
+    /// 앱이 격리 저장소를 관리하는 프로필인지 나타냅니다.
+    pub managed: bool,
+}
+
 /// 작업 표시줄이 표현하는 조회 상태입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WidgetDataState {
@@ -356,6 +392,8 @@ pub enum WidgetDataState {
 /// Windows UI가 렌더링하는 불변 상태 복사본입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WidgetViewModel {
+    /// 플로팅 위젯에 항상 표시할 선택된 사용량 프로필 이름입니다.
+    pub usage_profile_label: String,
     /// 주 사용량 행입니다.
     pub primary: Option<UsageRowView>,
     /// 보조 사용량 행입니다.
@@ -424,6 +462,26 @@ pub struct UiSettings {
     pub show_remaining_percent: bool,
     /// Codex 로그인이 필요해 트레이 메뉴에 로그인 동작을 표시할지 여부입니다.
     pub login_required: bool,
+    /// 트레이와 프로필 관리 UI에 표시할 비민감 프로필 목록입니다.
+    pub usage_profiles: Vec<UsageProfileView>,
+    /// 프로필 설정 변경이 저장 워커에서 완료되기를 기다리는지 나타냅니다.
+    pub usage_profile_mutation_pending: bool,
+}
+
+/// 작업 표시줄 상세 툴팁 앞에 선택 프로필과 CLI 격리 안내를 추가합니다.
+///
+/// `usage_profile_label`은 이미 검증되거나 지역화된 표시 이름이고 `details`는 기존 사용량
+/// 툴팁입니다. 반환 문자열에는 프로필 경로나 계정 식별 정보가 추가되지 않습니다.
+pub fn profile_taskbar_tooltip(
+    usage_profile_label: &str,
+    details: &str,
+    language: Language,
+) -> String {
+    format!(
+        "{}: {usage_profile_label}\n{}\n{details}",
+        crate::localized_text(crate::LocalizationKey::MenuUsageProfiles, language),
+        crate::localized_text(crate::LocalizationKey::UsageProfileCliUnchanged, language),
+    )
 }
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.
