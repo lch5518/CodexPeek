@@ -117,22 +117,6 @@ impl AppServerUsageProvider {
             in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
-
-    /// ChatGPT 브라우저 로그인 세션을 시작하고 완료 여부를 반환합니다.
-    ///
-    /// `open_browser`는 app-server가 제공한 인증 URL을 열어야 하며, 로그인 세션은 최대 5분 동안
-    /// 완료 알림을 기다립니다. 이 메서드는 호출 스레드에서 대기하므로 UI 이벤트 처리에서는 워커
-    /// 스레드로 실행해야 합니다.
-    pub(crate) fn login_with_chatgpt<F>(&self, open_browser: F) -> Result<bool, UsageError>
-    where
-        F: Fn(&str) -> std::io::Result<()> + Send + Sync + 'static,
-    {
-        self.login_profile(
-            &ProfileExecutionContext::system(),
-            Arc::new(open_browser),
-            OperationCancellation::default(),
-        )
-    }
 }
 
 impl Default for AppServerUsageProvider {

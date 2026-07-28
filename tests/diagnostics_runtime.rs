@@ -31,6 +31,54 @@ fn diagnostics_mask_secrets_and_keep_one_line_records() {
 }
 
 #[test]
+fn profile_diagnostics_are_aggregate_only_and_clamped_to_supported_count() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+
+    logger
+        .record_safe(SafeDiagnostic::Profiles {
+            settings_valid: true,
+            configured: u8::MAX,
+            ok: 17,
+            login_required: 9,
+            request_failed: 11,
+        })
+        .unwrap();
+
+    let line = fs::read_to_string(&path).unwrap();
+    assert!(line.contains("settings_valid=true"));
+    assert!(line.contains("configured=8"));
+    assert!(line.contains("ok=8"));
+    assert!(line.contains("login_required=8"));
+    assert!(line.contains("request_failed=8"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn profile_diagnostics_never_serialize_labels_or_managed_paths() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+    let fixture_label = "private-profile-label";
+    let fixture_path = r"C:\private\managed-profile\codex-home";
+
+    logger
+        .record_safe(SafeDiagnostic::Profiles {
+            settings_valid: false,
+            configured: 2,
+            ok: 0,
+            login_required: 1,
+            request_failed: 1,
+        })
+        .unwrap();
+
+    let serialized = fs::read_to_string(&path).unwrap();
+    assert!(!serialized.contains(fixture_label));
+    assert!(!serialized.contains(fixture_path));
+    assert!(!serialized.to_ascii_lowercase().contains("profile-0001"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn settings_diagnostics_report_invalid_without_repairing_the_file() {
     let root = std::env::temp_dir().join(format!(
         "diagnostic-settings-{}",

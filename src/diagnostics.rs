@@ -28,6 +28,8 @@ pub enum DiagnosticCode {
     TaskbarCheck,
     /// 작업 표시줄 창 합성 단계의 결과입니다.
     TaskbarRender,
+    /// 사용량 프로필의 집계 상태입니다.
+    Profiles,
 }
 
 impl DiagnosticCode {
@@ -40,6 +42,7 @@ impl DiagnosticCode {
             Self::ProxyPresence => "proxy_presence",
             Self::TaskbarCheck => "taskbar_check",
             Self::TaskbarRender => "taskbar_render",
+            Self::Profiles => "profiles",
         }
     }
 }
@@ -63,6 +66,22 @@ pub enum SafeDiagnostic {
     TaskbarRender {
         stage: &'static str,
         error_code: Option<i32>,
+    },
+    /// 설정 유효성과 프로필 상태별 개수만 포함하는 집계입니다.
+    ///
+    /// 각 값은 기록 시 지원 최대치인 8로 제한되며 이름, 식별자, 경로 또는 계정 정보는 포함할
+    /// 수 없습니다.
+    Profiles {
+        /// 설정 파일이 유효한지 나타냅니다.
+        settings_valid: bool,
+        /// 시스템 프로필을 포함해 구성된 프로필 수입니다.
+        configured: u8,
+        /// 마지막 조회가 정상인 프로필 수입니다.
+        ok: u8,
+        /// 로그인이 필요한 프로필 수입니다.
+        login_required: u8,
+        /// 안전하게 분류된 요청 실패 상태의 프로필 수입니다.
+        request_failed: u8,
     },
 }
 
@@ -150,6 +169,22 @@ impl DiagnosticLogger {
             SafeDiagnostic::TaskbarRender { stage, error_code } => self.record(
                 DiagnosticCode::TaskbarRender,
                 &format!("stage={stage} error_code={error_code:?}"),
+            ),
+            SafeDiagnostic::Profiles {
+                settings_valid,
+                configured,
+                ok,
+                login_required,
+                request_failed,
+            } => self.record(
+                DiagnosticCode::Profiles,
+                &format!(
+                    "settings_valid={settings_valid} configured={} ok={} login_required={} request_failed={}",
+                    configured.min(8),
+                    ok.min(8),
+                    login_required.min(8),
+                    request_failed.min(8),
+                ),
             ),
         }
     }

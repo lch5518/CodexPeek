@@ -12,6 +12,8 @@ mod profiles;
 mod update_check;
 pub mod windows;
 
+pub use app::{ProfileRuntimeCommand, ProfileRuntimeState};
+
 pub use config::{LanguagePreference, Settings, SettingsStore, StartupView, TaskbarDisplayMode};
 pub use diagnostics::{
     inspect_settings_for_diagnostics, DiagnosticCode, DiagnosticLogger, SafeDiagnostic,

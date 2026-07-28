@@ -6,9 +6,11 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    normalize_profile_label, NativeProfileFileSystem, ProfileFileSystem, ProfileSettingsEvent,
+    normalize_profile_label, NativeProfileFileSystem, PollTrigger, ProfileFileSystem,
+    ProfilePollEvent, ProfileRuntimeCommand, ProfileRuntimeState, ProfileSettingsEvent,
     ProfileSettingsMutation, ProfileSettingsService, ProfileValidationError, Settings,
-    SettingsStore, UsageProfileCatalog, UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
+    SettingsStore, UsageError, UsageProfileCatalog, UsageProfileId, UsageProfileRoot,
+    MAX_USAGE_PROFILES,
 };
 
 #[derive(Clone)]
@@ -171,6 +173,301 @@ fn test_root(label: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!("codex-peek-profile-{label}-{nonce}"))
+}
+
+struct RecordingProfileRuntime {
+    state: ProfileRuntimeState,
+    poll_commands: Vec<String>,
+    settings_commands: Vec<String>,
+}
+
+impl RecordingProfileRuntime {
+    fn new(settings: Settings, root: PathBuf) -> Self {
+        Self {
+            state: ProfileRuntimeState::new(settings, UsageProfileRoot::new(root)),
+            poll_commands: Vec::new(),
+            settings_commands: Vec::new(),
+        }
+    }
+
+    fn request_add(&mut self, label: String) -> Result<(), ProfileValidationError> {
+        let commands = self.state.request_add(label)?;
+        self.record(commands);
+        Ok(())
+    }
+
+    fn request_delete(&mut self, id: UsageProfileId) -> Result<(), ProfileValidationError> {
+        let commands = self.state.request_delete(id)?;
+        self.record(commands);
+        Ok(())
+    }
+
+    fn apply_settings_event(&mut self, event: ProfileSettingsEvent) {
+        let commands = self.state.apply_settings_event(event);
+        self.record(commands);
+    }
+
+    fn apply_poll_event(&mut self, event: ProfilePollEvent) {
+        let commands = self.state.apply_poll_event(event);
+        self.record(commands);
+    }
+
+    fn record(&mut self, commands: Vec<ProfileRuntimeCommand>) {
+        for command in commands {
+            match command {
+                ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Add { .. }) => {
+                    self.settings_commands.push("add".to_owned());
+                }
+                ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Rename { id, .. }) => {
+                    self.settings_commands
+                        .push(format!("rename:{}", id_text(id)));
+                }
+                ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Select { id }) => {
+                    self.settings_commands
+                        .push(format!("select:{}", id_text(id)));
+                }
+                ProfileRuntimeCommand::Settings(ProfileSettingsMutation::Delete { id }) => {
+                    self.settings_commands
+                        .push(format!("delete:{}", id_text(id)));
+                }
+                ProfileRuntimeCommand::AddPollContext(context) => self
+                    .poll_commands
+                    .push(format!("add:{}", id_text(context.id()))),
+                ProfileRuntimeCommand::SelectPoll(id) => {
+                    self.poll_commands.push(format!("select:{}", id_text(id)))
+                }
+                ProfileRuntimeCommand::RefreshSelected(trigger) => {
+                    self.poll_commands.push(format!(
+                        "refresh:{}",
+                        if trigger == PollTrigger::ForcedAuth {
+                            "forced-auth"
+                        } else {
+                            "other"
+                        }
+                    ))
+                }
+                ProfileRuntimeCommand::Login(id) => {
+                    self.poll_commands.push(format!("login:{}", id_text(id)))
+                }
+                ProfileRuntimeCommand::Logout(id) => {
+                    self.poll_commands.push(format!("logout:{}", id_text(id)))
+                }
+                ProfileRuntimeCommand::Quiesce(id) => {
+                    self.poll_commands.push(format!("quiesce:{}", id_text(id)))
+                }
+                ProfileRuntimeCommand::Remove(id) => {
+                    self.poll_commands.push(format!("remove:{}", id_text(id)))
+                }
+            }
+        }
+    }
+
+    fn poll_commands(&self) -> &[String] {
+        &self.poll_commands
+    }
+
+    fn settings_commands(&self) -> &[String] {
+        &self.settings_commands
+    }
+}
+
+fn id_text(id: UsageProfileId) -> String {
+    match id {
+        UsageProfileId::System => "system".to_owned(),
+        UsageProfileId::Managed(sequence) => format!("managed-{sequence}"),
+    }
+}
+
+fn settings_with_profile(sequence: u32, label: &str) -> Settings {
+    let mut settings = Settings::default();
+    for current in 1..=sequence {
+        settings
+            .usage_profiles
+            .add(if current == sequence {
+                label
+            } else {
+                "Earlier"
+            })
+            .unwrap();
+    }
+    settings
+}
+
+fn profile_runtime_fixture() -> RecordingProfileRuntime {
+    RecordingProfileRuntime::new(Settings::default(), test_root("runtime-empty"))
+}
+
+fn selected_managed_profile_fixture() -> RecordingProfileRuntime {
+    let mut settings = settings_with_profile(1, "개인");
+    settings
+        .usage_profiles
+        .select(UsageProfileId::Managed(1))
+        .unwrap();
+    RecordingProfileRuntime::new(settings, test_root("runtime-selected"))
+}
+
+#[test]
+fn added_profile_is_logged_in_only_after_durable_settings_success() {
+    let mut runtime = profile_runtime_fixture();
+
+    runtime.request_add("개인".into()).unwrap();
+    assert!(runtime.poll_commands().is_empty());
+
+    runtime.apply_settings_event(ProfileSettingsEvent::Added {
+        settings: settings_with_profile(1, "개인"),
+        id: UsageProfileId::Managed(1),
+    });
+    assert_eq!(
+        runtime.poll_commands(),
+        ["add:managed-1", "login:managed-1"]
+    );
+}
+
+#[test]
+fn delete_waits_for_quiesce_before_storage_delete() {
+    let mut runtime = selected_managed_profile_fixture();
+
+    runtime.request_delete(UsageProfileId::Managed(1)).unwrap();
+    assert_eq!(runtime.poll_commands(), ["quiesce:managed-1"]);
+    assert!(runtime.settings_commands().is_empty());
+
+    runtime.apply_poll_event(ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+        1,
+    )));
+    assert_eq!(runtime.settings_commands(), ["delete:managed-1"]);
+}
+
+#[test]
+fn failed_selection_save_retains_the_previous_render_selection() {
+    let mut runtime = selected_managed_profile_fixture();
+
+    runtime
+        .state
+        .request_select(UsageProfileId::System)
+        .unwrap();
+    runtime.apply_settings_event(ProfileSettingsEvent::Failed {
+        operation: "select",
+        kind: io::ErrorKind::PermissionDenied,
+    });
+
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::Managed(1)
+    );
+    assert!(!runtime.state.mutation_pending());
+}
+
+#[test]
+fn successful_login_selects_durably_before_forced_refresh() {
+    let mut runtime = profile_runtime_fixture();
+    runtime.apply_settings_event(ProfileSettingsEvent::Added {
+        settings: settings_with_profile(1, "개인"),
+        id: UsageProfileId::Managed(1),
+    });
+    runtime.poll_commands.clear();
+    runtime.settings_commands.clear();
+
+    runtime.apply_poll_event(ProfilePollEvent::LoginFinished {
+        id: UsageProfileId::Managed(1),
+        result: Ok(true),
+    });
+    assert_eq!(runtime.settings_commands(), ["select:managed-1"]);
+    assert!(runtime.poll_commands().is_empty());
+
+    let mut selected = settings_with_profile(1, "개인");
+    selected
+        .usage_profiles
+        .select(UsageProfileId::Managed(1))
+        .unwrap();
+    runtime.apply_settings_event(ProfileSettingsEvent::Selected {
+        settings: selected,
+        id: UsageProfileId::Managed(1),
+    });
+    assert_eq!(
+        runtime.poll_commands(),
+        ["select:managed-1", "refresh:forced-auth"]
+    );
+}
+
+#[test]
+fn cancelled_login_retains_login_required_without_selecting_profile() {
+    let mut runtime = profile_runtime_fixture();
+    runtime.apply_settings_event(ProfileSettingsEvent::Added {
+        settings: settings_with_profile(1, "개인"),
+        id: UsageProfileId::Managed(1),
+    });
+
+    runtime.apply_poll_event(ProfilePollEvent::LoginFinished {
+        id: UsageProfileId::Managed(1),
+        result: Ok(false),
+    });
+
+    assert!(runtime.state.login_required(UsageProfileId::Managed(1)));
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::System
+    );
+}
+
+#[test]
+fn login_error_is_profile_local() {
+    let mut settings = settings_with_profile(2, "두 번째");
+    settings
+        .usage_profiles
+        .rename(UsageProfileId::Managed(1), "첫 번째")
+        .unwrap();
+    let mut runtime = RecordingProfileRuntime::new(settings, test_root("runtime-errors"));
+
+    runtime.apply_poll_event(ProfilePollEvent::LoginFinished {
+        id: UsageProfileId::Managed(1),
+        result: Err(UsageError::AuthenticationExpired),
+    });
+
+    assert!(runtime.state.login_required(UsageProfileId::Managed(1)));
+    assert!(!runtime.state.login_required(UsageProfileId::Managed(2)));
+}
+
+#[test]
+fn deleting_selected_profile_falls_back_to_system_after_durable_delete() {
+    let mut runtime = selected_managed_profile_fixture();
+    runtime.request_delete(UsageProfileId::Managed(1)).unwrap();
+    runtime.apply_poll_event(ProfilePollEvent::ProfileQuiesced(UsageProfileId::Managed(
+        1,
+    )));
+    runtime.poll_commands.clear();
+
+    runtime.apply_settings_event(ProfileSettingsEvent::Deleted {
+        settings: Settings::default(),
+        id: UsageProfileId::Managed(1),
+    });
+
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::System
+    );
+    assert_eq!(
+        runtime.poll_commands(),
+        ["remove:managed-1", "select:system"]
+    );
+}
+
+#[test]
+fn successful_logout_marks_only_the_target_profile_login_required() {
+    let settings = settings_with_profile(2, "두 번째");
+    let mut runtime = RecordingProfileRuntime::new(settings, test_root("runtime-logout"));
+    runtime
+        .state
+        .request_logout(UsageProfileId::Managed(2))
+        .unwrap();
+
+    runtime.apply_poll_event(ProfilePollEvent::LogoutFinished {
+        id: UsageProfileId::Managed(2),
+        result: Ok(()),
+    });
+
+    assert!(!runtime.state.login_required(UsageProfileId::Managed(1)));
+    assert!(runtime.state.login_required(UsageProfileId::Managed(2)));
+    assert!(!runtime.state.mutation_pending());
 }
 
 #[cfg(windows)]

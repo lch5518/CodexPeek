@@ -1,13 +1,11 @@
 //! 런타임 서비스와 Windows UI를 조합하는 애플리케이션 계층입니다.
 
 use std::{
+    collections::HashSet,
     ffi::OsString,
     io,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -24,10 +22,12 @@ use crate::{
         WidgetDataState, WidgetViewModel,
     },
     DiagnosticCode, DiagnosticLogger, Language, LanguagePreference, LocalizationKey,
-    NativeProfileFileSystem, PollSnapshot, PollingService, ProfileSettingsService, ResetCredits,
-    SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckStart, UpdateChecker,
-    UpdatePresentation, UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError,
-    UsageProfileId, UsageWindow,
+    NativeProfileFileSystem, PollSnapshot, PollTrigger, ProfileExecutionContext, ProfilePollEvent,
+    ProfilePollingService, ProfileSettingsEvent, ProfileSettingsMutation, ProfileSettingsService,
+    ProfileValidationError, ResetCredits, SafeDiagnostic, Settings, SettingsStore,
+    UpdateCheckIntent, UpdateCheckStart, UpdateChecker, UpdatePresentation,
+    UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError, UsageProfileId,
+    UsageProfileRoot, UsageWindow,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -51,16 +51,292 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
             && settings.widget_visible;
     let mut runtime = AppRuntime::new(store, settings, startup_hidden)?;
     runtime.start_automatic_update_check();
-    native::run(&mut runtime)
+    let result = native::run(&mut runtime);
+    runtime.shutdown();
+    result
+}
+
+/// 프로필 설정의 내구성 이벤트와 계정 워커 이벤트 사이의 순서를 조정하는 명령입니다.
+///
+/// 명령에는 검증된 숫자 식별자와 실행 컨텍스트만 포함됩니다. 프로필 이름은 설정 저장 명령에만
+/// 일시적으로 전달되며 진단이나 계정 상태에는 보관되지 않습니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProfileRuntimeCommand {
+    /// 순서 보장 설정 워커에 제출할 변경입니다.
+    Settings(ProfileSettingsMutation),
+    /// 내구성 있게 추가된 프로필 컨텍스트를 폴링 워커에 등록합니다.
+    AddPollContext(ProfileExecutionContext),
+    /// 폴링 워커의 표시 대상을 변경합니다.
+    SelectPoll(UsageProfileId),
+    /// 현재 선택 프로필을 지정한 정책으로 갱신합니다.
+    RefreshSelected(PollTrigger),
+    /// 지정한 프로필 로그인을 폴링 워커에 제출합니다.
+    Login(UsageProfileId),
+    /// 지정한 프로필 로그아웃을 폴링 워커에 제출합니다.
+    Logout(UsageProfileId),
+    /// 삭제 전에 지정한 프로필의 진행 중 작업을 정지합니다.
+    Quiesce(UsageProfileId),
+    /// 내구성 삭제가 끝난 프로필 상태를 폴링 워커에서 제거합니다.
+    Remove(UsageProfileId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingProfileOperation {
+    Settings,
+    Login(UsageProfileId),
+    Logout(UsageProfileId),
+    DeleteQuiesce(UsageProfileId),
+    DeleteSettings(UsageProfileId),
+}
+
+/// 프로필 UI 요청과 두 직렬 워커의 완료 이벤트를 순수 상태 전이로 조정합니다.
+///
+/// 입력은 검증된 `Settings`, 앱 전용 `UsageProfileRoot`, 형식화된 완료 이벤트입니다. 반환 명령은
+/// 호출자가 비동기 worker에 제출해야 하며 이 타입 자체는 파일·네트워크·Codex 인증 I/O를 하지
+/// 않습니다. 설정 성공 이벤트 전에는 렌더링 대상 설정을 바꾸지 않습니다.
+pub struct ProfileRuntimeState {
+    settings: Settings,
+    root: UsageProfileRoot,
+    pending: Option<PendingProfileOperation>,
+    login_required: HashSet<UsageProfileId>,
+}
+
+impl ProfileRuntimeState {
+    /// 저장된 설정과 앱 전용 프로필 루트에서 런타임 조정 상태를 생성합니다.
+    ///
+    /// 디스크나 인증 파일을 읽지 않으며, 선택 상태는 전달된 설정이 내구성 있게 저장된 값이라고
+    /// 가정합니다.
+    pub fn new(settings: Settings, root: UsageProfileRoot) -> Self {
+        Self {
+            settings,
+            root,
+            pending: None,
+            login_required: HashSet::new(),
+        }
+    }
+
+    /// 마지막으로 내구성 성공 이벤트가 반영된 설정을 반환합니다.
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    /// 프로필 변경 또는 계정 작업의 완료를 기다리는지 반환합니다.
+    pub fn mutation_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// 지정한 프로필에서 최근 로그인 취소 또는 인증 실패가 있었는지 반환합니다.
+    pub fn login_required(&self, id: UsageProfileId) -> bool {
+        self.login_required.contains(&id)
+    }
+
+    /// 새 프로필 이름을 검증하고 설정 worker의 add 명령만 생성합니다.
+    ///
+    /// 프로필 컨텍스트 생성과 로그인은 `Added` 성공 이벤트 이후에만 생성됩니다.
+    pub fn request_add(
+        &mut self,
+        label: String,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.require_idle()?;
+        let mut catalog = self.settings.usage_profiles.clone();
+        let normalized = catalog.add(&label)?.label().to_owned();
+        self.pending = Some(PendingProfileOperation::Settings);
+        Ok(vec![ProfileRuntimeCommand::Settings(
+            ProfileSettingsMutation::Add { label: normalized },
+        )])
+    }
+
+    /// 프로필 이름 변경을 검증해 설정 worker 명령을 생성합니다.
+    pub fn request_rename(
+        &mut self,
+        id: UsageProfileId,
+        label: String,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.require_idle()?;
+        let mut catalog = self.settings.usage_profiles.clone();
+        catalog.rename(id, &label)?;
+        let normalized = catalog
+            .managed()
+            .iter()
+            .find(|profile| profile.id() == id)
+            .ok_or(ProfileValidationError::InvalidId)?
+            .label()
+            .to_owned();
+        self.pending = Some(PendingProfileOperation::Settings);
+        Ok(vec![ProfileRuntimeCommand::Settings(
+            ProfileSettingsMutation::Rename {
+                id,
+                label: normalized,
+            },
+        )])
+    }
+
+    /// 표시 대상 변경을 검증해 내구성 설정 명령을 생성합니다.
+    ///
+    /// 성공 이벤트 전에는 현재 렌더링 선택을 유지합니다.
+    pub fn request_select(
+        &mut self,
+        id: UsageProfileId,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.require_idle()?;
+        let mut catalog = self.settings.usage_profiles.clone();
+        catalog.select(id)?;
+        self.pending = Some(PendingProfileOperation::Settings);
+        Ok(vec![ProfileRuntimeCommand::Settings(
+            ProfileSettingsMutation::Select { id },
+        )])
+    }
+
+    /// 삭제 대상을 검증하고 먼저 폴링 정지 명령만 생성합니다.
+    ///
+    /// 설정 삭제 명령은 같은 식별자의 `ProfileQuiesced` 이벤트 이후에 생성됩니다.
+    pub fn request_delete(
+        &mut self,
+        id: UsageProfileId,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.require_idle()?;
+        let mut catalog = self.settings.usage_profiles.clone();
+        catalog.remove(id)?;
+        self.pending = Some(PendingProfileOperation::DeleteQuiesce(id));
+        Ok(vec![ProfileRuntimeCommand::Quiesce(id)])
+    }
+
+    /// 존재하는 프로필의 로그인을 직렬 계정 worker에 제출하도록 명령을 생성합니다.
+    pub fn request_login(
+        &mut self,
+        id: UsageProfileId,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.require_idle()?;
+        self.validate_id(id)?;
+        self.pending = Some(PendingProfileOperation::Login(id));
+        Ok(vec![ProfileRuntimeCommand::Login(id)])
+    }
+
+    /// 존재하는 프로필의 로그아웃을 직렬 계정 worker에 제출하도록 명령을 생성합니다.
+    pub fn request_logout(
+        &mut self,
+        id: UsageProfileId,
+    ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError> {
+        self.require_idle()?;
+        self.validate_id(id)?;
+        self.pending = Some(PendingProfileOperation::Logout(id));
+        Ok(vec![ProfileRuntimeCommand::Logout(id)])
+    }
+
+    /// 설정 worker의 완료 이벤트를 반영하고 다음 폴링 명령을 반환합니다.
+    ///
+    /// 실패 이벤트는 기존 설정과 선택을 유지합니다. 성공한 로그인 뒤의 `Selected` 이벤트를
+    /// 포함해 선택 성공은 폴링 선택과 강제 인증 갱신을 순서대로 생성합니다.
+    pub fn apply_settings_event(
+        &mut self,
+        event: ProfileSettingsEvent,
+    ) -> Vec<ProfileRuntimeCommand> {
+        match event {
+            ProfileSettingsEvent::Added { settings, id } => {
+                self.settings.usage_profiles = settings.usage_profiles;
+                self.pending = Some(PendingProfileOperation::Login(id));
+                self.login_required.insert(id);
+                ProfileExecutionContext::managed(&self.root, id)
+                    .map(|context| {
+                        vec![
+                            ProfileRuntimeCommand::AddPollContext(context),
+                            ProfileRuntimeCommand::Login(id),
+                        ]
+                    })
+                    .unwrap_or_default()
+            }
+            ProfileSettingsEvent::Renamed { settings, .. } => {
+                self.settings.usage_profiles = settings.usage_profiles;
+                self.pending = None;
+                Vec::new()
+            }
+            ProfileSettingsEvent::Selected { settings, id } => {
+                self.settings.usage_profiles = settings.usage_profiles;
+                self.pending = None;
+                self.login_required.remove(&id);
+                vec![
+                    ProfileRuntimeCommand::SelectPoll(id),
+                    ProfileRuntimeCommand::RefreshSelected(PollTrigger::ForcedAuth),
+                ]
+            }
+            ProfileSettingsEvent::Deleted { settings, id } => {
+                self.settings.usage_profiles = settings.usage_profiles;
+                self.pending = None;
+                self.login_required.remove(&id);
+                vec![
+                    ProfileRuntimeCommand::Remove(id),
+                    ProfileRuntimeCommand::SelectPoll(UsageProfileId::System),
+                ]
+            }
+            ProfileSettingsEvent::Failed { .. } => {
+                self.pending = None;
+                Vec::new()
+            }
+        }
+    }
+
+    /// 폴링·계정 worker 완료 이벤트를 반영하고 다음 설정 명령을 반환합니다.
+    ///
+    /// 로그인 취소와 오류는 해당 프로필만 로그인 필요 상태로 남깁니다. 삭제는 동일 프로필의
+    /// quiesce 완료가 확인된 경우에만 설정 worker로 진행됩니다.
+    pub fn apply_poll_event(&mut self, event: ProfilePollEvent) -> Vec<ProfileRuntimeCommand> {
+        match event {
+            ProfilePollEvent::ProfileQuiesced(id)
+                if self.pending == Some(PendingProfileOperation::DeleteQuiesce(id)) =>
+            {
+                self.pending = Some(PendingProfileOperation::DeleteSettings(id));
+                vec![ProfileRuntimeCommand::Settings(
+                    ProfileSettingsMutation::Delete { id },
+                )]
+            }
+            ProfilePollEvent::LoginFinished { id, result } => {
+                if result == Ok(true) {
+                    self.pending = Some(PendingProfileOperation::Settings);
+                    self.login_required.remove(&id);
+                    vec![ProfileRuntimeCommand::Settings(
+                        ProfileSettingsMutation::Select { id },
+                    )]
+                } else {
+                    self.pending = None;
+                    self.login_required.insert(id);
+                    Vec::new()
+                }
+            }
+            ProfilePollEvent::LogoutFinished { id, result } => {
+                self.pending = None;
+                if result.is_ok()
+                    || matches!(
+                        result,
+                        Err(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+                    )
+                {
+                    self.login_required.insert(id);
+                }
+                Vec::new()
+            }
+            ProfilePollEvent::ProfileQuiesced(_) => Vec::new(),
+        }
+    }
+
+    fn require_idle(&self) -> Result<(), ProfileValidationError> {
+        if self.pending.is_some() {
+            Err(ProfileValidationError::InvalidId)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn validate_id(&self, id: UsageProfileId) -> Result<(), ProfileValidationError> {
+        let mut catalog = self.settings.usage_profiles.clone();
+        catalog.select(id)
+    }
 }
 
 struct AppRuntime {
-    settings_writer: ProfileSettingsService,
+    profile_settings: Option<ProfileSettingsService>,
+    profile_poller: Option<ProfilePollingService>,
+    profile_state: std::sync::Mutex<ProfileRuntimeState>,
     logger: DiagnosticLogger,
-    settings: Settings,
-    poller: PollingService,
-    usage_provider: Arc<AppServerUsageProvider>,
-    login_refresh_pending: Arc<AtomicBool>,
     startup_hidden: bool,
     update_presentation: UpdatePresentation,
 }
@@ -68,29 +344,35 @@ struct AppRuntime {
 impl AppRuntime {
     fn new(store: SettingsStore, settings: Settings, startup_hidden: bool) -> io::Result<Self> {
         let usage_provider = Arc::new(AppServerUsageProvider::new());
-        let poller = start_poller(&settings, Arc::clone(&usage_provider))?;
+        let root = UsageProfileRoot::new(store.root().to_path_buf());
+        let contexts = profile_execution_contexts(&settings, &root)?;
+        let profile_settings = ProfileSettingsService::start(
+            store,
+            settings.clone(),
+            NativeProfileFileSystem::default(),
+        );
+        let provider: Arc<dyn crate::codex::ProfileAccountProvider> = usage_provider;
+        let profile_poller = ProfilePollingService::start(
+            provider,
+            contexts,
+            settings.usage_profiles.selected(),
+            settings.refresh_interval_minutes,
+            settings.auto_auth_refresh,
+        )
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
         Ok(Self {
-            settings_writer: ProfileSettingsService::start(
-                store,
-                settings.clone(),
-                NativeProfileFileSystem::default(),
-            ),
+            profile_settings: Some(profile_settings),
+            profile_poller: Some(profile_poller),
+            profile_state: std::sync::Mutex::new(ProfileRuntimeState::new(settings, root)),
             logger: DiagnosticLogger::new(),
-            settings,
-            poller,
-            usage_provider,
-            login_refresh_pending: Arc::new(AtomicBool::new(false)),
             startup_hidden,
             update_presentation: UpdatePresentation::default(),
         })
     }
 
     fn save_settings(&self) {
-        if self
-            .settings_writer
-            .save_preferences(self.settings.clone())
-            .is_err()
-        {
+        let settings = self.settings_snapshot();
+        if self.profile_settings().save_preferences(settings).is_err() {
             let _ = self
                 .logger
                 .record_safe(SafeDiagnostic::Settings { valid: false });
@@ -103,7 +385,7 @@ impl AppRuntime {
         };
         let now = SystemTime::now();
         let last_check = self
-            .settings
+            .settings_snapshot()
             .last_update_check_unix
             .map(|seconds| UNIX_EPOCH + std::time::Duration::from_secs(seconds));
         if last_check.is_some_and(|checked| {
@@ -143,10 +425,12 @@ impl AppRuntime {
         last_check: Option<SystemTime>,
         now: SystemTime,
     ) {
-        self.settings.last_update_check_unix = now
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(|duration| duration.as_secs());
+        self.with_settings_mut(|settings| {
+            settings.last_update_check_unix = now
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|duration| duration.as_secs());
+        });
         self.save_settings();
         let presentation = self.update_presentation.clone();
         thread::spawn(move || {
@@ -156,7 +440,8 @@ impl AppRuntime {
     }
 
     fn snapshot_inner(&self) -> PollSnapshot {
-        self.poller.snapshot()
+        let selected = self.settings_snapshot().usage_profiles.selected();
+        self.profile_poller().snapshot(selected).unwrap_or_default()
     }
 
     fn consume_update_open_request(&self) {
@@ -165,41 +450,244 @@ impl AppRuntime {
         }
     }
 
-    fn begin_chatgpt_login(&self) {
-        let provider = Arc::clone(&self.usage_provider);
-        let refresh_pending = Arc::clone(&self.login_refresh_pending);
-        thread::spawn(move || {
-            if provider
-                .login_with_chatgpt(native::open_validated_login_page)
-                .is_ok_and(|completed| completed)
-            {
-                refresh_pending.store(true, Ordering::Release);
-            }
-        });
+    fn profile_settings(&self) -> &ProfileSettingsService {
+        self.profile_settings
+            .as_ref()
+            .expect("profile settings service is available")
     }
 
-    fn consume_login_refresh_request(&self) {
-        if self.login_refresh_pending.swap(false, Ordering::AcqRel) {
-            self.poller.refresh_with_auth();
-        }
+    fn profile_poller(&self) -> &ProfilePollingService {
+        self.profile_poller
+            .as_ref()
+            .expect("profile polling service is available")
+    }
+
+    fn settings_snapshot(&self) -> Settings {
+        self.profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .settings()
+            .clone()
+    }
+
+    fn with_settings_mut(&self, update: impl FnOnce(&mut Settings)) {
+        let mut state = self
+            .profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        update(&mut state.settings);
     }
 
     fn login_required(&self) -> bool {
-        matches!(
-            self.snapshot_inner().last_error,
-            Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
-        )
+        let selected = self.settings_snapshot().usage_profiles.selected();
+        let state_required = self
+            .profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .login_required(selected);
+        state_required
+            || matches!(
+                self.profile_poller()
+                    .snapshot(selected)
+                    .and_then(|snapshot| snapshot.last_error),
+                Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+            )
     }
+
+    fn drain_profile_events(&self) {
+        for event in self.profile_settings().take_events() {
+            let failed = matches!(event, ProfileSettingsEvent::Failed { .. });
+            let commands = self
+                .profile_state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .apply_settings_event(event);
+            if failed {
+                let _ = self
+                    .logger
+                    .record_safe(SafeDiagnostic::Settings { valid: false });
+            }
+            self.execute_profile_commands(commands);
+        }
+        for event in self.profile_poller().take_events() {
+            let account_failed = matches!(
+                &event,
+                ProfilePollEvent::LoginFinished { result: Err(_), .. }
+                    | ProfilePollEvent::LogoutFinished { result: Err(_), .. }
+            );
+            let commands = self
+                .profile_state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .apply_poll_event(event);
+            if account_failed {
+                let _ = self.logger.record_safe(SafeDiagnostic::Rpc {
+                    code: DiagnosticCode::RpcFailed,
+                });
+            }
+            self.execute_profile_commands(commands);
+        }
+    }
+
+    fn execute_profile_commands(&self, commands: Vec<ProfileRuntimeCommand>) {
+        for command in commands {
+            let result = match command {
+                ProfileRuntimeCommand::Settings(mutation) => {
+                    self.profile_settings().submit(mutation).map_err(|_| ())
+                }
+                ProfileRuntimeCommand::AddPollContext(context) => {
+                    self.profile_poller().add(context).map_err(|_| ())
+                }
+                ProfileRuntimeCommand::SelectPoll(id) => {
+                    self.profile_poller().select(id).map_err(|_| ())
+                }
+                ProfileRuntimeCommand::RefreshSelected(trigger) => self
+                    .profile_poller()
+                    .refresh_selected(trigger)
+                    .map_err(|_| ()),
+                ProfileRuntimeCommand::Login(id) => self
+                    .profile_poller()
+                    .login(id, Arc::new(native::open_validated_login_page))
+                    .map_err(|_| ()),
+                ProfileRuntimeCommand::Logout(id) => {
+                    self.profile_poller().logout(id).map_err(|_| ())
+                }
+                ProfileRuntimeCommand::Quiesce(id) => {
+                    self.profile_poller().quiesce(id).map_err(|_| ())
+                }
+                ProfileRuntimeCommand::Remove(id) => {
+                    self.profile_poller().remove(id).map_err(|_| ())
+                }
+            };
+            if result.is_err() {
+                self.profile_state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .pending = None;
+                let _ = self
+                    .logger
+                    .record_safe(SafeDiagnostic::Settings { valid: false });
+                break;
+            }
+        }
+    }
+
+    fn submit_profile_request(
+        &self,
+        request: impl FnOnce(
+            &mut ProfileRuntimeState,
+        ) -> Result<Vec<ProfileRuntimeCommand>, ProfileValidationError>,
+    ) {
+        let commands = request(
+            &mut self
+                .profile_state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        );
+        match commands {
+            Ok(commands) => self.execute_profile_commands(commands),
+            Err(_) => {
+                let _ = self
+                    .logger
+                    .record_safe(SafeDiagnostic::Settings { valid: false });
+            }
+        }
+    }
+
+    fn record_profile_diagnostics(&self) {
+        let settings = self.settings_snapshot();
+        let state = self
+            .profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let ids = std::iter::once(UsageProfileId::System).chain(
+            settings
+                .usage_profiles
+                .managed()
+                .iter()
+                .map(|profile| profile.id()),
+        );
+        let mut ok = 0_u8;
+        let mut login_required = 0_u8;
+        let mut request_failed = 0_u8;
+        for id in ids {
+            let snapshot = self.profile_poller().snapshot(id);
+            if state.login_required(id)
+                || snapshot.as_ref().is_some_and(|snapshot| {
+                    matches!(
+                        snapshot.last_error,
+                        Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+                    )
+                })
+            {
+                login_required = login_required.saturating_add(1);
+            } else if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.last_error.is_some())
+            {
+                request_failed = request_failed.saturating_add(1);
+            } else if snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.usage.is_some())
+            {
+                ok = ok.saturating_add(1);
+            }
+        }
+        let _ = self.logger.record_safe(SafeDiagnostic::Profiles {
+            settings_valid: true,
+            configured: (settings.usage_profiles.managed().len() + 1).min(8) as u8,
+            ok,
+            login_required,
+            request_failed,
+        });
+    }
+
+    fn shutdown(&mut self) {
+        if let Some(poller) = self.profile_poller.take() {
+            poller.stop();
+        }
+        if let Some(settings) = self.profile_settings.take() {
+            let _ = settings.stop();
+        }
+    }
+}
+
+fn profile_execution_contexts(
+    settings: &Settings,
+    root: &UsageProfileRoot,
+) -> io::Result<Vec<ProfileExecutionContext>> {
+    let mut contexts = Vec::with_capacity(settings.usage_profiles.managed().len() + 1);
+    contexts.push(ProfileExecutionContext::system());
+    for profile in settings.usage_profiles.managed() {
+        contexts.push(
+            ProfileExecutionContext::managed(root, profile.id()).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid managed profile context",
+                )
+            })?,
+        );
+    }
+    Ok(contexts)
 }
 
 impl UiBackend for AppRuntime {
     fn snapshot(&self) -> WidgetViewModel {
+        self.drain_profile_events();
         self.consume_update_open_request();
-        self.consume_login_refresh_request();
+        let settings = self.settings_snapshot();
         let snapshot = self.snapshot_inner();
-        let language = effective_language(self.settings.language);
+        let language = effective_language(settings.language);
         let now = SystemTime::now();
-        let status = if snapshot.is_fetching {
+        let selected = settings.usage_profiles.selected();
+        let runtime_login_required = self
+            .profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .login_required(selected);
+        let status = if runtime_login_required {
+            localized_text(LocalizationKey::UsageProfileLoginRequired, language).to_owned()
+        } else if snapshot.is_fetching {
             localized_text(LocalizationKey::Refreshing, language).to_owned()
         } else if let Some(error) = snapshot.last_error {
             error.user_message(language).to_owned()
@@ -218,12 +706,12 @@ impl UiBackend for AppRuntime {
             .usage
             .as_ref()
             .and_then(|usage| usage.primary.as_ref())
-            .map(|window| row_view(window, language, self.settings.show_remaining_percent));
+            .map(|window| row_view(window, language, settings.show_remaining_percent));
         let secondary = snapshot
             .usage
             .as_ref()
             .and_then(|usage| usage.secondary.as_ref())
-            .map(|window| row_view(window, language, self.settings.show_remaining_percent));
+            .map(|window| row_view(window, language, settings.show_remaining_percent));
         let weekly = secondary.as_ref().or(primary.as_ref());
         let reset_credits_text = snapshot
             .usage
@@ -233,19 +721,13 @@ impl UiBackend for AppRuntime {
             weekly,
             language,
             &status,
-            self.settings.show_remaining_percent,
+            settings.show_remaining_percent,
             reset_credits_text.as_deref(),
         );
-        let usage_profile_label = selected_usage_profile_label(&self.settings, language);
+        let usage_profile_label = selected_usage_profile_label(&settings, language);
         let taskbar_tooltip =
             profile_taskbar_tooltip(&usage_profile_label, &taskbar.tooltip, language);
-        let data_state = if snapshot.last_error.is_some() {
-            WidgetDataState::Error
-        } else if weekly.is_none() && snapshot.is_fetching {
-            WidgetDataState::Loading
-        } else {
-            WidgetDataState::Ready
-        };
+        let data_state = data_state_for_snapshot(&snapshot, runtime_login_required);
         WidgetViewModel {
             usage_profile_label,
             primary,
@@ -261,55 +743,72 @@ impl UiBackend for AppRuntime {
     }
 
     fn settings(&self) -> UiSettings {
+        self.drain_profile_events();
         self.consume_update_open_request();
-        self.consume_login_refresh_request();
+        let settings = self.settings_snapshot();
         ui_settings(
-            &self.settings,
+            &settings,
             self.startup_hidden,
             self.update_presentation.status(),
             self.login_required(),
+            self.profile_poller(),
+            &self.profile_state,
         )
     }
 
     fn dispatch(&mut self, action: UiAction) -> UiSettings {
+        self.drain_profile_events();
+        let mut save_preferences = true;
         match action {
             UiAction::Refresh => {
-                self.poller.refresh();
+                let _ = self.profile_poller().refresh_selected(PollTrigger::Manual);
             }
             UiAction::SetRefreshInterval(minutes) if matches!(minutes, 1 | 5 | 10 | 15 | 30) => {
-                if self.settings.refresh_interval_minutes != minutes {
-                    self.settings.refresh_interval_minutes = minutes;
-                    let _ = self.poller.set_refresh_interval(minutes);
+                if self.settings_snapshot().refresh_interval_minutes != minutes {
+                    self.with_settings_mut(|settings| {
+                        settings.refresh_interval_minutes = minutes;
+                    });
+                    let _ = self.profile_poller().set_refresh_interval(minutes);
                 }
             }
             UiAction::SetRefreshInterval(_) => {}
             UiAction::ToggleAutostart => {
-                let enabled = !self.settings.start_with_windows;
+                let enabled = !self.settings_snapshot().start_with_windows;
                 if std::env::current_exe()
                     .and_then(|path| set_autostart(&WindowsRegistry, enabled, &path))
                     .is_ok()
                 {
-                    self.settings.start_with_windows = enabled;
+                    self.with_settings_mut(|settings| settings.start_with_windows = enabled);
                 } else {
                     let _ = self
                         .logger
                         .record_safe(SafeDiagnostic::Settings { valid: false });
                 }
             }
-            UiAction::SetStartupView(view) => self.settings.startup_view = view,
+            UiAction::SetStartupView(view) => {
+                self.with_settings_mut(|settings| settings.startup_view = view)
+            }
             UiAction::RefreshWithAuth => {
-                self.poller.refresh_with_auth();
-            }
-            UiAction::Login => self.begin_chatgpt_login(),
-            UiAction::ToggleAutoAuthRefresh => {
-                self.settings.auto_auth_refresh = !self.settings.auto_auth_refresh;
                 let _ = self
-                    .poller
-                    .set_auto_auth_refresh(self.settings.auto_auth_refresh);
+                    .profile_poller()
+                    .refresh_selected(PollTrigger::ForcedAuth);
             }
-            UiAction::SetLanguage(language) => self.settings.language = language,
+            UiAction::Login => {
+                let selected = self.settings_snapshot().usage_profiles.selected();
+                self.submit_profile_request(|state| state.request_login(selected));
+                save_preferences = false;
+            }
+            UiAction::ToggleAutoAuthRefresh => {
+                let enabled = !self.settings_snapshot().auto_auth_refresh;
+                self.with_settings_mut(|settings| settings.auto_auth_refresh = enabled);
+                let _ = self.profile_poller().set_auto_auth_refresh(enabled);
+            }
+            UiAction::SetLanguage(language) => {
+                self.with_settings_mut(|settings| settings.language = language)
+            }
             UiAction::RunDiagnostics => {
-                let language = effective_language(self.settings.language);
+                self.record_profile_diagnostics();
+                let language = effective_language(self.settings_snapshot().language);
                 thread::spawn(move || {
                     if let Ok(summary) = run_safe_diagnostics(false) {
                         let (title, text) = summary.localized(language);
@@ -322,51 +821,74 @@ impl UiBackend for AppRuntime {
                 if self.startup_hidden {
                     self.startup_hidden = false;
                 } else {
-                    self.settings.widget_visible = !self.settings.widget_visible;
+                    self.with_settings_mut(|settings| {
+                        settings.widget_visible = !settings.widget_visible;
+                    });
                 }
             }
             UiAction::Exit => {}
             UiAction::ToggleShowRemaining => {
-                self.settings.show_remaining_percent = !self.settings.show_remaining_percent;
+                self.with_settings_mut(|settings| {
+                    settings.show_remaining_percent = !settings.show_remaining_percent;
+                });
             }
-            UiAction::SetTaskbarDisplayMode(mode) => self.settings.taskbar_display_mode = mode,
-            UiAction::SelectUsageProfile(_)
-            | UiAction::OpenAddUsageProfile
-            | UiAction::OpenManageUsageProfiles
-            | UiAction::AddUsageProfile(_)
-            | UiAction::RenameUsageProfile(_, _)
-            | UiAction::LoginUsageProfile(_)
-            | UiAction::LogoutUsageProfile(_)
-            | UiAction::DeleteUsageProfile(_) => {
-                // 프로필 런타임 연결은 후속 통합 단계에서 설정/폴링 워커를 통해 처리합니다.
-                return ui_settings(
-                    &self.settings,
-                    self.startup_hidden,
-                    self.update_presentation.status(),
-                    self.login_required(),
-                );
+            UiAction::SetTaskbarDisplayMode(mode) => {
+                self.with_settings_mut(|settings| settings.taskbar_display_mode = mode)
+            }
+            UiAction::SelectUsageProfile(id) => {
+                self.submit_profile_request(|state| state.request_select(id));
+                save_preferences = false;
+            }
+            UiAction::AddUsageProfile(label) => {
+                self.submit_profile_request(|state| state.request_add(label));
+                save_preferences = false;
+            }
+            UiAction::RenameUsageProfile(id, label) => {
+                self.submit_profile_request(|state| state.request_rename(id, label));
+                save_preferences = false;
+            }
+            UiAction::LoginUsageProfile(id) => {
+                self.submit_profile_request(|state| state.request_login(id));
+                save_preferences = false;
+            }
+            UiAction::LogoutUsageProfile(id) => {
+                self.submit_profile_request(|state| state.request_logout(id));
+                save_preferences = false;
+            }
+            UiAction::DeleteUsageProfile(id) => {
+                self.submit_profile_request(|state| state.request_delete(id));
+                save_preferences = false;
+            }
+            UiAction::OpenAddUsageProfile | UiAction::OpenManageUsageProfiles => {
+                save_preferences = false;
             }
         }
-        self.save_settings();
+        if save_preferences {
+            self.save_settings();
+        }
+        let settings = self.settings_snapshot();
         ui_settings(
-            &self.settings,
+            &settings,
             self.startup_hidden,
             self.update_presentation.status(),
             self.login_required(),
+            self.profile_poller(),
+            &self.profile_state,
         )
     }
 }
 
-fn start_poller(
-    settings: &Settings,
-    provider: Arc<AppServerUsageProvider>,
-) -> io::Result<PollingService> {
-    PollingService::start(
-        provider,
-        settings.refresh_interval_minutes,
-        settings.auto_auth_refresh,
-    )
-    .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
+fn data_state_for_snapshot(
+    snapshot: &PollSnapshot,
+    runtime_login_required: bool,
+) -> WidgetDataState {
+    if runtime_login_required || snapshot.last_error.is_some() {
+        WidgetDataState::Error
+    } else if snapshot.usage.is_none() {
+        WidgetDataState::Loading
+    } else {
+        WidgetDataState::Ready
+    }
 }
 
 fn ui_settings(
@@ -374,8 +896,13 @@ fn ui_settings(
     startup_hidden: bool,
     update_status: UpdatePresentationStatus,
     login_required: bool,
+    profile_poller: &ProfilePollingService,
+    profile_state: &std::sync::Mutex<ProfileRuntimeState>,
 ) -> UiSettings {
     let resolved_language = effective_language(settings.language);
+    let profile_state = profile_state
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     UiSettings {
         widget_visible: settings.widget_visible && !startup_hidden,
         refresh_interval_minutes: settings.refresh_interval_minutes,
@@ -389,38 +916,70 @@ fn ui_settings(
         update_status,
         show_remaining_percent: settings.show_remaining_percent,
         login_required,
-        usage_profiles: usage_profile_views(settings, resolved_language, login_required),
-        usage_profile_mutation_pending: false,
+        usage_profiles: usage_profile_views(
+            settings,
+            resolved_language,
+            profile_poller,
+            &profile_state,
+        ),
+        usage_profile_mutation_pending: profile_state.mutation_pending(),
     }
 }
 
 fn usage_profile_views(
     settings: &Settings,
     language: Language,
-    selected_login_required: bool,
+    profile_poller: &ProfilePollingService,
+    profile_state: &ProfileRuntimeState,
 ) -> Vec<UsageProfileView> {
     let selected = settings.usage_profiles.selected();
     let summary = |id| {
-        if id == selected {
-            localized_text(
-                if selected_login_required {
-                    LocalizationKey::UsageProfileLoginRequired
-                } else {
-                    LocalizationKey::UsageProfileDisplayed
-                },
-                language,
-            )
-            .to_string()
-        } else {
-            String::new()
+        let snapshot = profile_poller.snapshot(id);
+        let login_required = profile_state.login_required(id)
+            || snapshot.as_ref().is_some_and(|snapshot| {
+                matches!(
+                    snapshot.last_error,
+                    Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+                )
+            });
+        if login_required {
+            return localized_text(LocalizationKey::UsageProfileLoginRequired, language)
+                .to_string();
         }
+        if snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.is_fetching)
+        {
+            return localized_text(LocalizationKey::Refreshing, language).to_string();
+        }
+        if let Some(window) = snapshot.as_ref().and_then(|snapshot| {
+            snapshot
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.secondary.as_ref().or(usage.primary.as_ref()))
+        }) {
+            return format!(
+                "{}: {:.0}%",
+                localized_text(LocalizationKey::MenuShowRemaining, language),
+                (100.0 - window.used_percent).max(0.0)
+            );
+        }
+        localized_text(LocalizationKey::Unavailable, language).to_string()
     };
     let mut profiles = vec![UsageProfileView {
         id: UsageProfileId::System,
         label: localized_text(LocalizationKey::UsageProfileSystem, language).to_string(),
         summary: summary(UsageProfileId::System),
         selected: selected == UsageProfileId::System,
-        login_required: selected == UsageProfileId::System && selected_login_required,
+        login_required: profile_state.login_required(UsageProfileId::System)
+            || profile_poller
+                .snapshot(UsageProfileId::System)
+                .is_some_and(|snapshot| {
+                    matches!(
+                        snapshot.last_error,
+                        Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+                    )
+                }),
         managed: false,
     }];
     profiles.extend(settings.usage_profiles.managed().iter().map(|profile| {
@@ -430,7 +989,13 @@ fn usage_profile_views(
             label: profile.label().to_string(),
             summary: summary(id),
             selected: id == selected,
-            login_required: id == selected && selected_login_required,
+            login_required: profile_state.login_required(id)
+                || profile_poller.snapshot(id).is_some_and(|snapshot| {
+                    matches!(
+                        snapshot.last_error,
+                        Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
+                    )
+                }),
             managed: true,
         }
     }));
@@ -1223,6 +1788,20 @@ fn run_safe_diagnostics(write_console: bool) -> io::Result<DiagnosticSummary> {
         let _ = logger.record_safe(SafeDiagnostic::Rpc { code });
     }
 
+    let configured_profiles = diagnostic_configured_profiles(&store, settings_valid);
+    let (ok_profiles, login_required_profiles, request_failed_profiles) = match &rpc {
+        Ok(_) => (1, 0, 0),
+        Err(UsageError::NotLoggedIn | UsageError::AuthenticationExpired) => (0, 1, 0),
+        Err(_) => (0, 0, 1),
+    };
+    let _ = logger.record_safe(SafeDiagnostic::Profiles {
+        settings_valid,
+        configured: configured_profiles,
+        ok: ok_profiles,
+        login_required: login_required_profiles,
+        request_failed: request_failed_profiles,
+    });
+
     let cli_status = if cli_result.is_ok() {
         "ok"
     } else {
@@ -1271,11 +1850,30 @@ fn run_safe_diagnostics(write_console: bool) -> io::Result<DiagnosticSummary> {
         println!("app_server={app_server_status}");
         println!("login={login_status}");
         println!("response_format={response_format_status}");
+        println!("profiles_configured={configured_profiles}");
+        println!("profiles_ok={ok_profiles}");
+        println!("profiles_login_required={login_required_profiles}");
+        println!("profiles_request_failed={request_failed_profiles}");
         if let Err(error) = rpc {
             println!("usage_check={}", error.diagnostic_code());
         }
     }
     Ok(summary)
+}
+
+fn diagnostic_configured_profiles(store: &SettingsStore, settings_valid: bool) -> u8 {
+    if !settings_valid {
+        return 0;
+    }
+    match std::fs::read(store.path()) {
+        Ok(bytes) => serde_json::from_slice::<Settings>(&bytes)
+            .ok()
+            .map(|settings| settings.usage_profiles.managed().len() + 1)
+            .unwrap_or(1)
+            .min(8) as u8,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => 1,
+        Err(_) => 0,
+    }
 }
 
 fn auth_path() -> PathBuf {
@@ -1293,13 +1891,15 @@ fn safe_path_text(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        diagnostic_status, last_success_text, pass_fail, proxy_presence, row_view,
-        row_view_with_reset_time, status_with_update, taskbar_copy, taskbar_risk_text,
+        data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail, proxy_presence,
+        row_view, row_view_with_reset_time, status_with_update, taskbar_copy, taskbar_risk_text,
         DiagnosticSummary,
     };
+    use crate::windows::WidgetDataState;
     use crate::{
-        domain::ResetDateTime, windows::UsageRowView, Language, UpdatePresentationStatus,
-        UsageLevel, UsageWindow, WindowKind,
+        domain::ResetDateTime, windows::UsageRowView, Language, PollSnapshot, ProfileRuntimeState,
+        ProfileSettingsEvent, Settings, UpdatePresentationStatus, UsageLevel, UsageProfileId,
+        UsageProfileRoot, UsageWindow, WindowKind,
     };
 
     const ALL_LANGUAGES: [Language; 12] = [
@@ -1316,6 +1916,36 @@ mod tests {
         Language::Turkish,
         Language::Arabic,
     ];
+
+    #[test]
+    fn profile_success_event_preserves_newer_local_preferences() {
+        let mut state = ProfileRuntimeState::new(
+            Settings::default(),
+            UsageProfileRoot::new(std::path::PathBuf::from("runtime-preference-test")),
+        );
+        state.settings.show_remaining_percent = true;
+        let mut worker_settings = Settings::default();
+        let id = worker_settings.usage_profiles.add("Work").unwrap().id();
+
+        state.apply_settings_event(ProfileSettingsEvent::Added {
+            settings: worker_settings,
+            id,
+        });
+
+        assert!(state.settings.show_remaining_percent);
+        assert_eq!(
+            state.settings.usage_profiles.managed()[0].id(),
+            UsageProfileId::Managed(1)
+        );
+    }
+
+    #[test]
+    fn selected_profile_without_cached_usage_renders_loading() {
+        assert_eq!(
+            data_state_for_snapshot(&PollSnapshot::default(), false),
+            WidgetDataState::Loading
+        );
+    }
 
     #[test]
     fn update_status_is_appended_without_hiding_usage_error() {
