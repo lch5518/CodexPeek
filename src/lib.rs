@@ -27,7 +27,8 @@ pub use profile_poller::{ProfilePollEvent, ProfilePollingService};
 pub use profile_settings::{
     CorrelatedProfileSettingsEvent, NativeProfileFileSystem, ProfileFileSystem,
     ProfileSettingsEvent, ProfileSettingsMutation, ProfileSettingsOperation,
-    ProfileSettingsRequestId, ProfileSettingsService,
+    ProfileSettingsRequestId, ProfileSettingsService, ProfileSettingsStartup,
+    ProfileSettingsStartupReport,
 };
 pub use profiles::{
     normalize_profile_label, ManagedUsageProfile, ProfileExecutionContext, ProfileValidationError,

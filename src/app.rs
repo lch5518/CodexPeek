@@ -449,26 +449,41 @@ impl AppRuntime {
     fn new(store: SettingsStore, settings: Settings, startup_hidden: bool) -> io::Result<Self> {
         let usage_provider = Arc::new(AppServerUsageProvider::new());
         let root = UsageProfileRoot::new(store.root().to_path_buf());
-        let contexts = profile_execution_contexts(&settings, &root)?;
-        let profile_settings = ProfileSettingsService::start(
+        let (profile_settings, startup) = ProfileSettingsService::start_with_recovery(
             store,
             settings.clone(),
             NativeProfileFileSystem::default(),
         );
+        let (contexts, startup_report) = startup.into_parts();
+        let mut runtime_settings = settings;
+        if !contexts
+            .iter()
+            .any(|context| context.id() == runtime_settings.usage_profiles.selected())
+        {
+            let _ = runtime_settings
+                .usage_profiles
+                .select(UsageProfileId::System);
+        }
+        let profile_state = ProfileRuntimeState::new(runtime_settings, root);
+        let selected = profile_state.settings().usage_profiles.selected();
         let provider: Arc<dyn crate::codex::ProfileAccountProvider> = usage_provider;
         let profile_poller = ProfilePollingService::start(
             provider,
             contexts,
-            settings.usage_profiles.selected(),
-            settings.refresh_interval_minutes,
-            settings.auto_auth_refresh,
+            selected,
+            profile_state.settings().refresh_interval_minutes,
+            profile_state.settings().auto_auth_refresh,
         )
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+        let diagnostics = AsyncDiagnosticWriter::start(DiagnosticLogger::new(), 64);
+        if startup_report.recovery_failed || startup_report.validation_failed != 0 {
+            let _ = diagnostics.enqueue(SafeDiagnostic::Settings { valid: false });
+        }
         Ok(Self {
             profile_settings: Some(profile_settings),
             profile_poller: Some(profile_poller),
-            profile_state: std::sync::Mutex::new(ProfileRuntimeState::new(settings, root)),
-            diagnostics: Some(AsyncDiagnosticWriter::start(DiagnosticLogger::new(), 64)),
+            profile_state: std::sync::Mutex::new(profile_state),
+            diagnostics: Some(diagnostics),
             startup_hidden,
             update_presentation: UpdatePresentation::default(),
         })
@@ -748,25 +763,6 @@ impl AppRuntime {
             let _ = writer.stop();
         }
     }
-}
-
-fn profile_execution_contexts(
-    settings: &Settings,
-    root: &UsageProfileRoot,
-) -> io::Result<Vec<ProfileExecutionContext>> {
-    let mut contexts = Vec::with_capacity(settings.usage_profiles.managed().len() + 1);
-    contexts.push(ProfileExecutionContext::system());
-    for profile in settings.usage_profiles.managed() {
-        contexts.push(
-            ProfileExecutionContext::managed(root, profile.id()).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid managed profile context",
-                )
-            })?,
-        );
-    }
-    Ok(contexts)
 }
 
 impl UiBackend for AppRuntime {

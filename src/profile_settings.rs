@@ -67,6 +67,19 @@ pub trait ProfileFileSystem: Send + Sync {
         root: &UsageProfileRoot,
         catalog: &UsageProfileCatalog,
     ) -> io::Result<()>;
+
+    /// 관리 프로필의 실행 홈이 안전한 실제 디렉터리인지 검증합니다.
+    ///
+    /// 구현은 `root`와 `id`에서만 경로를 파생하고 reparse point를 포함한 경로 탈출을 거부해야
+    /// 합니다. 기본 구현은 기존 테스트·외부 backend 호환성을 위해 성공하며, 운영 backend는 실제
+    /// 파일 시스템 검증을 재정의합니다.
+    fn validate_managed_home(
+        &self,
+        _root: &UsageProfileRoot,
+        _id: UsageProfileId,
+    ) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// 운영 체제 파일 시스템에서 관리 프로필 트랜잭션을 수행하는 안전 구현입니다.
@@ -256,6 +269,14 @@ impl ProfileFileSystem for NativeProfileFileSystem {
             }
         }
         Ok(())
+    }
+
+    fn validate_managed_home(&self, root: &UsageProfileRoot, id: UsageProfileId) -> io::Result<()> {
+        let paths = ManagedPaths::derive(root, id)?;
+        reject_reparse_ancestors(&paths.home)?;
+        require_safe_directory(&paths.profiles)?;
+        require_safe_directory(&paths.profile)?;
+        require_safe_directory(&paths.home)
     }
 }
 
@@ -498,6 +519,65 @@ pub enum ProfileSettingsOperation {
     Cleanup,
     /// 시작 또는 add 재시도 전 orphan 정리입니다.
     AddCleanup,
+    /// 시작 시 관리 프로필 실행 경로 검증입니다.
+    StartupValidation,
+}
+
+/// 시작 복구와 관리 프로필 실행 경로 검증의 민감하지 않은 집계 결과입니다.
+///
+/// 개수에는 시스템 프로필을 포함하며 이름, 내부 식별자와 경로를 보관하지 않습니다. 복구 실패는
+/// 모든 관리 프로필을 보수적으로 차단하고, 검증 실패는 해당 관리 프로필만 차단합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileSettingsStartupReport {
+    /// 설정 catalog의 전체 프로필 수입니다.
+    pub configured: u8,
+    /// 시스템 프로필을 포함해 이번 실행에서 사용할 수 있는 프로필 수입니다.
+    pub launchable: u8,
+    /// tombstone 또는 미완료 add 복구가 실패했는지 나타냅니다.
+    pub recovery_failed: bool,
+    /// 안전 경로 검증에 실패한 관리 프로필 수입니다.
+    pub validation_failed: u8,
+}
+
+/// 설정 worker를 시작하기 전에 완료된 복구·검증 handshake 결과입니다.
+///
+/// 실행 컨텍스트는 복구가 끝난 뒤 안전 검증을 통과한 프로필에 대해서만 생성됩니다. 공개 디버그
+/// 출력은 집계 결과만 포함하며 관리 프로필 식별자나 경로를 노출하지 않습니다.
+pub struct ProfileSettingsStartup {
+    execution_contexts: Vec<crate::ProfileExecutionContext>,
+    report: ProfileSettingsStartupReport,
+}
+
+impl ProfileSettingsStartup {
+    /// 검증을 통과한 시스템·관리 프로필 실행 컨텍스트를 순서대로 반환합니다.
+    ///
+    /// 시스템 프로필은 항상 첫 항목이며 관리 컨텍스트는 설정 catalog 순서를 유지합니다.
+    pub fn execution_contexts(&self) -> &[crate::ProfileExecutionContext] {
+        &self.execution_contexts
+    }
+
+    /// 이름·식별자·경로가 없는 시작 복구 집계 결과를 반환합니다.
+    pub fn report(&self) -> ProfileSettingsStartupReport {
+        self.report
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        Vec<crate::ProfileExecutionContext>,
+        ProfileSettingsStartupReport,
+    ) {
+        (self.execution_contexts, self.report)
+    }
+}
+
+impl std::fmt::Debug for ProfileSettingsStartup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProfileSettingsStartup")
+            .field("report", &self.report)
+            .finish()
+    }
 }
 
 /// 기존 호출자가 소비하는 순서 보장 프로필 설정 작업의 완료 결과입니다.
@@ -663,27 +743,50 @@ pub struct ProfileSettingsService {
 }
 
 impl ProfileSettingsService {
-    /// 저장소의 현재 설정을 worker가 소유하도록 옮기고 비동기 서비스를 시작합니다.
+    /// 시작 복구와 경로 검증을 완료한 뒤 현재 설정을 worker가 소유하도록 옮깁니다.
     ///
-    /// `backend`의 시작 정리와 이후 파일 I/O는 worker에서 실행됩니다. 호출은 디스크 작업을
-    /// 기다리지 않으며, 결과는 `take_events` 또는 `wait_for_event`로 확인합니다.
+    /// 이 호환 진입점은 복구 결과를 버리지만 관리 프로필을 사용할 수 있는 상태가 결정될 때까지
+    /// 반환하지 않습니다. 이후 변경 I/O는 worker에서 실행되고 결과는 이벤트로 확인합니다.
     pub fn start(
         store: SettingsStore,
         settings: Settings,
         backend: impl ProfileFileSystem + 'static,
     ) -> Self {
+        Self::start_with_recovery(store, settings, backend).0
+    }
+
+    /// 시작 복구·검증을 동기적으로 완료하고 설정 worker와 실행 가능한 컨텍스트를 반환합니다.
+    ///
+    /// tombstone 복구와 미완료 add 정리가 관리 컨텍스트 생성보다 먼저 끝납니다. 복구 실패 시 모든
+    /// 관리 프로필을, 개별 경로 검증 실패 시 해당 프로필만 제외하며 시스템 프로필은 유지합니다.
+    /// 실패 상세는 경로·이름 없는 타입 지정 이벤트와 집계 보고서로만 노출됩니다.
+    pub fn start_with_recovery(
+        store: SettingsStore,
+        settings: Settings,
+        backend: impl ProfileFileSystem + 'static,
+    ) -> (Self, ProfileSettingsStartup) {
         let (command_sender, command_receiver) = mpsc::channel();
         let (event_sender, event_receiver) = mpsc::channel();
         let backend: Arc<dyn ProfileFileSystem> = Arc::new(backend);
+        let root = UsageProfileRoot::new(store.root().to_path_buf());
+        let startup = prepare_profile_startup(
+            &root,
+            &settings.usage_profiles,
+            backend.as_ref(),
+            &event_sender,
+        );
         let worker = thread::spawn(move || {
             profile_settings_loop(store, settings, backend, command_receiver, event_sender)
         });
-        Self {
-            commands: command_sender,
-            events: event_receiver,
-            worker: Some(worker),
-            next_request_id: AtomicU64::new(1),
-        }
+        (
+            Self {
+                commands: command_sender,
+                events: event_receiver,
+                worker: Some(worker),
+                next_request_id: AtomicU64::new(1),
+            },
+            startup,
+        )
     }
 
     /// 프로필 변경을 기다리지 않고 순서 보장 작업 큐에 추가합니다.
@@ -790,6 +893,73 @@ impl Drop for ProfileSettingsService {
     }
 }
 
+fn prepare_profile_startup(
+    root: &UsageProfileRoot,
+    catalog: &UsageProfileCatalog,
+    backend: &dyn ProfileFileSystem,
+    events: &mpsc::Sender<CorrelatedProfileSettingsEvent>,
+) -> ProfileSettingsStartup {
+    let mut recovery_failed = false;
+    if let Err(error) = backend.cleanup_staged(root, catalog) {
+        recovery_failed = true;
+        send_failed(
+            events,
+            None,
+            ProfileSettingsOperation::Cleanup,
+            "cleanup",
+            error.kind(),
+        );
+    }
+    if !recovery_failed {
+        if let Err(error) = backend.cleanup_orphaned_homes(root, catalog) {
+            recovery_failed = true;
+            send_failed(
+                events,
+                None,
+                ProfileSettingsOperation::AddCleanup,
+                "add_cleanup",
+                error.kind(),
+            );
+        }
+    }
+
+    let mut execution_contexts = vec![crate::ProfileExecutionContext::system()];
+    let mut validation_failed = 0_u8;
+    if !recovery_failed {
+        for profile in catalog.managed() {
+            let id = profile.id();
+            let context = backend.validate_managed_home(root, id).and_then(|()| {
+                crate::ProfileExecutionContext::managed(root, id).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid managed profile")
+                })
+            });
+            match context {
+                Ok(context) => execution_contexts.push(context),
+                Err(error) => {
+                    validation_failed = validation_failed.saturating_add(1);
+                    send_failed(
+                        events,
+                        None,
+                        ProfileSettingsOperation::StartupValidation,
+                        "startup_validation",
+                        error.kind(),
+                    );
+                }
+            }
+        }
+    }
+
+    ProfileSettingsStartup {
+        report: ProfileSettingsStartupReport {
+            configured: (catalog.managed().len() + 1).min(crate::MAX_USAGE_PROFILES) as u8,
+            launchable: execution_contexts.len().min(crate::MAX_USAGE_PROFILES) as u8,
+            recovery_failed,
+            validation_failed,
+        },
+        execution_contexts,
+    }
+}
+
 fn profile_settings_loop(
     store: SettingsStore,
     mut settings: Settings,
@@ -799,22 +969,6 @@ fn profile_settings_loop(
 ) -> io::Result<()> {
     let root = UsageProfileRoot::new(store.root().to_path_buf());
     let mut first_error: Option<io::ErrorKind> = None;
-    if let Err(error) = backend.cleanup_staged(&root, &settings.usage_profiles) {
-        let _ = events.send(CorrelatedProfileSettingsEvent::Failed {
-            request_id: None,
-            operation: ProfileSettingsOperation::Cleanup,
-            stage: "cleanup",
-            kind: error.kind(),
-        });
-    }
-    if let Err(error) = backend.cleanup_orphaned_homes(&root, &settings.usage_profiles) {
-        let _ = events.send(CorrelatedProfileSettingsEvent::Failed {
-            request_id: None,
-            operation: ProfileSettingsOperation::AddCleanup,
-            stage: "add_cleanup",
-            kind: error.kind(),
-        });
-    }
 
     while let Ok(command) = commands.recv() {
         match command {

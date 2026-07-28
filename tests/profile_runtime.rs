@@ -10,8 +10,8 @@ use codex_usage_monitor::{
     NativeProfileFileSystem, PollTrigger, ProfileFileSystem, ProfilePollEvent,
     ProfileRuntimeCommand, ProfileRuntimeState, ProfileSettingsEvent, ProfileSettingsMutation,
     ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService,
-    ProfileValidationError, Settings, SettingsStore, UsageError, UsageProfileCatalog,
-    UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
+    ProfileSettingsStartupReport, ProfileValidationError, Settings, SettingsStore, UsageError,
+    UsageProfileCatalog, UsageProfileId, UsageProfileRoot, MAX_USAGE_PROFILES,
 };
 
 #[derive(Clone)]
@@ -163,6 +163,97 @@ impl ProfileFileSystem for RollbackFailureProfileFileSystem {
         if state.orphaned {
             state.operations.push("cleanup_orphaned_home");
             state.orphaned = false;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+struct StartupRecordingFileSystem {
+    operations: Arc<Mutex<Vec<&'static str>>>,
+    validation_failure: Option<UsageProfileId>,
+    recovery_failure: bool,
+}
+
+impl StartupRecordingFileSystem {
+    fn failing_validation(id: UsageProfileId) -> Self {
+        Self {
+            validation_failure: Some(id),
+            ..Self::default()
+        }
+    }
+
+    fn failing_recovery() -> Self {
+        Self {
+            recovery_failure: true,
+            ..Self::default()
+        }
+    }
+
+    fn operations(&self) -> Vec<&'static str> {
+        self.operations.lock().unwrap().clone()
+    }
+}
+
+impl ProfileFileSystem for StartupRecordingFileSystem {
+    fn create_managed_home(&self, _root: &UsageProfileRoot, _id: UsageProfileId) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn remove_empty_home(&self, _root: &UsageProfileRoot, _id: UsageProfileId) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn stage_delete(&self, _root: &UsageProfileRoot, _id: UsageProfileId) -> io::Result<PathBuf> {
+        unreachable!()
+    }
+
+    fn restore_staged(&self, _staged: &Path, _destination: &Path) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn remove_staged(&self, _staged: &Path) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn cleanup_staged(
+        &self,
+        _root: &UsageProfileRoot,
+        _catalog: &UsageProfileCatalog,
+    ) -> io::Result<()> {
+        self.operations.lock().unwrap().push("recover_tombstones");
+        if self.recovery_failure {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "SENTINEL_PRIVATE_TOMBSTONE_PATH",
+            ));
+        }
+        Ok(())
+    }
+
+    fn cleanup_orphaned_homes(
+        &self,
+        _root: &UsageProfileRoot,
+        _catalog: &UsageProfileCatalog,
+    ) -> io::Result<()> {
+        self.operations.lock().unwrap().push("recover_orphans");
+        Ok(())
+    }
+
+    fn validate_managed_home(
+        &self,
+        _root: &UsageProfileRoot,
+        id: UsageProfileId,
+    ) -> io::Result<()> {
+        self.operations
+            .lock()
+            .unwrap()
+            .push("validate_managed_home");
+        if self.validation_failure == Some(id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SENTINEL_PRIVATE_REPARSE_PATH",
+            ));
         }
         Ok(())
     }
@@ -1180,14 +1271,162 @@ fn startup_restores_an_interrupted_delete_when_catalog_still_references_profile(
     assert!(!root.codex_home(id).unwrap().exists());
     assert!(staged.is_dir());
 
-    let restarted =
-        ProfileSettingsService::start(store, settings, NativeProfileFileSystem::default());
+    let (restarted, startup) = ProfileSettingsService::start_with_recovery(
+        store,
+        settings,
+        NativeProfileFileSystem::default(),
+    );
+    assert!(root.codex_home(id).unwrap().is_dir());
+    assert_eq!(
+        startup
+            .execution_contexts()
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>(),
+        [UsageProfileId::System, id]
+    );
     restarted.flush().unwrap();
     restarted.stop().unwrap();
 
     assert!(root.codex_home(id).unwrap().is_dir());
     assert!(!staged.exists());
     let _ = std::fs::remove_dir_all(root_path);
+}
+
+#[test]
+fn startup_recovery_and_validation_finish_before_contexts_are_returned() {
+    let root_path = test_root("startup-handshake-order");
+    let store = SettingsStore::for_root(&root_path);
+    let mut settings = Settings::default();
+    let blocked = settings.usage_profiles.add("Blocked").unwrap().id();
+    let available = settings.usage_profiles.add("Available").unwrap().id();
+    store.save(&settings).unwrap();
+    let backend = StartupRecordingFileSystem::failing_validation(blocked);
+
+    let (service, startup) =
+        ProfileSettingsService::start_with_recovery(store, settings, backend.clone());
+
+    assert_eq!(
+        backend.operations(),
+        [
+            "recover_tombstones",
+            "recover_orphans",
+            "validate_managed_home",
+            "validate_managed_home",
+        ]
+    );
+    assert_eq!(
+        startup
+            .execution_contexts()
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>(),
+        [UsageProfileId::System, available]
+    );
+    assert_eq!(
+        startup.report(),
+        ProfileSettingsStartupReport {
+            configured: 3,
+            launchable: 2,
+            recovery_failed: false,
+            validation_failed: 1,
+        }
+    );
+    let failure = service.wait_for_correlated_event().unwrap();
+    assert!(matches!(
+        failure,
+        RuntimeSettingsEvent::Failed {
+            request_id: None,
+            operation: ProfileSettingsOperation::StartupValidation,
+            kind: io::ErrorKind::InvalidInput,
+            ..
+        }
+    ));
+    let debug = format!("{failure:?}");
+    assert!(!debug.contains("SENTINEL_PRIVATE_REPARSE_PATH"));
+    service.stop().unwrap();
+    let _ = std::fs::remove_dir_all(root_path);
+}
+
+#[test]
+fn startup_recovery_failure_blocks_all_managed_contexts_with_safe_aggregate_status() {
+    let root_path = test_root("startup-recovery-failure");
+    let store = SettingsStore::for_root(&root_path);
+    let mut settings = Settings::default();
+    settings.usage_profiles.add("Work").unwrap();
+    settings.usage_profiles.add("Personal").unwrap();
+    store.save(&settings).unwrap();
+    let backend = StartupRecordingFileSystem::failing_recovery();
+
+    let (service, startup) =
+        ProfileSettingsService::start_with_recovery(store, settings, backend.clone());
+
+    assert_eq!(backend.operations(), ["recover_tombstones"]);
+    assert_eq!(
+        startup
+            .execution_contexts()
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>(),
+        [UsageProfileId::System]
+    );
+    assert_eq!(
+        startup.report(),
+        ProfileSettingsStartupReport {
+            configured: 3,
+            launchable: 1,
+            recovery_failed: true,
+            validation_failed: 0,
+        }
+    );
+    let failure = service.wait_for_correlated_event().unwrap();
+    assert!(matches!(
+        failure,
+        RuntimeSettingsEvent::Failed {
+            request_id: None,
+            operation: ProfileSettingsOperation::Cleanup,
+            kind: io::ErrorKind::PermissionDenied,
+            ..
+        }
+    ));
+    assert!(!format!("{failure:?}").contains("SENTINEL_PRIVATE_TOMBSTONE_PATH"));
+    service.stop().unwrap();
+    let _ = std::fs::remove_dir_all(root_path);
+}
+
+#[cfg(windows)]
+#[test]
+fn startup_reparse_validation_blocks_only_the_managed_context() {
+    let root_path = test_root("startup-reparse-validation");
+    let root = UsageProfileRoot::new(root_path.clone());
+    let store = SettingsStore::for_root(&root_path);
+    let mut settings = Settings::default();
+    let id = settings.usage_profiles.add("Work").unwrap().id();
+    store.save(&settings).unwrap();
+    let profile = root.codex_home(id).unwrap().parent().unwrap().to_path_buf();
+    let outside = test_root("startup-reparse-target");
+    std::fs::create_dir_all(outside.join("codex-home")).unwrap();
+    create_junction(&profile, &outside);
+
+    let (service, startup) = ProfileSettingsService::start_with_recovery(
+        store,
+        settings,
+        NativeProfileFileSystem::default(),
+    );
+
+    assert_eq!(
+        startup
+            .execution_contexts()
+            .iter()
+            .map(|context| context.id())
+            .collect::<Vec<_>>(),
+        [UsageProfileId::System]
+    );
+    assert_eq!(startup.report().validation_failed, 1);
+    service.stop().unwrap();
+    std::fs::remove_dir(&profile).unwrap();
+    let _ = std::fs::remove_dir_all(root_path);
+    let _ = std::fs::remove_dir_all(outside);
 }
 
 #[test]
