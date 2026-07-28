@@ -12,7 +12,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 1;
+use crate::profiles::UsageProfileCatalog;
+
+const SCHEMA_VERSION: u32 = 2;
 const MAX_LOGICAL_COORDINATE: i32 = 2_000_000;
 static FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
@@ -100,6 +102,50 @@ pub struct Settings {
     /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
     #[serde(default)]
     pub show_remaining_percent: bool,
+    /// 사용량을 조회할 프로필 목록과 현재 선택 상태입니다.
+    pub usage_profiles: UsageProfileCatalog,
+}
+
+#[derive(Deserialize)]
+struct SettingsEnvelope {
+    schema_version: u32,
+}
+
+#[derive(Deserialize)]
+struct LegacySettingsV1 {
+    schema_version: u32,
+    refresh_interval_minutes: u32,
+    widget_visible: bool,
+    taskbar_offset: i32,
+    #[serde(default)]
+    taskbar_display_mode: TaskbarDisplayMode,
+    start_with_windows: bool,
+    startup_view: StartupView,
+    auto_auth_refresh: bool,
+    #[serde(default = "default_language_preference")]
+    language: LanguagePreference,
+    last_update_check_unix: Option<u64>,
+    #[serde(default)]
+    show_remaining_percent: bool,
+}
+
+impl LegacySettingsV1 {
+    fn into_current(self) -> Option<Settings> {
+        (self.schema_version == 1).then_some(Settings {
+            schema_version: SCHEMA_VERSION,
+            refresh_interval_minutes: self.refresh_interval_minutes,
+            widget_visible: self.widget_visible,
+            taskbar_offset: self.taskbar_offset,
+            taskbar_display_mode: self.taskbar_display_mode,
+            start_with_windows: self.start_with_windows,
+            startup_view: self.startup_view,
+            auto_auth_refresh: self.auto_auth_refresh,
+            language: self.language,
+            last_update_check_unix: self.last_update_check_unix,
+            show_remaining_percent: self.show_remaining_percent,
+            usage_profiles: UsageProfileCatalog::default(),
+        })
+    }
 }
 
 const fn default_language_preference() -> LanguagePreference {
@@ -120,6 +166,7 @@ impl Default for Settings {
             language: default_language_preference(),
             last_update_check_unix: None,
             show_remaining_percent: false,
+            usage_profiles: UsageProfileCatalog::default(),
         }
     }
 }
@@ -130,6 +177,7 @@ impl Settings {
             || !matches!(self.refresh_interval_minutes, 1 | 5 | 10 | 15 | 30)
             || self.taskbar_offset < 0
             || self.taskbar_offset > MAX_LOGICAL_COORDINATE
+            || self.usage_profiles.validate().is_err()
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -167,6 +215,11 @@ impl SettingsStore {
         }
     }
 
+    /// 설정 파일과 관리 프로필 데이터를 보관하는 루트 경로를 반환합니다.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// 설정 파일의 전체 경로를 반환합니다.
     pub fn path(&self) -> PathBuf {
         self.root.join("settings.json")
@@ -183,8 +236,19 @@ impl SettingsStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
             Err(error) => return Err(error),
         };
-        Ok(serde_json::from_slice::<Settings>(&contents)
-            .is_ok_and(|settings| settings.validate().is_ok()))
+        let Ok(envelope) = serde_json::from_slice::<SettingsEnvelope>(&contents) else {
+            return Ok(false);
+        };
+        Ok(match envelope.schema_version {
+            SCHEMA_VERSION => serde_json::from_slice::<Settings>(&contents)
+                .is_ok_and(|settings| settings.validate().is_ok()),
+            1 => serde_json::from_slice::<LegacySettingsV1>(&contents).is_ok_and(|settings| {
+                settings
+                    .into_current()
+                    .is_some_and(|settings| settings.validate().is_ok())
+            }),
+            _ => false,
+        })
     }
 
     /// 설정을 읽고 손상되었으면 원본을 보관한 뒤 기본값을 반환합니다.
@@ -199,17 +263,49 @@ impl SettingsStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
             Err(error) => return Err(error),
         };
-        match serde_json::from_slice::<Settings>(&contents).and_then(|settings| {
-            settings
-                .validate()
-                .map(|()| settings)
-                .map_err(serde_json::Error::io)
-        }) {
-            Ok(settings) => Ok(settings),
+        let schema_version = match serde_json::from_slice::<SettingsEnvelope>(&contents) {
+            Ok(envelope) => envelope.schema_version,
+            Err(_) => {
+                self.back_up_corrupt(&path)?;
+                return Ok(Settings::default());
+            }
+        };
+        let loaded = (|| match schema_version {
+            SCHEMA_VERSION => serde_json::from_slice::<Settings>(&contents).and_then(|settings| {
+                settings
+                    .validate()
+                    .map(|()| settings)
+                    .map_err(serde_json::Error::io)
+            }),
+            1 => serde_json::from_slice::<LegacySettingsV1>(&contents).and_then(|legacy| {
+                let settings = legacy.into_current().ok_or_else(|| {
+                    serde_json::Error::io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid legacy settings schema",
+                    ))
+                })?;
+                settings
+                    .validate()
+                    .map(|()| settings)
+                    .map_err(serde_json::Error::io)
+            }),
+            _ => Err(serde_json::Error::io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported settings schema",
+            ))),
+        })();
+        match loaded {
+            Ok(settings) if settings.schema_version == SCHEMA_VERSION => {
+                if schema_version == 1 {
+                    self.save_locked(&settings)?;
+                }
+                Ok(settings)
+            }
             Err(_) => {
                 self.back_up_corrupt(&path)?;
                 Ok(Settings::default())
             }
+            Ok(_) => unreachable!("loaded settings always use the current schema"),
         }
     }
 
@@ -220,6 +316,10 @@ impl SettingsStore {
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
         let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         settings.validate()?;
+        self.save_locked(settings)
+    }
+
+    fn save_locked(&self, settings: &Settings) -> io::Result<()> {
         fs::create_dir_all(&self.root)?;
         let serialized = serde_json::to_vec_pretty(settings)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
