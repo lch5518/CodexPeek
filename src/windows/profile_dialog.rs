@@ -681,6 +681,14 @@ impl ProfileDialogController {
             .and_then(|index| self.profiles.get(index))
     }
 
+    /// 목록 인덱스에 해당하는 민감하지 않은 표시 프로필을 반환합니다.
+    ///
+    /// `index`가 범위를 벗어나면 `None`을 반환하며 선택 상태를 변경하거나 I/O를 수행하지
+    /// 않습니다. 반환 참조에는 `UsageProfileView`의 표시용 필드만 포함됩니다.
+    pub fn profile_at(&self, index: usize) -> Option<&UsageProfileView> {
+        self.profiles.get(index)
+    }
+
     /// 추가 입력을 검증해 타입 지정 작업으로 변환합니다.
     ///
     /// 최대 개수에 도달했거나 변경 중이면 `Ok(None)`을 반환합니다. 입력이 잘못되면 공용
@@ -783,6 +791,47 @@ pub fn profile_manager_row_label(profile: &UsageProfileView, language: Language)
         profile.label.clone()
     } else {
         format!("{} ({marker})", profile.label)
+    }
+}
+
+/// 프로필 관리자 owner-draw 행에 전달할 안전한 표시 문자열 모음입니다.
+///
+/// 이름과 기존 지역화 summary는 그대로 복사하며, 시스템 계정과 현재 표시 프로필의 역할은
+/// 별도 표식으로 반환합니다. 계정·인증·경로 정보에 접근하거나 입력을 변경하지 않습니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProfileManagerRowText {
+    /// 사용자가 지정했거나 지역화된 프로필 표시 이름입니다.
+    pub name: String,
+    /// 호출자가 이미 안전하게 구성한 사용량 또는 로그인 상태 요약입니다.
+    pub summary: String,
+    /// 시스템 계정과 현재 표시 프로필을 색상 외 텍스트로 구분하는 지역화 표식입니다.
+    pub markers: Vec<&'static str>,
+}
+
+/// 프로필 관리자 owner-draw 행의 이름, summary, 역할 표식을 만듭니다.
+///
+/// `profile`은 민감하지 않은 표시 모델이어야 합니다. 시스템 프로필의 이름이 이미 현재 언어의
+/// 시스템 이름과 같으면 중복 표식을 생략하고, 현재 표시 프로필에는 별도의 텍스트 표식을
+/// 추가합니다. 반환값은 소유 문자열과 정적 지역화 표식만 포함하며 I/O를 수행하지 않습니다.
+pub fn profile_manager_row_text(
+    profile: &UsageProfileView,
+    language: Language,
+) -> ProfileManagerRowText {
+    let system_marker = localized_text(LocalizationKey::UsageProfileSystem, language);
+    let mut markers = Vec::with_capacity(2);
+    if profile.id == UsageProfileId::System && profile.label != system_marker {
+        markers.push(system_marker);
+    }
+    if profile.selected {
+        markers.push(localized_text(
+            LocalizationKey::UsageProfileDisplayed,
+            language,
+        ));
+    }
+    ProfileManagerRowText {
+        name: profile.label.clone(),
+        summary: profile.summary.clone(),
+        markers,
     }
 }
 

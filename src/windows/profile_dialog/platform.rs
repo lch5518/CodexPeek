@@ -9,22 +9,26 @@ use windows::{
     core::{w, BOOL, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
-            GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
-            RECT, WPARAM,
+            GetLastError, COLORREF, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT,
+            POINT, RECT, WPARAM,
         },
         Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Graphics::Gdi::{
-            CreateFontW, CreateSolidBrush, DeleteObject, FillRect, GetMonitorInfoW, GetStockObject,
-            InvalidateRect, MonitorFromPoint, MonitorFromWindow, SetBkColor, SetTextColor,
-            CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, FF_SWISS,
-            FW_MEDIUM, FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO,
+            CreateFontW, CreateSolidBrush, DeleteObject, DrawFocusRect, DrawTextW, FillRect,
+            GetMonitorInfoW, GetStockObject, InvalidateRect, MonitorFromPoint, MonitorFromWindow,
+            SelectObject, SetBkColor, SetBkMode, SetDCBrushColor, SetTextColor, BACKGROUND_MODE,
+            CLIP_DEFAULT_PRECIS, CLR_INVALID, DC_BRUSH, DEFAULT_CHARSET, DEFAULT_GUI_FONT,
+            DEFAULT_PITCH, DT_END_ELLIPSIS, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE,
+            FF_SWISS, FW_MEDIUM, FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO,
             MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS, PROOF_QUALITY,
+            TRANSPARENT,
         },
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Controls::{
-                SetWindowTheme, EM_SETLIMITTEXT, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
-                TTM_ADDTOOLW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+                SetWindowTheme, DRAWITEMSTRUCT, EM_SETLIMITTEXT, ODS_FOCUS, ODS_SELECTED,
+                ODT_LISTBOX, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
+                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
             },
             HiDpi::GetDpiForWindow,
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
@@ -37,22 +41,23 @@ use windows::{
                 SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
                 BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
                 GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL, IDC_ARROW, IDOK, IDYES,
-                LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, MB_ICONERROR,
-                MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE,
-                MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WH_CBT, WINDOW_STYLE,
-                WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX,
-                WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_NCCREATE,
-                WM_NCDESTROY, WM_SETFONT, WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_BORDER,
-                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
-                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+                LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
+                LBS_OWNERDRAWFIXED, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, LB_SETITEMHEIGHT,
+                MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MESSAGEBOX_RESULT,
+                MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WH_CBT,
+                WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLOREDIT,
+                WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM,
+                WM_ERASEBKGND, WM_NCCREATE, WM_NCDESTROY, WM_SETFONT, WM_SETTINGCHANGE,
+                WM_THEMECHANGED, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME,
+                WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
 };
 
 use crate::windows::{
-    design::{scale_logical, DialogPalette, DialogTheme},
-    theme,
+    design::{scale_logical, DialogColor, DialogPalette, DialogTheme},
+    theme, ProfileUsageStatus,
 };
 use crate::{localized_text, Language, LocalizationKey, ProfileValidationError};
 
@@ -60,12 +65,13 @@ use super::{
     add_profile_dialog_monitor_anchor, add_profile_prompt_result, centered_dialog_origin,
     profile_delete_confirmation, profile_dialog_keyboard_result, profile_login_confirmation,
     profile_manager_control_enabled, profile_manager_control_spec,
-    profile_manager_dialog_monitor_anchor, profile_manager_row_label, show_profile_message,
-    AddProfilePromptCommand, AddProfilePromptState, CenteredMessageBoxRequest,
-    CenteredMessageBoxRequestState, DialogMonitorAnchor, DialogWindowSize, DialogWorkArea,
-    ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
-    ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
-    ProfileManagerControl, ProfileManagerDialogState, ProfileMessageRoute, UsageProfileView,
+    profile_manager_dialog_monitor_anchor, profile_manager_row_label, profile_manager_row_text,
+    show_profile_message, AddProfilePromptCommand, AddProfilePromptState,
+    CenteredMessageBoxRequest, CenteredMessageBoxRequestState, DialogMonitorAnchor,
+    DialogWindowSize, DialogWorkArea, ModalCleanupAction, ModalDialogLifecycle,
+    ProfileDialogAction, ProfileDialogCommand, ProfileDialogController,
+    ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult, ProfileManagerControl,
+    ProfileManagerDialogState, ProfileManagerRowText, ProfileMessageRoute, UsageProfileView,
     PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
 };
 
@@ -164,6 +170,13 @@ struct DialogVisualSnapshot {
     body_font: HFONT,
     heading_font: HFONT,
     dark: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ProfileRowPaintResources {
+    dpi: u32,
+    palette: DialogPalette,
+    body_font: HFONT,
 }
 
 struct StagedDialogVisualResources {
@@ -285,6 +298,15 @@ impl DialogVisualResources {
             body_font: self.body_font,
             heading_font: self.heading_font,
             dark: self.palette == DialogPalette::for_theme(DialogTheme::Dark),
+        }
+    }
+
+    /// owner-draw 행에 필요한 값만 복사해 자원 객체의 borrow와 GDI 호출을 분리합니다.
+    fn profile_row_snapshot(&self) -> ProfileRowPaintResources {
+        ProfileRowPaintResources {
+            dpi: self.dpi,
+            palette: self.palette,
+            body_font: self.body_font,
         }
     }
 
@@ -504,6 +526,15 @@ unsafe fn rebuild_dialog_visuals(dialog: HWND, resources: *mut DialogVisualResou
             unsafe { apply_dialog_visuals(dialog, visual) };
         });
     if outcome == DialogVisualUpdateOutcome::Applied {
+        if let Ok(list) = GetDlgItem(Some(dialog), PROFILE_LIST_ID) {
+            let row_height = scale_logical(crate::windows::design::ROW_HEIGHT, dpi).max(1);
+            let _ = SendMessageW(
+                list,
+                LB_SETITEMHEIGHT,
+                Some(WPARAM(0)),
+                Some(LPARAM(row_height as isize)),
+            );
+        }
         let _ = InvalidateRect(Some(dialog), None, true);
     }
 }
@@ -565,6 +596,276 @@ struct AddDialogState {
     result: Option<ProfileDialogAction>,
     interaction: AddProfilePromptState,
     resources: DialogVisualResources,
+}
+
+/// 프로필 행 배경에 적용할 디자인 팔레트 역할입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileRowSurfaceRole {
+    /// 선택되지 않은 목록 행의 기본 표면입니다.
+    Neutral,
+    /// 네이티브 목록 선택이 적용된 올라온 표면입니다.
+    Selected,
+}
+
+/// owner-draw 프로필 행에 전달할 순수 시각 상태입니다.
+///
+/// 색상 자체나 GDI 핸들을 보관하지 않으며, 네이티브 선택·포커스와 표시 모델의 typed usage 및
+/// 텍스트 표식 여부만 담습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProfileRowVisualState {
+    surface: ProfileRowSurfaceRole,
+    progress: Option<(u8, ProfileUsageStatus)>,
+    system_marker: bool,
+    current_marker: bool,
+    focused: bool,
+}
+
+/// 프로필 표시 모델과 네이티브 항목 상태를 owner-draw 결정으로 변환합니다.
+///
+/// 로그인 필요 상태 또는 percent/status 쌍이 불완전한 상태에는 진행 표시를 만들지 않습니다.
+/// 유효한 percent는 손상된 외부 입력에도 행 너비를 넘지 않도록 100으로 제한합니다. 함수는
+/// 문자열을 파싱하거나 전역 `UsageLevel` 정책을 변경하지 않습니다.
+fn profile_row_visual_state(
+    profile: &UsageProfileView,
+    selected: bool,
+    focused: bool,
+) -> ProfileRowVisualState {
+    let progress = if profile.login_required {
+        None
+    } else {
+        profile
+            .used_percent
+            .zip(profile.usage_status)
+            .map(|(percent, status)| (percent.min(100), status))
+    };
+    ProfileRowVisualState {
+        surface: if selected {
+            ProfileRowSurfaceRole::Selected
+        } else {
+            ProfileRowSurfaceRole::Neutral
+        },
+        progress,
+        system_marker: profile.id == crate::UsageProfileId::System,
+        current_marker: profile.selected,
+        focused,
+    }
+}
+
+/// 반투명 대화 상자 색상을 불투명 행 표면 위의 Win32 `COLORREF`로 합성합니다.
+///
+/// `foreground.opacity`를 각 BGR 채널에 동일하게 적용하며 반환값은 GDI solid brush에 바로
+/// 전달할 수 있는 불투명 색상입니다. 함수는 부동소수점이나 외부 상태를 사용하지 않습니다.
+fn composite_dialog_color(foreground: DialogColor, background: DialogColor) -> u32 {
+    let alpha = u32::from(foreground.opacity);
+    let inverse = u32::from(u8::MAX) - alpha;
+    let blend = |shift: u32| {
+        let foreground_channel = (foreground.colorref >> shift) & 0xff;
+        let background_channel = (background.colorref >> shift) & 0xff;
+        (foreground_channel * alpha + background_channel * inverse + 127) / 255
+    };
+    blend(0) | (blend(8) << 8) | (blend(16) << 16)
+}
+
+/// owner-draw 프로필 행을 현재 DPI와 팔레트에 맞춰 그립니다.
+///
+/// `item`은 현재 `WM_DRAWITEM` 메시지가 제공한 살아 있는 listbox 항목이어야 합니다.
+/// `profile`과 `copy`는 표시 전용 소유 복사본이며 `visuals`는 대화 상자 자원에서 미리 복사한
+/// 스냅샷입니다. 함수는 문자열을 파싱하지 않고 typed usage 쌍이 있을 때만 진행 표시를 그립니다.
+///
+/// # Safety
+///
+/// `item.hDC`와 `item.rcItem`은 Windows가 현재 그리기 콜백에 허용한 범위여야 합니다. 호출자는
+/// 동기 GDI 호출 전에 대화 상자 상태와 자원 객체의 모든 Rust borrow를 끝내야 합니다.
+unsafe fn draw_profile_row(
+    item: &DRAWITEMSTRUCT,
+    profile: &UsageProfileView,
+    copy: &ProfileManagerRowText,
+    visuals: ProfileRowPaintResources,
+    rtl: bool,
+) -> io::Result<()> {
+    if item.hDC.0.is_null()
+        || item.rcItem.right <= item.rcItem.left
+        || item.rcItem.bottom <= item.rcItem.top
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid profile row drawing target",
+        ));
+    }
+
+    let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
+    let focused = item.itemState.0 & ODS_FOCUS.0 != 0;
+    let visual = profile_row_visual_state(profile, selected, focused);
+    let surface = match visual.surface {
+        ProfileRowSurfaceRole::Neutral => visuals.palette.surface,
+        ProfileRowSurfaceRole::Selected => visuals.palette.elevated_surface,
+    };
+    fill_profile_row_rect(item.hDC, &item.rcItem, surface.colorref)?;
+
+    let edge_width = scale_logical(crate::windows::design::SELECTION_EDGE, visuals.dpi).max(1);
+    if selected {
+        let edge = if rtl {
+            RECT {
+                left: item.rcItem.right - edge_width,
+                right: item.rcItem.right,
+                ..item.rcItem
+            }
+        } else {
+            RECT {
+                left: item.rcItem.left,
+                right: item.rcItem.left + edge_width,
+                ..item.rcItem
+            }
+        };
+        fill_profile_row_rect(item.hDC, &edge, visuals.palette.focus.colorref)?;
+    }
+
+    let horizontal_padding = scale_logical(crate::windows::design::GAP_8, visuals.dpi);
+    let leading_inset = horizontal_padding + edge_width;
+    let content_left = item.rcItem.left
+        + if rtl {
+            horizontal_padding
+        } else {
+            leading_inset
+        };
+    let content_right = item.rcItem.right
+        - if rtl {
+            leading_inset
+        } else {
+            horizontal_padding
+        };
+    if content_right <= content_left {
+        return Ok(());
+    }
+
+    if let Some((percent, status)) = visual.progress {
+        let progress_height =
+            scale_logical(crate::windows::design::PROGRESS_HEIGHT, visuals.dpi).max(1);
+        let progress_bottom = item.rcItem.bottom - scale_logical(5, visuals.dpi);
+        let progress_track = RECT {
+            left: content_left,
+            top: progress_bottom - progress_height,
+            right: content_right,
+            bottom: progress_bottom,
+        };
+        let track_color = composite_dialog_color(visuals.palette.progress_track, surface);
+        fill_profile_row_rect(item.hDC, &progress_track, track_color)?;
+
+        let track_width = (content_right - content_left).max(0);
+        let fill_width = (i64::from(track_width) * i64::from(percent.min(100)) / 100) as i32;
+        if fill_width > 0 {
+            let progress_fill = if rtl {
+                RECT {
+                    left: content_right - fill_width,
+                    right: content_right,
+                    ..progress_track
+                }
+            } else {
+                RECT {
+                    left: content_left,
+                    right: content_left + fill_width,
+                    ..progress_track
+                }
+            };
+            fill_profile_row_rect(item.hDC, &progress_fill, visuals.palette.status(status))?;
+        }
+    }
+
+    let previous_font = SelectObject(item.hDC, HGDIOBJ(visuals.body_font.0));
+    if previous_font.0.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let previous_background_mode = SetBkMode(item.hDC, TRANSPARENT);
+    let previous_text_color = SetTextColor(item.hDC, COLORREF(visuals.palette.text.colorref));
+
+    let role_text = if (visual.system_marker || visual.current_marker) && !copy.markers.is_empty() {
+        format!("{}  ·  {}", copy.name, copy.markers.join("  ·  "))
+    } else {
+        copy.name.clone()
+    };
+    let mut text_format = DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
+    if rtl {
+        text_format = text_format | DT_RTLREADING | DT_RIGHT;
+    }
+    let mut name_rect = RECT {
+        left: content_left,
+        top: item.rcItem.top + scale_logical(5, visuals.dpi),
+        right: content_right,
+        bottom: item.rcItem.top + scale_logical(24, visuals.dpi),
+    };
+    draw_profile_row_text(item.hDC, &role_text, &mut name_rect, text_format);
+
+    let _ = SetTextColor(item.hDC, COLORREF(visuals.palette.secondary_text.colorref));
+    let mut summary_rect = RECT {
+        left: content_left,
+        top: item.rcItem.top + scale_logical(26, visuals.dpi),
+        right: content_right,
+        bottom: item.rcItem.top + scale_logical(45, visuals.dpi),
+    };
+    draw_profile_row_text(item.hDC, &copy.summary, &mut summary_rect, text_format);
+
+    if previous_text_color.0 != CLR_INVALID {
+        let _ = SetTextColor(item.hDC, previous_text_color);
+    }
+    if previous_background_mode != 0 {
+        let _ = SetBkMode(item.hDC, BACKGROUND_MODE(previous_background_mode as u32));
+    }
+    let _ = SelectObject(item.hDC, previous_font);
+
+    if visual.focused {
+        let focus = RECT {
+            left: item.rcItem.left + 1,
+            top: item.rcItem.top + 1,
+            right: item.rcItem.right - 1,
+            bottom: item.rcItem.bottom - 1,
+        };
+        let _ = DrawFocusRect(item.hDC, &focus);
+    }
+    Ok(())
+}
+
+/// stock DC brush로 사각형을 채우고 HDC의 이전 brush 색을 복원합니다.
+///
+/// # Safety
+///
+/// `hdc`와 `rect`는 현재 paint 콜백에서 유효해야 하며 stock brush는 삭제하지 않습니다.
+unsafe fn fill_profile_row_rect(hdc: HDC, rect: &RECT, color: u32) -> io::Result<()> {
+    if rect.right <= rect.left || rect.bottom <= rect.top {
+        return Ok(());
+    }
+    let brush = HBRUSH(GetStockObject(DC_BRUSH).0);
+    if brush.0.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let previous = SetDCBrushColor(hdc, COLORREF(color));
+    let filled = FillRect(hdc, rect, brush);
+    if previous.0 != CLR_INVALID {
+        let _ = SetDCBrushColor(hdc, previous);
+    }
+    if filled == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// 지정 사각형 안에 한 줄 owner-draw 텍스트를 그립니다.
+///
+/// # Safety
+///
+/// `hdc`와 `rect`는 현재 paint 콜백에서 유효해야 합니다. UTF-16 버퍼는 호출 동안 유지되며
+/// GDI가 반환된 뒤 즉시 폐기됩니다.
+unsafe fn draw_profile_row_text(
+    hdc: HDC,
+    text: &str,
+    rect: &mut RECT,
+    format: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let mut text = text.encode_utf16().collect::<Vec<_>>();
+    let _ = DrawTextW(hdc, &mut text, rect, format);
 }
 
 /// 프로필 흐름이 선택한 메시지 경로를 실제 표시 경계로 전달합니다.
@@ -1173,8 +1474,27 @@ unsafe fn setup_controls(
             | WS_BORDER
             | WS_VSCROLL
             | WS_TABSTOP
-            | WINDOW_STYLE(LBS_NOTIFY as u32),
+            | WINDOW_STYLE(
+                (LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32,
+            ),
     )?;
+    let row_height = scale_logical(
+        crate::windows::design::ROW_HEIGHT,
+        GetDpiForWindow(dialog).max(96),
+    )
+    .max(1);
+    if SendMessageW(
+        state.list,
+        LB_SETITEMHEIGHT,
+        Some(WPARAM(0)),
+        Some(LPARAM(row_height as isize)),
+    )
+    .0 < 0
+    {
+        return Err(io::Error::other(
+            "profile list row height could not be applied",
+        ));
+    }
 
     let name_label = localized_text(LocalizationKey::UsageProfileName, state.language);
     let _ = create_control(
@@ -1453,6 +1773,7 @@ unsafe extern "system" fn dialog_proc(
             LRESULT(0)
         }
         WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
+        WM_DRAWITEM => handle_profile_row_draw(state, lparam),
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
             dialog_control_color(&(*state).resources, message, wparam)
         }
@@ -1472,6 +1793,47 @@ unsafe extern "system" fn dialog_proc(
         WM_DESTROY => LRESULT(0),
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
     }
+}
+
+/// `WM_DRAWITEM`의 항목 identity를 표시 모델에 연결하고 owner-draw 행을 처리합니다.
+///
+/// # Safety
+///
+/// `state`는 현재 관리자 HWND의 살아 있는 `DialogState`를 가리켜야 하고 `lparam`은 Windows가
+/// 전달한 `DRAWITEMSTRUCT`여야 합니다. 프로필, 문자열, 팔레트·폰트·DPI를 모두 복사한 뒤 상태
+/// borrow를 끝내므로 이어지는 동기 GDI 호출과 재진입 가능한 대화 상자 상태가 겹치지 않습니다.
+unsafe fn handle_profile_row_draw(state: *mut DialogState, lparam: LPARAM) -> LRESULT {
+    if lparam.0 == 0 {
+        return LRESULT(0);
+    }
+    let item = *(lparam.0 as *const DRAWITEMSTRUCT);
+    if item.CtlType != ODT_LISTBOX
+        || item.CtlID != PROFILE_LIST_ID as u32
+        || item.itemID == u32::MAX
+    {
+        return LRESULT(0);
+    }
+
+    let Some((profile, copy, visuals, rtl, list)) = (|| {
+        let state = &*state;
+        let profile = state.controller.profile_at(item.itemID as usize)?.clone();
+        let copy = profile_manager_row_text(&profile, state.language);
+        Some((
+            profile,
+            copy,
+            state.resources.profile_row_snapshot(),
+            state.language == Language::Arabic,
+            state.list,
+        ))
+    })() else {
+        return LRESULT(0);
+    };
+    if item.hwndItem != list {
+        return LRESULT(0);
+    }
+
+    let _ = draw_profile_row(&item, &profile, &copy, visuals, rtl);
+    LRESULT(1)
 }
 
 /// 현재 관리자 HWND와 순수 중첩 상태가 사용자 명령을 모두 허용하는지 확인합니다.
@@ -2023,21 +2385,112 @@ mod tests {
     };
 
     use crate::{
-        windows::design::{DialogPalette, DialogTheme},
+        windows::{
+            design::{DialogColor, DialogPalette, DialogTheme},
+            ProfileUsageStatus,
+        },
         Language, LocalizationKey, UsageProfileId,
     };
 
     use super::{
-        add_profile_prompt_result, confirm_profile_delete_with_presenter,
+        add_profile_prompt_result, composite_dialog_color, confirm_profile_delete_with_presenter,
         confirm_profile_login_with_presenter, consume_centered_message_box_request,
         handle_add_profile_prompt_result_with_presenter,
-        handle_manager_rename_result_with_presenter, show_add_dialog_warning_with_presenter,
-        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
-        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
-        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
-        DialogWorkArea, ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
-        UsageProfileView,
+        handle_manager_rename_result_with_presenter, profile_row_visual_state,
+        show_add_dialog_warning_with_presenter, show_safe_error_with_presenter,
+        update_dialog_visual_resources, AddDialogState, AddProfilePromptCommand,
+        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
+        DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome, DialogWorkArea,
+        ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
+        ProfileRowSurfaceRole, UsageProfileView,
     };
+
+    #[test]
+    fn profile_row_visual_state_uses_native_selection_and_focus() {
+        let profile = UsageProfileView {
+            id: UsageProfileId::Managed(1),
+            label: "Work".to_string(),
+            summary: "Ready".to_string(),
+            selected: false,
+            login_required: false,
+            used_percent: Some(42),
+            usage_status: Some(ProfileUsageStatus::Healthy),
+            managed: true,
+        };
+
+        let neutral = profile_row_visual_state(&profile, false, false);
+        assert_eq!(neutral.surface, ProfileRowSurfaceRole::Neutral);
+        assert!(!neutral.focused);
+
+        let selected = profile_row_visual_state(&profile, true, true);
+        assert_eq!(selected.surface, ProfileRowSurfaceRole::Selected);
+        assert!(selected.focused);
+    }
+
+    #[test]
+    fn profile_row_visual_state_preserves_typed_status_and_clamps_percent() {
+        for (percent, status, expected_percent) in [
+            (24, ProfileUsageStatus::Healthy, 24),
+            (81, ProfileUsageStatus::Warning, 81),
+            (255, ProfileUsageStatus::Critical, 100),
+        ] {
+            let profile = UsageProfileView {
+                id: UsageProfileId::Managed(1),
+                label: "Work".to_string(),
+                summary: "Ready".to_string(),
+                selected: false,
+                login_required: false,
+                used_percent: Some(percent),
+                usage_status: Some(status),
+                managed: true,
+            };
+
+            assert_eq!(
+                profile_row_visual_state(&profile, false, false).progress,
+                Some((expected_percent, status))
+            );
+        }
+    }
+
+    #[test]
+    fn profile_row_visual_state_requires_complete_usage_and_exposes_text_marker_flags() {
+        let profile = UsageProfileView {
+            id: UsageProfileId::System,
+            label: "Main".to_string(),
+            summary: "Login required".to_string(),
+            selected: true,
+            login_required: true,
+            used_percent: None,
+            usage_status: None,
+            managed: false,
+        };
+
+        let visual = profile_row_visual_state(&profile, false, false);
+        assert_eq!(visual.progress, None);
+        assert!(visual.system_marker);
+        assert!(visual.current_marker);
+
+        let incomplete_usage = UsageProfileView {
+            login_required: false,
+            used_percent: Some(0),
+            ..profile
+        };
+        assert_eq!(
+            profile_row_visual_state(&incomplete_usage, false, false).progress,
+            None
+        );
+    }
+
+    #[test]
+    fn profile_row_translucent_track_composites_over_row_surface() {
+        assert_eq!(
+            composite_dialog_color(
+                DialogColor::translucent(0x0000_0000, 36),
+                DialogColor::opaque(0x00ff_ffff)
+            ),
+            0x00db_dbdb
+        );
+    }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum ResourceEvent {

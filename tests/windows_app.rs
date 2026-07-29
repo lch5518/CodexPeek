@@ -4,6 +4,7 @@ use std::{
 };
 
 use codex_usage_monitor::{
+    localized_text,
     windows::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
         initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
@@ -17,9 +18,9 @@ use codex_usage_monitor::{
             available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
             profile_login_confirmation, profile_manager_control_enabled,
             profile_manager_control_spec, profile_manager_dialog_monitor_anchor,
-            profile_manager_row_label, validated_label, AddProfilePromptCommand,
-            AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, ModalCleanupAction,
-            ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+            profile_manager_row_label, profile_manager_row_text, validated_label,
+            AddProfilePromptCommand, AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize,
+            ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
             ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
             ProfileManagerControl, ProfileManagerDialogState, PROFILE_LABEL_MAX_UTF16_UNITS,
             PROFILE_MANAGER_CONTROLS,
@@ -50,8 +51,8 @@ use codex_usage_monitor::{
         MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
         MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
-    Language, LanguagePreference, ProfileValidationError, StartupView, TaskbarDisplayMode,
-    UpdatePresentationStatus, UsageProfileId,
+    Language, LanguagePreference, LocalizationKey, ProfileValidationError, StartupView,
+    TaskbarDisplayMode, UpdatePresentationStatus, UsageProfileId,
 };
 use windows::Win32::Foundation::HWND;
 
@@ -927,6 +928,29 @@ fn manager_marks_only_the_custom_system_profile_as_default() {
     assert_eq!(
         profile_manager_row_label(&managed, Language::English),
         "Main"
+    );
+}
+
+#[test]
+fn profile_row_copy_marks_system_and_current_without_duplicate_default_text() {
+    let mut system = system_profile_view();
+    system.selected = true;
+    let copy = profile_manager_row_text(&system, Language::Korean);
+    assert_eq!(copy.name, system.label);
+    assert!(copy.markers.contains(&localized_text(
+        LocalizationKey::UsageProfileDisplayed,
+        Language::Korean
+    )));
+    assert!(!copy.markers.windows(2).any(|pair| pair[0] == pair[1]));
+}
+
+#[test]
+fn profile_row_copy_preserves_existing_safe_summary() {
+    let mut profile = system_profile_view();
+    profile.summary = "?⑥? ?ъ슜???쒖떆: 81%".into();
+    assert_eq!(
+        profile_manager_row_text(&profile, Language::Korean).summary,
+        profile.summary
     );
 }
 
