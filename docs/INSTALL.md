@@ -150,7 +150,7 @@ $file = "codex-peek-v<version>-windows-x86_64-portable.zip"
 Installer와 Portable은 다음 설정과 로그를 공유합니다.
 
 ```text
-설정: %APPDATA%\CodexUsageMonitor\settings.json
+설정: %APPDATA%\CodexPeek\settings.json
 로그: %TEMP%\codex-peek.log
 ```
 
@@ -175,7 +175,7 @@ CodexPeek 시작 시 상속한 `CODEX_HOME`을 사용하고, 환경 변수가 �
 사용합니다. 추가하는 관리 프로필은 각각 다음 위치 아래에 분리된 Codex 홈을 사용합니다.
 
 ```text
-%APPDATA%\CodexUsageMonitor\profiles\profile-<number>\codex-home
+%APPDATA%\CodexPeek\profiles\profile-<number>\codex-home
 ```
 
 시스템 프로필을 포함해 전체 8개까지 사용할 수 있습니다. 추가와 선택 방법은 다음과 같습니다.
@@ -206,6 +206,9 @@ CodexPeek은 시스템 또는 관리 프로필의 `auth.json`을 읽거나 파�
 않습니다. `--diagnose`와 진단 로그는 프로필별 이름·경로·계정 정보 대신 설정 및 결과 개수만
 집계합니다.
 
+파일별 저장 내용, 기존 경로 마이그레이션, 삭제 복구 순서와 파일 저장소의 보안 한계는
+[계정 및 인증 정보 저장 구조](ACCOUNT_STORAGE.md)를 참고하세요.
+
 ## 7. 업데이트
 
 앱은 새 릴리스 메타데이터를 확인하고 사용자가 선택한 경우 GitHub Release 페이지를
@@ -225,7 +228,9 @@ CodexPeek은 시스템 또는 관리 프로필의 `auth.json`을 읽거나 파�
 3. 새 폴더에 압축을 풀거나 기존 앱 파일을 새 파일로 교체합니다.
 4. `codex-peek.exe`를 다시 실행합니다.
 
-두 방식 모두 `%APPDATA%\CodexUsageMonitor`의 기존 설정을 계속 사용합니다.
+두 방식 모두 `%APPDATA%\CodexPeek`의 설정을 사용합니다. 이전 버전의
+`%APPDATA%\CodexUsageMonitor` 데이터는 새 경로가 아직 없을 때 시작 과정에서 디렉터리
+전체를 새 경로로 이동합니다.
 
 ## 8. 제거
 
@@ -241,7 +246,7 @@ Installer 버전은 Windows **설정 → 앱 → 설치된 앱**에서 **Codex U
 
 보존되는 항목:
 
-- `%APPDATA%\CodexUsageMonitor`의 사용자 설정
+- `%APPDATA%\CodexPeek`의 사용자 설정
 - `%TEMP%\codex-peek.log` 진단 로그
 
 Portable 버전은 앱을 종료한 뒤 압축을 푼 폴더를 삭제하면 됩니다. 사용자 설정과 로그까지

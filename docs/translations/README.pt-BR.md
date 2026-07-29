@@ -29,7 +29,7 @@ Ele não inicia uma tarefa do Codex nem chama `codex exec`.
 O perfil do sistema **Conta padrão do Codex**, que não pode ser excluído, usa o diretório inicial do
 Codex herdado ao iniciar o CodexPeek ou o padrão da CLI quando `CODEX_HOME` não está
 definido. Cada perfil gerenciado usa um diretório inicial do Codex separado em
-`%APPDATA%\CodexUsageMonitor\profiles`. São permitidos oito perfis no total, incluindo o
+`%APPDATA%\CodexPeek\profiles`. São permitidos oito perfis no total, incluindo o
 perfil do sistema.
 
 Os rótulos dos perfis são fornecidos por você. O CodexPeek não inspeciona e-mail nem ID
@@ -125,7 +125,7 @@ Instale o CodexPeek neste computador Windows x64 e conclua a verificação para 
    com segurança e explique o bloqueio exato sem expor informações sensíveis.
 ```
 
-As edições Instalador e Portable usam `%APPDATA%\CodexUsageMonitor\settings.json`, então
+As edições Instalador e Portable usam `%APPDATA%\CodexPeek\settings.json`, então
 as configurações são compartilhadas se você alternar entre elas. O instalador adiciona um
 atalho no menu Iniciar, mas não habilita a inicialização com o Windows por padrão.
 
@@ -157,7 +157,7 @@ Os diagnósticos verificam apenas se esse caminho existe.
 Respostas RPC brutas são processadas apenas pelo tempo necessário para extrair o tipo de login e os campos de limite de uso exibidos.
 Tokens, IDs de conta, endereços de e-mail, conteúdo de arquivos de autenticação e valores de proxy não são armazenados nem gravados em logs.
 
-As configurações são armazenadas em `%APPDATA%\CodexUsageMonitor\settings.json`.
+As configurações são armazenadas em `%APPDATA%\CodexPeek\settings.json`.
 Um log de diagnóstico limitado é armazenado em `%TEMP%\codex-peek.log`.
 
 Para a orientação completa sobre tratamento de dados e relato de vulnerabilidades, consulte [SECURITY.md](../../SECURITY.md).

@@ -29,7 +29,7 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
 - Diagnostics inspect only whether `%USERPROFILE%\.codex\auth.json` and proxy-related
   environment variables exist; their contents and values are not read into diagnostics.
 - The UI consumes only the login kind and the primary/secondary rate-limit window fields
-  needed for display. Settings are stored under `%APPDATA%\CodexUsageMonitor`; a bounded,
+  needed for display. Settings are stored under `%APPDATA%\CodexPeek`; a bounded,
   rotating diagnostic log is stored at `%TEMP%\codex-peek.log`.
 - The program launches `codex app-server --stdio` hidden and exchanges bounded JSONL
   messages over local pipes. The child is assigned to a Windows Job Object so the child
@@ -40,7 +40,7 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
 
 - The non-removable system profile preserves the Codex home inherited by CodexPeek at
   startup, or the Codex CLI default when `CODEX_HOME` is absent. Managed profiles use
-  application-owned Codex homes below `%APPDATA%\CodexUsageMonitor\profiles`; arbitrary
+  application-owned Codex homes below `%APPDATA%\CodexPeek\profiles`; arbitrary
   external paths are not accepted. At most eight profiles, including the system profile,
   are allowed.
 - Only the `codex app-server` child launched for a managed profile receives that profile's
@@ -66,9 +66,12 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
   login-required, and request-failed profiles. They do not record labels, internal IDs,
   managed paths, account details, authentication-file contents, or raw RPC payloads.
 
+The complete storage layout, migration policy, and at-rest limitations are documented in
+[Account and credential storage](docs/ACCOUNT_STORAGE.md).
+
 - 삭제할 수 없는 시스템 프로필은 CodexPeek 시작 시 상속한 Codex 홈을 유지하며,
   `CODEX_HOME`이 없으면 Codex CLI 기본값을 사용합니다. 관리 프로필은
-  `%APPDATA%\CodexUsageMonitor\profiles` 아래의 앱 전용 Codex 홈만 사용하고 임의의 외부 경로는
+  `%APPDATA%\CodexPeek\profiles` 아래의 앱 전용 Codex 홈만 사용하고 임의의 외부 경로는
   받지 않습니다. 시스템 프로필을 포함한 전체 한도는 8개입니다.
 - 관리 프로필의 자식 `codex app-server`에만 해당 `CODEX_HOME`과
   `cli_auth_credentials_store="file"` 설정 오버라이드를 적용합니다. 시스템 프로필에는 적용하지

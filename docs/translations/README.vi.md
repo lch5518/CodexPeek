@@ -29,7 +29,7 @@ Trình giám sát chỉ yêu cầu trạng thái đăng nhập và các cửa s�
 Hồ sơ hệ thống **Tài khoản Codex mặc định** không thể xóa dùng thư mục Codex được kế thừa khi
 CodexPeek khởi động, hoặc giá trị mặc định của CLI nếu chưa đặt `CODEX_HOME`. Mỗi hồ sơ
 được quản lý dùng một thư mục Codex riêng bên dưới
-`%APPDATA%\CodexUsageMonitor\profiles`. Tổng giới hạn là tám hồ sơ, bao gồm hồ sơ hệ thống.
+`%APPDATA%\CodexPeek\profiles`. Tổng giới hạn là tám hồ sơ, bao gồm hồ sơ hệ thống.
 
 Nhãn hồ sơ do bạn tự đặt. CodexPeek không kiểm tra email hoặc ID tài khoản, vì vậy hãy xác
 nhận tài khoản ChatGPT dự định dùng trong trình duyệt khi thêm hồ sơ hoặc đăng nhập lại.
@@ -123,7 +123,7 @@ Cài đặt CodexPeek trên máy tính Windows x64 này và hoàn tất phần x
    đúng điểm bị chặn mà không để lộ thông tin nhạy cảm.
 ```
 
-Các bản Installer và Portable dùng `%APPDATA%\CodexUsageMonitor\settings.json`, nên
+Các bản Installer và Portable dùng `%APPDATA%\CodexPeek\settings.json`, nên
 cài đặt sẽ được chia sẻ nếu bạn chuyển đổi giữa hai bản. Trình cài đặt thêm lối tắt Start Menu
 nhưng không bật khởi động cùng Windows theo mặc định.
 
@@ -155,7 +155,7 @@ Chẩn đoán chỉ kiểm tra xem đường dẫn đó có tồn tại hay khô
 Phản hồi RPC thô chỉ được xử lý đủ lâu để trích xuất loại đăng nhập và các trường giới hạn tốc độ được hiển thị.
 Token, ID tài khoản, địa chỉ email, nội dung tệp xác thực và giá trị proxy không được lưu trữ hoặc ghi vào log.
 
-Cài đặt được lưu trong `%APPDATA%\CodexUsageMonitor\settings.json`.
+Cài đặt được lưu trong `%APPDATA%\CodexPeek\settings.json`.
 Log chẩn đoán có giới hạn được lưu trong `%TEMP%\codex-peek.log`.
 
 Để xem hướng dẫn đầy đủ về xử lý dữ liệu và báo cáo lỗ hổng, hãy xem [SECURITY.md](../../SECURITY.md).

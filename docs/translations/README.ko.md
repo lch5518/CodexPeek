@@ -28,7 +28,7 @@ Codex 작업을 시작하거나 `codex exec`를 호출하지 않습니다.
 
 삭제할 수 없는 **기본 Codex 계정** 프로필은 CodexPeek 시작 시 상속한 Codex 홈을 사용하며,
 `CODEX_HOME`이 없으면 CLI 기본값을 사용합니다. 관리 프로필을 추가하면 각각
-`%APPDATA%\CodexUsageMonitor\profiles` 아래의 분리된 Codex 홈을 사용합니다. 시스템 프로필을
+`%APPDATA%\CodexPeek\profiles` 아래의 분리된 Codex 홈을 사용합니다. 시스템 프로필을
 포함해 전체 8개까지 만들 수 있습니다.
 
 프로필 표시명은 사용자가 직접 지정합니다. CodexPeek은 계정 이메일이나 ID를 확인하지 않으므로
@@ -121,7 +121,7 @@ Release 파일이 없을 때만 소스 빌드로 전환합니다.
    실패하면 민감 정보를 노출하지 말고 안전하게 중단한 뒤 정확한 원인을 설명해줘.
 ```
 
-Installer와 Portable은 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도
+Installer와 Portable은 `%APPDATA%\CodexPeek\settings.json`을 사용하므로 전환해도
 설정을 공유합니다. Installer는 시작 메뉴 바로 가기를 만들지만 Windows 자동 시작은
 기본으로 활성화하지 않습니다.
 
@@ -155,7 +155,7 @@ Explorer 재시작이나 작업 표시줄 배치 변경으로 위젯을 붙이�
 원시 RPC 응답은 로그인 유형과 화면에 표시할 사용량 필드를 추출하는 동안에만 처리합니다.
 토큰, 계정 ID, 이메일, 인증 파일 내용, 프록시 값은 저장하거나 로그에 기록하지 않습니다.
 
-설정은 `%APPDATA%\CodexUsageMonitor\settings.json`에 저장합니다.
+설정은 `%APPDATA%\CodexPeek\settings.json`에 저장합니다.
 크기가 제한된 진단 로그는 `%TEMP%\codex-peek.log`에 저장합니다.
 
 데이터 처리와 취약점 보고 안내는 [SECURITY.md](../../SECURITY.md)를 참고하세요.

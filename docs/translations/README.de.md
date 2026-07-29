@@ -29,7 +29,7 @@ Er startet keine Codex-Aufgabe und ruft `codex exec` nicht auf.
 Das nicht löschbare Systemprofil **Standard-Codex-Konto** verwendet das beim Start von
 CodexPeek geerbte Codex-Home oder den CLI-Standard, wenn `CODEX_HOME` nicht gesetzt ist.
 Jedes verwaltete Profil erhält ein separates Codex-Home unter
-`%APPDATA%\CodexUsageMonitor\profiles`. Insgesamt sind einschließlich des Systemprofils
+`%APPDATA%\CodexPeek\profiles`. Insgesamt sind einschließlich des Systemprofils
 höchstens acht Profile möglich.
 
 Profilnamen werden von dir vergeben. CodexPeek prüft weder E-Mail-Adresse noch Konto-ID;
@@ -128,7 +128,7 @@ Installiere CodexPeek auf diesem Windows x64-Computer und schließe die Verifika
    offenzulegen.
 ```
 
-Installer- und Portable-Editionen verwenden `%APPDATA%\CodexUsageMonitor\settings.json`, daher
+Installer- und Portable-Editionen verwenden `%APPDATA%\CodexPeek\settings.json`, daher
 werden Einstellungen geteilt, wenn du zwischen ihnen wechselst. Der Installer fügt eine Startmenü-Verknüpfung hinzu,
 aktiviert Windows-Autostart aber nicht standardmäßig.
 
@@ -159,7 +159,7 @@ Diagnosen prüfen nur, ob dieser Pfad existiert.
 Rohe RPC-Antworten werden nur so lange verarbeitet, wie es nötig ist, um den Login-Typ und die angezeigten Rate-Limit-Felder zu extrahieren.
 Tokens, Konto-IDs, E-Mail-Adressen, Inhalte von Authentifizierungsdateien und Proxy-Werte werden nicht gespeichert und nicht in Logs geschrieben.
 
-Einstellungen werden in `%APPDATA%\CodexUsageMonitor\settings.json` gespeichert.
+Einstellungen werden in `%APPDATA%\CodexPeek\settings.json` gespeichert.
 Ein begrenztes Diagnose-Log wird in `%TEMP%\codex-peek.log` gespeichert.
 
 Die vollständigen Hinweise zu Datenverarbeitung und Vulnerability Reporting findest du in [SECURITY.md](../../SECURITY.md).

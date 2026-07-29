@@ -28,7 +28,7 @@ Codex タスクを開始したり、`codex exec` を呼び出したりするこ�
 
 削除できないシステムプロファイル **デフォルトの Codex アカウント** は、CodexPeek の起動時に継承した Codex
 ホームを使用し、`CODEX_HOME` が未設定の場合は CLI の既定値を使用します。管理プロファイルは
-それぞれ `%APPDATA%\CodexUsageMonitor\profiles` 以下に分離された Codex ホームを持ちます。
+それぞれ `%APPDATA%\CodexPeek\profiles` 以下に分離された Codex ホームを持ちます。
 システムプロファイルを含め、合計 8 個まで登録できます。
 
 プロファイルのラベルはユーザーが指定します。CodexPeek はアカウントのメールアドレスや ID を
@@ -120,7 +120,7 @@ UI を開かずにビルドと Codex CLI 接続を確認するには、次を実
    機密情報を露出せずに正確な blocker を説明してください。
 ```
 
-Installer 版と Portable 版は `%APPDATA%\CodexUsageMonitor\settings.json` を使用するため、
+Installer 版と Portable 版は `%APPDATA%\CodexPeek\settings.json` を使用するため、
 切り替えて使う場合も設定は共有されます。インストーラーは Start Menu ショートカットを追加しますが、
 既定では Windows スタートアップを有効にしません。
 
@@ -151,7 +151,7 @@ Explorer の再起動やタスクバー配置の変更後にタスクバーウ�
 生の RPC レスポンスは、ログイン種別と表示するレート制限フィールドを抽出するために必要な間だけ処理されます。
 トークン、アカウント ID、メールアドレス、認証ファイルの内容、プロキシ値は保存されず、ログにも書き込まれません。
 
-設定は `%APPDATA%\CodexUsageMonitor\settings.json` に保存されます。
+設定は `%APPDATA%\CodexPeek\settings.json` に保存されます。
 サイズを制限した診断ログは `%TEMP%\codex-peek.log` に保存されます。
 
 データ取り扱いと脆弱性報告に関する完全なガイダンスは、[SECURITY.md](../../SECURITY.md) を参照してください。

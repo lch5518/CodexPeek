@@ -28,7 +28,7 @@ Bir Codex görevi başlatmaz veya `codex exec` çağırmaz.
 
 Silinemeyen sistem profili **Varsayılan Codex hesabı**, CodexPeek başlarken devralınan Codex ana
 dizinini veya `CODEX_HOME` ayarlı değilse CLI varsayılanını kullanır. Her yönetilen profil
-`%APPDATA%\CodexUsageMonitor\profiles` altında ayrı bir Codex ana dizini kullanır. Sistem
+`%APPDATA%\CodexPeek\profiles` altında ayrı bir Codex ana dizini kullanır. Sistem
 profili dahil toplam profil sınırı sekizdir.
 
 Profil etiketlerini siz belirlersiniz. CodexPeek hesap e-postasını veya kimliğini incelemez;
@@ -125,7 +125,7 @@ Bu Windows x64 bilgisayara CodexPeek'i kur ve doğrulamayı benim için tamamla.
    güvenli şekilde dur ve hassas bilgileri açığa çıkarmadan tam engeli açıkla.
 ```
 
-Kurulum ve Taşınabilir sürümler `%APPDATA%\CodexUsageMonitor\settings.json` dosyasını kullanır; bu nedenle
+Kurulum ve Taşınabilir sürümler `%APPDATA%\CodexPeek\settings.json` dosyasını kullanır; bu nedenle
 bu sürümler arasında geçiş yaparsanız ayarlar paylaşılır. Kurulum uygulaması Başlat Menüsü kısayolu ekler
 ancak Windows başlangıcını varsayılan olarak etkinleştirmez.
 
@@ -157,7 +157,7 @@ Tanılama yalnızca bu yolun var olup olmadığını kontrol eder.
 Ham RPC yanıtları yalnızca oturum açma türünü ve görüntülenen hız sınırı alanlarını çıkarmaya yetecek kadar işlenir.
 Token'lar, hesap ID'leri, e-posta adresleri, kimlik doğrulama dosyası içerikleri ve proxy değerleri saklanmaz veya günlüklere yazılmaz.
 
-Ayarlar `%APPDATA%\CodexUsageMonitor\settings.json` içinde saklanır.
+Ayarlar `%APPDATA%\CodexPeek\settings.json` içinde saklanır.
 Sınırlı tanılama günlüğü `%TEMP%\codex-peek.log` içinde saklanır.
 
 Eksiksiz veri işleme ve güvenlik açığı bildirme yönergeleri için [SECURITY.md](../../SECURITY.md) dosyasına bakın.

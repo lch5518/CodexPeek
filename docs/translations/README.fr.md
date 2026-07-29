@@ -29,7 +29,7 @@ Il ne démarre aucune tâche Codex et n'appelle pas `codex exec`.
 Le profil système **Compte Codex par défaut**, non supprimable, utilise le répertoire Codex hérité au
 démarrage de CodexPeek, ou la valeur CLI par défaut si `CODEX_HOME` n'est pas défini.
 Chaque profil géré possède un répertoire Codex distinct sous
-`%APPDATA%\CodexUsageMonitor\profiles`. Huit profils au total sont autorisés, profil
+`%APPDATA%\CodexPeek\profiles`. Huit profils au total sont autorisés, profil
 système compris.
 
 Vous fournissez vous-même les libellés. CodexPeek n'inspecte ni l'adresse e-mail ni l'ID
@@ -127,7 +127,7 @@ Installe CodexPeek sur cet ordinateur Windows x64 et termine la vérification po
    en toute sécurité et explique le blocage exact sans exposer d'information sensible.
 ```
 
-Les éditions Installer et Portable utilisent `%APPDATA%\CodexUsageMonitor\settings.json`, les
+Les éditions Installer et Portable utilisent `%APPDATA%\CodexPeek\settings.json`, les
 paramètres sont donc partagés si vous passez de l'une à l'autre. Le programme d'installation ajoute un raccourci au menu Démarrer
 mais n'active pas le démarrage avec Windows par défaut.
 
@@ -159,7 +159,7 @@ Les diagnostics vérifient uniquement si ce chemin existe.
 Les réponses RPC brutes sont traitées seulement le temps d'extraire le type de connexion et les champs de limite de débit affichés.
 Les jetons, identifiants de compte, adresses e-mail, contenus des fichiers d'authentification et valeurs de proxy ne sont ni stockés ni écrits dans les journaux.
 
-Les paramètres sont stockés dans `%APPDATA%\CodexUsageMonitor\settings.json`.
+Les paramètres sont stockés dans `%APPDATA%\CodexPeek\settings.json`.
 Un journal de diagnostic borné est stocké dans `%TEMP%\codex-peek.log`.
 
 Pour les consignes complètes sur le traitement des données et le signalement des vulnérabilités, consultez [SECURITY.md](../../SECURITY.md).

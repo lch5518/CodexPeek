@@ -29,7 +29,7 @@ It does not start a Codex task or call `codex exec`.
 The non-removable **Default Codex account** system profile uses the Codex home inherited when
 CodexPeek starts, or the CLI default when `CODEX_HOME` is not set. You can add managed
 profiles, each with a separate Codex home under
-`%APPDATA%\CodexUsageMonitor\profiles`. The limit is eight profiles in total, including
+`%APPDATA%\CodexPeek\profiles`. The limit is eight profiles in total, including
 the system profile.
 
 Profile labels are names you provide. CodexPeek does not inspect account email addresses
@@ -42,6 +42,9 @@ Selection is always manual. CodexPeek does not rotate profiles automatically, se
 from its remaining limit, or route Codex work through a profile. Deleting a managed
 profile permanently removes its local profile data, including the separate CLI
 credentials stored there; check the confirmation carefully.
+
+See [Account and credential storage](docs/ACCOUNT_STORAGE.md) for the exact on-disk layout,
+legacy-path migration rules, deletion behavior, and security limitations.
 
 ## Requirements
 
@@ -121,9 +124,14 @@ Install CodexPeek on this Windows x64 computer and complete the verification for
    the exact blocker without exposing sensitive information.
 ```
 
-The Installer and Portable editions use `%APPDATA%\CodexUsageMonitor\settings.json`, so
+The Installer and Portable editions use `%APPDATA%\CodexPeek\settings.json`, so
 settings are shared if you switch between them. The installer adds a Start Menu shortcut
 but does not enable Windows startup by default.
+
+If the new data root does not exist, CodexPeek moves an existing
+`%APPDATA%\CodexUsageMonitor` directory to `%APPDATA%\CodexPeek` without opening or copying
+the profile authentication files. If both roots already exist, the new root wins and no
+automatic merge is attempted.
 
 Initial releases are not code-signed and may trigger Microsoft Defender SmartScreen.
 Download only from the official release and verify the file against `SHA256SUMS.txt`.
@@ -160,7 +168,7 @@ system profile, CLI/IDE configuration, and default authentication files are not 
 Diagnostics report aggregate profile counts and result categories only; they do not
 include labels, internal profile IDs, paths, or account details.
 
-Settings are stored in `%APPDATA%\CodexUsageMonitor\settings.json`.
+Settings are stored in `%APPDATA%\CodexPeek\settings.json`.
 A bounded diagnostic log is stored in `%TEMP%\codex-peek.log`.
 
 For the full data-handling and vulnerability-reporting guidance, see [SECURITY.md](SECURITY.md).

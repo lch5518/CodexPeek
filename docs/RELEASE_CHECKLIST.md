@@ -85,13 +85,18 @@ Confirm all of the following on a clean current-user profile:
 - Apps & Features reports the expected version.
 - Uninstall removes the executable, Start Menu shortcut, uninstall entry, and
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CodexUsageMonitor`.
-- Uninstall preserves `%APPDATA%\CodexUsageMonitor` and the bounded diagnostic log.
+- Uninstall preserves `%APPDATA%\CodexPeek` and the bounded diagnostic log.
 
 ## Portable Verification
 
 - Extract the ZIP to a writable directory and start the executable without setup.
-- Confirm settings remain under `%APPDATA%\CodexUsageMonitor` rather than beside
+- Confirm settings remain under `%APPDATA%\CodexPeek` rather than beside
   the executable.
+- With only a populated `%APPDATA%\CodexUsageMonitor` legacy root present, start CodexPeek
+  and confirm the complete directory moves to `%APPDATA%\CodexPeek`, the old path is gone,
+  and existing managed profiles remain usable without another login.
+- With both legacy and new roots present, confirm CodexPeek uses the new root and leaves the
+  legacy root untouched instead of merging or deleting it.
 - Run `codex-peek.exe --diagnose`.
 - Compare both release files against `SHA256SUMS.txt`.
 - On an unsigned build, confirm the README SmartScreen warning matches the observed

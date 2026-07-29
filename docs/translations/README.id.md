@@ -29,7 +29,7 @@ Aplikasi ini tidak memulai tugas Codex atau memanggil `codex exec`.
 Profil sistem **Akun Codex default** yang tidak dapat dihapus memakai Codex home yang diwarisi
 saat CodexPeek dimulai, atau nilai bawaan CLI jika `CODEX_HOME` tidak ditetapkan. Setiap
 profil terkelola memakai Codex home terpisah di bawah
-`%APPDATA%\CodexUsageMonitor\profiles`. Batasnya delapan profil secara keseluruhan,
+`%APPDATA%\CodexPeek\profiles`. Batasnya delapan profil secara keseluruhan,
 termasuk profil sistem.
 
 Label profil Anda tentukan sendiri. CodexPeek tidak memeriksa email atau ID akun, jadi
@@ -125,7 +125,7 @@ Instal CodexPeek di komputer Windows x64 ini dan selesaikan verifikasinya untuk 
    jelaskan blocker tepatnya tanpa mengekspos informasi sensitif.
 ```
 
-Edisi Installer dan Portable menggunakan `%APPDATA%\CodexUsageMonitor\settings.json`, sehingga
+Edisi Installer dan Portable menggunakan `%APPDATA%\CodexPeek\settings.json`, sehingga
 pengaturan dibagikan jika Anda beralih di antara keduanya. Installer menambahkan shortcut Start Menu,
 tetapi tidak mengaktifkan startup Windows secara default.
 
@@ -157,7 +157,7 @@ Diagnostik hanya memeriksa apakah path tersebut ada.
 Respons RPC mentah diproses hanya cukup lama untuk mengekstrak jenis login dan kolom batas penggunaan yang ditampilkan.
 Token, ID akun, alamat email, isi file autentikasi, dan nilai proxy tidak disimpan atau ditulis ke log.
 
-Pengaturan disimpan di `%APPDATA%\CodexUsageMonitor\settings.json`.
+Pengaturan disimpan di `%APPDATA%\CodexPeek\settings.json`.
 Log diagnostik berbatas disimpan di `%TEMP%\codex-peek.log`.
 
 Untuk panduan lengkap tentang penanganan data dan pelaporan kerentanan, lihat [SECURITY.md](../../SECURITY.md).
