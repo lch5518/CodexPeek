@@ -122,6 +122,14 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 
 ### Usage-profile dialog and sign-in matrix
 
+- [ ] 사용량 프로필 관리/추가 창이 Windows 10/11 밝은·어두운 모드에서 같은 Native Refined 토큰을 사용한다.
+- [ ] 100/125/150/175/200% DPI에서 목록, 입력 필드, `+`, 작업 버튼이 겹치거나 잘리지 않는다.
+- [ ] 12개 지원 언어에서 모든 버튼 문구가 버튼 내부 한 줄로 표시된다.
+- [ ] 좁은 작업 영역에서 작업 버튼 전체가 두 행으로 이동하며 버튼 내부 문구는 줄바꿈되지 않는다.
+- [ ] 아랍어에서 목록 선택선, 텍스트, 진행률, 작업 버튼 정렬이 RTL로 반전된다.
+- [ ] 키보드 Tab/Shift+Tab, 방향키, Enter, Escape 및 포커스 표시가 네이티브 규칙대로 동작한다.
+- [ ] 정상/주의/위험/로딩/로그인 필요/오류 상태가 색상만 의존하지 않고 구분된다.
+- [ ] 다중 모니터, 작업표시줄 자동 숨김, Explorer 재시작 후에도 두 창이 올바른 화면 중앙에 열린다.
 - [ ] Verify the tray profile submenu contains profile selection and exactly one Manage command,
       with no add command
 - [ ] Verify `+` is below the manager list, is disabled at eight profiles and while a mutation is
