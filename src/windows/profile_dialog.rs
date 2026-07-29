@@ -12,6 +12,127 @@ use super::UsageProfileView;
 #[cfg(windows)]
 mod platform;
 
+/// 작업 표시줄을 제외한 모니터 작업 영역의 화면 좌표 범위입니다.
+///
+/// `right`와 `bottom`은 Win32 `RECT`와 같이 배타적 경계이며, 음수 좌표 모니터도 그대로
+/// 표현합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DialogWorkArea {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+impl DialogWorkArea {
+    /// Win32 작업 영역 사각형에서 대화상자 배치 계산용 값을 만듭니다.
+    pub const fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+}
+
+/// 창의 외곽 크기를 물리 픽셀 단위로 보관합니다.
+///
+/// 프레임과 캡션을 포함한 크기를 사용하므로 클라이언트 영역 크기로 대체하면 안 됩니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DialogWindowSize {
+    width: i32,
+    height: i32,
+}
+
+impl DialogWindowSize {
+    /// 대화상자 외곽의 너비와 높이로 크기 값을 만듭니다.
+    pub const fn new(width: i32, height: i32) -> Self {
+        Self { width, height }
+    }
+}
+
+/// 대화상자의 좌상단 화면 좌표입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DialogOrigin {
+    x: i32,
+    y: i32,
+}
+
+impl DialogOrigin {
+    /// 화면 좌표를 대화상자의 새 좌상단 위치로 만듭니다.
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+}
+
+/// 작업 영역 안에서 대화상자의 외곽을 축별로 가운데 배치합니다.
+///
+/// 계산은 `i64`로 수행해 다중 모니터의 음수 좌표에서도 오버플로를 피합니다. 창이 한 축에서
+/// 작업 영역보다 크면 크기를 바꾸지 않고 해당 축의 작업 영역 시작점에 고정합니다.
+pub fn centered_dialog_origin(
+    work_area: DialogWorkArea,
+    window_size: DialogWindowSize,
+) -> DialogOrigin {
+    DialogOrigin::new(
+        centered_dialog_axis(work_area.left, work_area.right, window_size.width),
+        centered_dialog_axis(work_area.top, work_area.bottom, window_size.height),
+    )
+}
+
+/// 한 축에서 대화상자 외곽의 시작 좌표를 계산합니다.
+///
+/// 역전되거나 비어 있는 작업 영역과 음수 창 크기는 시작점으로 안전하게 처리합니다.
+fn centered_dialog_axis(start: i32, end: i32, window_size: i32) -> i32 {
+    let start = i64::from(start);
+    let available = (i64::from(end) - start).max(0);
+    let window_size = i64::from(window_size).max(0);
+    if window_size >= available {
+        return start as i32;
+    }
+
+    (start + (available - window_size) / 2) as i32
+}
+
+/// 대화상자의 기준 모니터를 고르는 네이티브 배치 정책입니다.
+///
+/// 소유자 창이 사라졌거나 크기가 없으면 `Cursor`를 사용해 보이지 않는 창 위치를 피합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DialogMonitorAnchor {
+    /// 현재 커서가 있는 모니터의 작업 영역을 사용합니다.
+    Cursor,
+    /// 유효한 소유자 창이 있는 모니터의 작업 영역을 사용합니다.
+    Owner(windows::Win32::Foundation::HWND),
+}
+
+/// 프로필 관리자 창의 기준 모니터를 현재 커서로 선택합니다.
+///
+/// 이 선택은 Win32 조회나 창 이동을 수행하지 않으며, 실제 모니터 조회는 플랫폼 계층이 처리합니다.
+pub const fn profile_manager_dialog_monitor_anchor() -> DialogMonitorAnchor {
+    DialogMonitorAnchor::Cursor
+}
+
+/// 프로필 추가 창의 기준 모니터를 소유자 상태에 따라 선택합니다.
+///
+/// `owner_size`가 없거나 한 축이라도 0 이하이면 소유자가 더 이상 배치 기준으로 안전하지 않으므로
+/// 커서 모니터를 반환합니다. 호출자는 라이브 소유자의 외곽 크기만 전달해야 합니다.
+pub fn add_profile_dialog_monitor_anchor(
+    owner: windows::Win32::Foundation::HWND,
+    owner_size: Option<DialogWindowSize>,
+) -> DialogMonitorAnchor {
+    let Some(owner_size) = owner_size else {
+        return DialogMonitorAnchor::Cursor;
+    };
+    if owner == windows::Win32::Foundation::HWND::default()
+        || owner_size.width <= 0
+        || owner_size.height <= 0
+    {
+        DialogMonitorAnchor::Cursor
+    } else {
+        DialogMonitorAnchor::Owner(owner)
+    }
+}
+
 /// 40개 유니코드 스칼라 프로필 이름을 손실 없이 보관하는 최대 UTF-16 코드 단위 수입니다.
 ///
 /// 모든 스칼라가 보조 평면 문자여도 각각 서로게이트 쌍 두 단위를 사용하므로 80단위면 공용
@@ -718,5 +839,50 @@ pub fn confirm_profile_delete(label: &str, language: Language) -> io::Result<boo
             io::ErrorKind::Unsupported,
             "native Windows profile confirmation is unavailable",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn centered_dialog_centers_a_standard_manager_in_the_work_area() {
+        let origin = centered_dialog_origin(
+            DialogWorkArea::new(0, 0, 1920, 1040),
+            DialogWindowSize::new(650, 410),
+        );
+
+        assert_eq!(origin, DialogOrigin::new(635, 315));
+    }
+
+    #[test]
+    fn centered_dialog_preserves_negative_secondary_monitor_coordinates() {
+        let origin = centered_dialog_origin(
+            DialogWorkArea::new(-1920, -40, 0, 1000),
+            DialogWindowSize::new(513, 401),
+        );
+
+        assert_eq!(origin, DialogOrigin::new(-1217, 279));
+    }
+
+    #[test]
+    fn centered_dialog_rounds_odd_dimensions_down_from_the_work_area_start() {
+        let origin = centered_dialog_origin(
+            DialogWorkArea::new(10, 15, 1931, 1056),
+            DialogWindowSize::new(651, 411),
+        );
+
+        assert_eq!(origin, DialogOrigin::new(645, 330));
+    }
+
+    #[test]
+    fn centered_dialog_anchors_an_oversized_window_at_the_work_area_start() {
+        let origin = centered_dialog_origin(
+            DialogWorkArea::new(100, 50, 2020, 1090),
+            DialogWindowSize::new(2000, 1200),
+        );
+
+        assert_eq!(origin, DialogOrigin::new(100, 50));
     }
 }

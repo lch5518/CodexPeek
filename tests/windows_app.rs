@@ -13,14 +13,16 @@ use codex_usage_monitor::{
             profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch,
         },
         profile_dialog::{
-            add_profile_prompt_result, available_profile_actions, profile_delete_confirmation,
-            profile_dialog_keyboard_result, profile_login_confirmation,
-            profile_manager_control_enabled, profile_manager_control_spec,
+            add_profile_dialog_monitor_anchor, add_profile_prompt_result,
+            available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
+            profile_login_confirmation, profile_manager_control_enabled,
+            profile_manager_control_spec, profile_manager_dialog_monitor_anchor,
             profile_manager_row_label, validated_label, AddProfilePromptCommand,
-            AddProfilePromptState, ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction,
-            ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
-            ProfileDialogKeyboardResult, ProfileManagerControl, ProfileManagerDialogState,
-            PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
+            AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, ModalCleanupAction,
+            ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+            ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
+            ProfileManagerControl, ProfileManagerDialogState, PROFILE_LABEL_MAX_UTF16_UNITS,
+            PROFILE_MANAGER_CONTROLS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -51,6 +53,7 @@ use codex_usage_monitor::{
     Language, LanguagePreference, ProfileValidationError, StartupView, TaskbarDisplayMode,
     UpdatePresentationStatus, UsageProfileId,
 };
+use windows::Win32::Foundation::HWND;
 
 fn system_profile_view() -> UsageProfileView {
     UsageProfileView {
@@ -61,6 +64,32 @@ fn system_profile_view() -> UsageProfileView {
         login_required: false,
         managed: false,
     }
+}
+
+#[test]
+fn profile_dialog_centering_uses_the_cursor_or_a_live_owner_as_its_monitor_anchor() {
+    let owner = HWND(42_usize as _);
+
+    assert_eq!(
+        profile_manager_dialog_monitor_anchor(),
+        DialogMonitorAnchor::Cursor
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(owner, Some(DialogWindowSize::new(560, 180))),
+        DialogMonitorAnchor::Owner(owner)
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(owner, Some(DialogWindowSize::new(0, 180))),
+        DialogMonitorAnchor::Cursor
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(HWND::default(), Some(DialogWindowSize::new(560, 180))),
+        DialogMonitorAnchor::Cursor
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(owner, None),
+        DialogMonitorAnchor::Cursor
+    );
 }
 
 #[test]

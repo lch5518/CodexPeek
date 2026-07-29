@@ -4,7 +4,12 @@ use windows::{
     core::{w, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
-            GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
+            GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
+            RECT, WPARAM,
+        },
+        Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO,
+            MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
@@ -14,17 +19,18 @@ use windows::{
             },
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetDlgItem,
-                GetMessageW, GetWindowLongPtrW, GetWindowTextW, IsDialogMessageW, IsWindow,
-                LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW,
-                SetForegroundWindow, SetWindowLongPtrW, SetWindowTextW, ShowWindow,
-                TranslateMessage, BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
-                CW_USEDEFAULT, GWLP_USERDATA, HMENU, IDCANCEL, IDC_ARROW, IDOK, IDYES,
-                LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, MB_ICONERROR,
-                MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MSG, SW_SHOW, WINDOW_STYLE, WM_CLOSE,
-                WM_COMMAND, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER,
-                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
-                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
+                GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+                IsDialogMessageW, IsWindow, LoadCursorW, MessageBoxW, PostQuitMessage,
+                RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+                SetWindowTextW, ShowWindow, TranslateMessage, BS_DEFPUSHBUTTON, CREATESTRUCTW,
+                CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HMENU, IDCANCEL, IDC_ARROW,
+                IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL,
+                MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MSG, SWP_NOACTIVATE,
+                SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY,
+                WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
+                WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
+                WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
@@ -33,13 +39,15 @@ use windows::{
 use crate::{localized_text, Language, LocalizationKey};
 
 use super::{
-    add_profile_prompt_result, profile_delete_confirmation, profile_dialog_keyboard_result,
-    profile_login_confirmation, profile_manager_control_enabled, profile_manager_control_spec,
-    profile_manager_row_label, AddProfilePromptCommand, AddProfilePromptState, ModalCleanupAction,
-    ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand, ProfileDialogController,
-    ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult, ProfileManagerControl,
-    ProfileManagerDialogState, UsageProfileView, PROFILE_LABEL_MAX_UTF16_UNITS,
-    PROFILE_MANAGER_CONTROLS,
+    add_profile_dialog_monitor_anchor, add_profile_prompt_result, centered_dialog_origin,
+    profile_delete_confirmation, profile_dialog_keyboard_result, profile_login_confirmation,
+    profile_manager_control_enabled, profile_manager_control_spec,
+    profile_manager_dialog_monitor_anchor, profile_manager_row_label, AddProfilePromptCommand,
+    AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, DialogWorkArea,
+    ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+    ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
+    ProfileManagerControl, ProfileManagerDialogState, UsageProfileView,
+    PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
 };
 
 const DIALOG_CLASS: PCWSTR = w!("CodexUsageMonitor.ProfileDialog.v1");
@@ -121,6 +129,125 @@ impl Drop for ModalWindowGuard {
     }
 }
 
+/// 지정한 기준에 맞는 모니터 작업 영역의 가운데로 창을 이동합니다.
+///
+/// 배치에 필요한 Win32 조회나 이동이 실패하면 창의 기존 기본 위치를 유지합니다. 첫 이동 뒤 DPI
+/// 전환으로 외곽 크기가 달라진 경우에만 한 번 더 이동하며, 창 크기나 Z 순서는 바꾸지 않습니다.
+///
+/// # Safety
+///
+/// `dialog`는 호출 동안 유효한 최상위 창이어야 합니다. 이 함수는 창 핸들을 소유하지 않고 파괴하지
+/// 않으며, 실패를 호출자에게 전파하지 않습니다.
+unsafe fn center_window(dialog: HWND, anchor: DialogMonitorAnchor) {
+    let Some(work_area) = dialog_work_area(anchor) else {
+        return;
+    };
+    let Some(initial_size) = live_window_size(dialog) else {
+        return;
+    };
+
+    move_window_to_center(dialog, work_area, initial_size);
+
+    if let Some(current_size) = live_window_size(dialog) {
+        if current_size != initial_size {
+            move_window_to_center(dialog, work_area, current_size);
+        }
+    }
+}
+
+/// 기준 정책에서 실제 모니터의 작업 영역을 안전하게 읽습니다.
+///
+/// 소유자 기준이 더 이상 유효하지 않으면 커서 모니터를 사용하고, 모니터 정보를 읽지 못하면 `None`을
+/// 반환해 호출자가 기존 창 위치를 유지하게 합니다.
+unsafe fn dialog_work_area(anchor: DialogMonitorAnchor) -> Option<DialogWorkArea> {
+    let monitor = match anchor {
+        DialogMonitorAnchor::Cursor => cursor_monitor(),
+        DialogMonitorAnchor::Owner(owner) => {
+            if live_window_size(owner).is_some() {
+                let monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST);
+                if monitor != Default::default() {
+                    monitor
+                } else {
+                    cursor_monitor()
+                }
+            } else {
+                cursor_monitor()
+            }
+        }
+    };
+    if monitor == Default::default() {
+        return None;
+    }
+
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+        return None;
+    }
+    Some(DialogWorkArea::new(
+        info.rcWork.left,
+        info.rcWork.top,
+        info.rcWork.right,
+        info.rcWork.bottom,
+    ))
+}
+
+/// 현재 커서 위치의 가장 가까운 모니터를 찾고, 조회 실패 시 기본 모니터를 사용합니다.
+unsafe fn cursor_monitor() -> windows::Win32::Graphics::Gdi::HMONITOR {
+    let mut point = POINT::default();
+    if GetCursorPos(&mut point).is_ok() {
+        let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+        if monitor != Default::default() {
+            return monitor;
+        }
+    }
+    MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY)
+}
+
+/// 창의 현재 외곽 크기를 읽어 배치에 사용할 수 있는지 확인합니다.
+///
+/// 유효하지 않은 핸들, 조회 실패, 0 이하의 크기는 `None`으로 변환해 소유자 기준을 커서 기준으로
+/// 안전하게 되돌릴 수 있게 합니다.
+unsafe fn live_window_size(window: HWND) -> Option<DialogWindowSize> {
+    if window == HWND::default() || !IsWindow(Some(window)).as_bool() {
+        return None;
+    }
+
+    let mut rect = RECT::default();
+    GetWindowRect(window, &mut rect).ok()?;
+    let width = i64::from(rect.right) - i64::from(rect.left);
+    let height = i64::from(rect.bottom) - i64::from(rect.top);
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    Some(DialogWindowSize::new(
+        width.min(i64::from(i32::MAX)) as i32,
+        height.min(i64::from(i32::MAX)) as i32,
+    ))
+}
+
+/// 현재 외곽 크기를 보존한 채 창의 좌상단을 작업 영역 가운데로 옮깁니다.
+///
+/// `SetWindowPos` 실패는 무시해 창 생성이나 프로필 작업을 중단하지 않습니다.
+unsafe fn move_window_to_center(
+    dialog: HWND,
+    work_area: DialogWorkArea,
+    window_size: DialogWindowSize,
+) {
+    let origin = centered_dialog_origin(work_area, window_size);
+    let _ = SetWindowPos(
+        dialog,
+        None,
+        origin.x,
+        origin.y,
+        0,
+        0,
+        SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER,
+    );
+}
+
 pub(super) fn show_profile_manager(
     profiles: &[UsageProfileView],
     mutation_pending: bool,
@@ -172,6 +299,7 @@ pub(super) unsafe fn show_profile_manager_owned(
     let mut window_guard = ModalWindowGuard::new(dialog, owner);
 
     setup_controls(dialog, instance, profiles, &mut state)?;
+    center_window(dialog, profile_manager_dialog_monitor_anchor());
 
     window_guard.disable_owner();
     let _ = ShowWindow(dialog, SW_SHOW);
@@ -234,6 +362,10 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
     let mut window_guard = ModalWindowGuard::new(dialog, owner);
 
     setup_add_dialog_controls(dialog, instance, &mut state)?;
+    center_window(
+        dialog,
+        add_profile_dialog_monitor_anchor(owner, live_window_size(owner)),
+    );
 
     window_guard.disable_owner();
     let _ = ShowWindow(dialog, SW_SHOW);
