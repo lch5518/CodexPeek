@@ -472,17 +472,17 @@ where
     }
 
     loop {
-        let staged = (&mut *resources).rebuild_for_dpi(dpi, theme);
+        let staged = (*resources).rebuild_for_dpi(dpi, theme);
         let visual = staged
             .as_ref()
             .map(StagedDialogVisualResources::snapshot)
-            .unwrap_or_else(|| (&*resources).snapshot());
+            .unwrap_or_else(|| (*resources).snapshot());
 
         apply(visual);
 
         if let Some(staged) = staged {
-            let previous = (&mut *resources).commit_staged(staged);
-            (&mut *resources).release_set(previous);
+            let previous = (*resources).commit_staged(staged);
+            (*resources).release_set(previous);
         }
 
         let pending = {
@@ -585,7 +585,7 @@ unsafe fn rebuild_dialog_visuals_for_dpi(
     if outcome == DialogVisualUpdateOutcome::Applied {
         let row_height = {
             // SAFETY: 갱신 완료 뒤 committed DPI만 Copy하며 외부 호출 전에 자원 borrow를 끝냅니다.
-            (&*resources).profile_row_height()
+            (*resources).profile_row_height()
         };
         if let Ok(list) = GetDlgItem(Some(dialog), PROFILE_LIST_ID) {
             let _ = SendMessageW(
@@ -3256,7 +3256,7 @@ unsafe fn handle_profile_row_draw(state: *mut DialogState, lparam: LPARAM) -> LR
 /// 거부합니다. `state`는 `GWLP_USERDATA`에서 읽은 살아 있는 관리자 상태여야 합니다. 반환 전에
 /// 임시 공유 참조를 버리므로 이후 중첩 메시지 루프와 겹치지 않습니다.
 unsafe fn manager_accepts_commands(hwnd: HWND, state: *mut DialogState) -> bool {
-    IsWindowEnabled(hwnd).as_bool() && (&*state).interaction.accepts_manager_commands()
+    IsWindowEnabled(hwnd).as_bool() && (*state).interaction.accepts_manager_commands()
 }
 
 /// 현재 추가 입력창이 활성화되어 있고 중첩 처리 없이 새 명령을 받을 수 있는지 확인합니다.
@@ -3264,7 +3264,7 @@ unsafe fn manager_accepts_commands(hwnd: HWND, state: *mut DialogState) -> bool 
 /// `state`는 `GWLP_USERDATA`가 가리키는 살아 있는 모달 상태여야 합니다. 함수 안에서 만든 공유
 /// 참조는 즉시 버리므로 이후 경고 메시지 상자의 중첩 메시지 루프와 겹치지 않습니다.
 unsafe fn add_dialog_accepts_commands(hwnd: HWND, state: *mut AddDialogState) -> bool {
-    IsWindowEnabled(hwnd).as_bool() && (&*state).interaction.accepts_commands()
+    IsWindowEnabled(hwnd).as_bool() && (*state).interaction.accepts_commands()
 }
 
 unsafe extern "system" fn add_dialog_proc(
@@ -3387,7 +3387,7 @@ unsafe fn handle_command(hwnd: HWND, state: *mut DialogState, wparam: WPARAM) {
         return;
     }
     if control_id == PROFILE_LIST_ID && notification == LBN_SELCHANGE {
-        let list = (&*state).list;
+        let list = (*state).list;
         let selected = SendMessageW(list, LB_GETCURSEL, None, None).0;
         if selected >= 0 {
             let state = &mut *state;
@@ -3404,10 +3404,10 @@ unsafe fn handle_command(hwnd: HWND, state: *mut DialogState, wparam: WPARAM) {
             return;
         }
         RENAME_ID => submit_rename_label(hwnd, state),
-        LOGIN_ID => Ok((&*state)
+        LOGIN_ID => Ok((*state)
             .controller
             .confirmed_command(ProfileDialogCommand::Login, true)),
-        LOGOUT_ID => Ok((&*state)
+        LOGOUT_ID => Ok((*state)
             .controller
             .confirmed_command(ProfileDialogCommand::Logout, true)),
         DELETE_ID => submit_delete(hwnd, state),
@@ -3416,13 +3416,13 @@ unsafe fn handle_command(hwnd: HWND, state: *mut DialogState, wparam: WPARAM) {
 
     match action {
         Ok(Some(action)) => {
-            if (&mut *state).interaction.close_with_action(action) {
+            if (*state).interaction.close_with_action(action) {
                 let _ = DestroyWindow(hwnd);
             }
         }
         Ok(None) => {}
         Err(_) => {
-            let language = (&*state).language;
+            let language = (*state).language;
             show_safe_error(hwnd, language);
         }
     }
@@ -3458,7 +3458,7 @@ unsafe fn open_add_profile_prompt(hwnd: HWND, state: *mut DialogState) {
             }
         }
         Err(_) => {
-            let _ = (&mut *state).interaction.finish_add_prompt(None);
+            let _ = (*state).interaction.finish_add_prompt(None);
             show_safe_error(hwnd, language);
         }
     }
@@ -3477,7 +3477,7 @@ unsafe fn submit_rename_label(
         (state.edit, state.language)
     };
     let value = read_profile_label(edit)?;
-    let action = (&*state).controller.submit_rename(&value);
+    let action = (*state).controller.submit_rename(&value);
     let mut presenter = CenteredProfileMessagePresenter;
     handle_manager_rename_result_with_presenter(action, hwnd, language, &mut presenter)
 }
@@ -3522,7 +3522,7 @@ unsafe fn submit_delete(
         (profile.label.clone(), state.language)
     };
     let confirmed = confirm_profile_delete_owned(hwnd, &label, language)?;
-    Ok((&*state)
+    Ok((*state)
         .controller
         .confirmed_command(ProfileDialogCommand::Delete, confirmed))
 }
@@ -3687,7 +3687,7 @@ unsafe fn show_add_dialog_warning_with_presenter<P: ProfileMessagePresenter>(
         localized_text(LocalizationKey::WindowTitle, language),
         style,
     );
-    let _ = (&mut *state).interaction.finish_warning();
+    let _ = (*state).interaction.finish_warning();
 }
 
 /// 제한된 edit 컨트롤의 UTF-16 표시 이름을 한 번 읽어 Rust 문자열로 변환합니다.
