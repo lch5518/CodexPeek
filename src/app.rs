@@ -20,8 +20,8 @@ use crate::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, profile_taskbar_tooltip, resolve_windows_language, taskbar,
         time::local_reset_time,
-        LaunchMode, UiAction, UiBackend, UiSettings, UsageProfileView, UsageRowView,
-        WidgetDataState, WidgetViewModel,
+        LaunchMode, ProfileUsageStatus, UiAction, UiBackend, UiSettings, UsageProfileView,
+        UsageRowView, WidgetDataState, WidgetViewModel,
     },
     AsyncDiagnosticWriter, CorrelatedProfileSettingsEvent, DiagnosticCode, DiagnosticLogger,
     Language, LanguagePreference, LocalizationKey, NativeProfileFileSystem, PollSnapshot,
@@ -1128,6 +1128,78 @@ fn ui_settings(
     }
 }
 
+/// 프로필 행의 안전한 사용량 요약과 진행 표시 값을 함께 전달합니다.
+///
+/// 이 값은 폴링 스냅샷의 표시 가능한 필드만 보관하며 계정 식별자나 인증 정보는 포함하지 않습니다.
+struct ProfileUsagePresentation {
+    summary: String,
+    login_required: bool,
+    used_percent: Option<u8>,
+    usage_status: Option<ProfileUsageStatus>,
+}
+
+/// 사용량 창을 프로필 행의 타입 지정 진행 표시 값으로 변환합니다.
+///
+/// 창이 없으면 진행 값을 만들지 않으며, 유효한 창의 막대 비율은 반올림해 그리기 값으로 사용하고
+/// 원본 사용률은 상태 색상 분류에 사용합니다.
+fn profile_usage_presentation_for_window(window: Option<&UsageWindow>) -> ProfileUsagePresentation {
+    let Some(window) = window else {
+        return ProfileUsagePresentation {
+            summary: String::new(),
+            login_required: false,
+            used_percent: None,
+            usage_status: None,
+        };
+    };
+
+    ProfileUsagePresentation {
+        summary: String::new(),
+        login_required: false,
+        used_percent: Some(window.bar_percent().round() as u8),
+        usage_status: Some(ProfileUsageStatus::from_used_percent(window.used_percent)),
+    }
+}
+
+/// 한 프로필의 폴링 스냅샷을 안전한 요약과 타입 지정 진행 표시 값으로 변환합니다.
+///
+/// 로그인 필요 상태는 보존된 사용량이 있어도 진행 값을 숨깁니다. 일시 오류가 마지막 정상 사용량을
+/// 보존한 경우에는 기존 요약 규칙과 함께 그 진행 값을 그대로 반환합니다.
+fn profile_usage_presentation_for_snapshot(
+    snapshot: Option<&PollSnapshot>,
+    login_required: bool,
+    language: Language,
+) -> ProfileUsagePresentation {
+    if login_required {
+        return ProfileUsagePresentation {
+            summary: localized_text(LocalizationKey::UsageProfileLoginRequired, language)
+                .to_string(),
+            login_required: true,
+            used_percent: None,
+            usage_status: None,
+        };
+    }
+
+    let window = snapshot.and_then(|snapshot| {
+        snapshot
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.secondary.as_ref().or(usage.primary.as_ref()))
+    });
+    let mut presentation = profile_usage_presentation_for_window(window);
+    presentation.summary = if snapshot.is_some_and(|snapshot| snapshot.is_fetching) {
+        localized_text(LocalizationKey::Refreshing, language).to_string()
+    } else if let Some(window) = window {
+        format!(
+            "{}: {:.0}%",
+            localized_text(LocalizationKey::MenuShowRemaining, language),
+            (100.0 - window.used_percent).max(0.0)
+        )
+    } else {
+        localized_text(LocalizationKey::Unavailable, language).to_string()
+    };
+    presentation
+}
+
 fn usage_profile_views(
     settings: &Settings,
     language: Language,
@@ -1135,7 +1207,7 @@ fn usage_profile_views(
     profile_state: &ProfileRuntimeState,
 ) -> Vec<UsageProfileView> {
     let selected = settings.usage_profiles.selected();
-    let summary = |id| {
+    let presentation_for = |id| {
         let snapshot = profile_poller.snapshot(id);
         let login_required = profile_state.login_required(id)
             || snapshot.as_ref().is_some_and(|snapshot| {
@@ -1144,60 +1216,30 @@ fn usage_profile_views(
                     Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
                 )
             });
-        if login_required {
-            return localized_text(LocalizationKey::UsageProfileLoginRequired, language)
-                .to_string();
-        }
-        if snapshot
-            .as_ref()
-            .is_some_and(|snapshot| snapshot.is_fetching)
-        {
-            return localized_text(LocalizationKey::Refreshing, language).to_string();
-        }
-        if let Some(window) = snapshot.as_ref().and_then(|snapshot| {
-            snapshot
-                .usage
-                .as_ref()
-                .and_then(|usage| usage.secondary.as_ref().or(usage.primary.as_ref()))
-        }) {
-            return format!(
-                "{}: {:.0}%",
-                localized_text(LocalizationKey::MenuShowRemaining, language),
-                (100.0 - window.used_percent).max(0.0)
-            );
-        }
-        localized_text(LocalizationKey::Unavailable, language).to_string()
+        profile_usage_presentation_for_snapshot(snapshot.as_ref(), login_required, language)
     };
+    let system_presentation = presentation_for(UsageProfileId::System);
     let mut profiles = vec![UsageProfileView {
         id: UsageProfileId::System,
         label: system_profile_display_label(settings, language),
-        summary: summary(UsageProfileId::System),
+        summary: system_presentation.summary,
         selected: selected == UsageProfileId::System,
-        login_required: profile_state.login_required(UsageProfileId::System)
-            || profile_poller
-                .snapshot(UsageProfileId::System)
-                .is_some_and(|snapshot| {
-                    matches!(
-                        snapshot.last_error,
-                        Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
-                    )
-                }),
+        login_required: system_presentation.login_required,
+        used_percent: system_presentation.used_percent,
+        usage_status: system_presentation.usage_status,
         managed: false,
     }];
     profiles.extend(settings.usage_profiles.managed().iter().map(|profile| {
         let id = profile.id();
+        let presentation = presentation_for(id);
         UsageProfileView {
             id,
             label: profile.label().to_string(),
-            summary: summary(id),
+            summary: presentation.summary,
             selected: id == selected,
-            login_required: profile_state.login_required(id)
-                || profile_poller.snapshot(id).is_some_and(|snapshot| {
-                    matches!(
-                        snapshot.last_error,
-                        Some(UsageError::NotLoggedIn | UsageError::AuthenticationExpired)
-                    )
-                }),
+            login_required: presentation.login_required,
+            used_percent: presentation.used_percent,
+            usage_status: presentation.usage_status,
             managed: true,
         }
     }));
@@ -2144,12 +2186,14 @@ mod tests {
     use std::sync::Arc;
 
     use super::{
-        data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail, proxy_presence,
-        release_url_after_confirmation, row_view, row_view_with_reset_time, status_with_update,
-        taskbar_copy, taskbar_risk_text, update_notice_copy, AppRuntime, DiagnosticSummary,
+        data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail,
+        profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
+        proxy_presence, release_url_after_confirmation, row_view, row_view_with_reset_time,
+        status_with_update, taskbar_copy, taskbar_risk_text, update_notice_copy, AppRuntime,
+        DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
-    use crate::windows::{UiAction, UiBackend, WidgetDataState};
+    use crate::windows::{ProfileUsageStatus, UiAction, UiBackend, WidgetDataState};
     use crate::{
         domain::ResetDateTime, windows::UsageRowView, AsyncDiagnosticWriter, AvailableUpdate,
         CodexUsage, CorrelatedProfileSettingsEvent, DiagnosticLogger, Language, LanguagePreference,
@@ -2175,6 +2219,44 @@ mod tests {
         Language::Turkish,
         Language::Arabic,
     ];
+
+    fn usage_window(used_percent: f64) -> UsageWindow {
+        UsageWindow::new(WindowKind::Secondary, used_percent, None, None).unwrap()
+    }
+
+    #[test]
+    fn profile_usage_presentation_keeps_summary_and_typed_consumed_usage() {
+        let presentation = profile_usage_presentation_for_window(Some(&usage_window(81.4)));
+        assert_eq!(presentation.used_percent, Some(81));
+        assert_eq!(presentation.usage_status, Some(ProfileUsageStatus::Warning));
+    }
+
+    #[test]
+    fn profile_usage_presentation_omits_fake_progress_without_valid_usage() {
+        let presentation = profile_usage_presentation_for_window(None);
+        assert_eq!(presentation.used_percent, None);
+        assert_eq!(presentation.usage_status, None);
+    }
+
+    #[test]
+    fn profile_usage_presentation_keeps_retained_usage_after_a_transient_error() {
+        let snapshot = PollSnapshot {
+            usage: Some(CodexUsage {
+                primary: None,
+                secondary: Some(usage_window(81.4)),
+                reset_credits: None,
+                fetched_at: std::time::UNIX_EPOCH,
+            }),
+            last_error: Some(UsageError::RequestFailed),
+            ..PollSnapshot::default()
+        };
+
+        let presentation =
+            profile_usage_presentation_for_snapshot(Some(&snapshot), false, Language::English);
+
+        assert_eq!(presentation.used_percent, Some(81));
+        assert_eq!(presentation.usage_status, Some(ProfileUsageStatus::Warning));
+    }
 
     #[test]
     fn profile_success_event_preserves_newer_local_preferences() {

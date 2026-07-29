@@ -62,6 +62,8 @@ fn system_profile_view() -> UsageProfileView {
         summary: "Displayed".to_string(),
         selected: true,
         login_required: false,
+        used_percent: None,
+        usage_status: None,
         managed: false,
     }
 }
@@ -162,6 +164,8 @@ fn profile_manager_add_enablement_follows_can_add_exactly() {
             summary: String::new(),
             selected: false,
             login_required: true,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         });
     }
@@ -346,6 +350,8 @@ fn profile_dialog_enforces_the_eight_profile_limit() {
             summary: String::new(),
             selected: false,
             login_required: true,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         });
     }
@@ -365,6 +371,8 @@ fn profile_dialog_controls_follow_the_selected_profile_state() {
             summary: String::new(),
             selected: false,
             login_required: false,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         },
         UsageProfileView {
@@ -373,6 +381,8 @@ fn profile_dialog_controls_follow_the_selected_profile_state() {
             summary: String::new(),
             selected: false,
             login_required: true,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         },
     ];
@@ -407,6 +417,8 @@ fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
             summary: String::new(),
             selected: false,
             login_required: false,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         },
         UsageProfileView {
@@ -415,6 +427,8 @@ fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
             summary: String::new(),
             selected: false,
             login_required: true,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         },
     ];
@@ -449,6 +463,8 @@ fn dialog_controller_emits_only_confirmed_typed_profile_actions() {
         summary: "Displayed".to_string(),
         selected: true,
         login_required: false,
+        used_percent: None,
+        usage_status: None,
         managed: true,
     };
     let controller = ProfileDialogController::new(&[managed], false);
@@ -829,6 +845,8 @@ fn tray_settings(language: Language) -> UiSettings {
             },
             selected: true,
             login_required: false,
+            used_percent: None,
+            usage_status: None,
             managed: false,
         }],
         usage_profile_mutation_pending: false,
@@ -843,6 +861,8 @@ fn tray_settings_with_profiles() -> UiSettings {
         summary: "Weekly 72% remaining".to_string(),
         selected: false,
         login_required: false,
+        used_percent: None,
+        usage_status: None,
         managed: true,
     });
     settings
@@ -882,6 +902,8 @@ fn manager_marks_only_the_custom_system_profile_as_default() {
         summary: String::new(),
         selected: true,
         login_required: false,
+        used_percent: None,
+        usage_status: None,
         managed: false,
     };
     assert_eq!(

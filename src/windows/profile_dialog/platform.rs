@@ -1578,6 +1578,8 @@ mod tests {
             summary: "Ready".to_string(),
             selected: true,
             login_required: false,
+            used_percent: None,
+            usage_status: None,
             managed: true,
         };
         let controller = ProfileDialogController::new(&[profile], false);

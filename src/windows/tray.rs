@@ -616,6 +616,8 @@ mod tests {
                 .to_string(),
                 selected: true,
                 login_required: false,
+                used_percent: None,
+                usage_status: None,
                 managed: false,
             }],
             usage_profile_mutation_pending: false,

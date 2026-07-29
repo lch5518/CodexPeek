@@ -365,6 +365,69 @@ pub struct UsageRowView {
     pub level: crate::UsageLevel,
 }
 
+/// 프로필 목록에서 사용량 진행 상태의 표시 색상을 선택하는 기준입니다.
+///
+/// 입력 사용률은 원본 사용량 창의 값이며, 70%와 90% 경계에서 각각 경고와 위험 상태로
+/// 전환됩니다. 이 기준은 전역 `UsageLevel`의 임계값을 변경하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileUsageStatus {
+    /// 사용률이 70% 미만인 정상 상태입니다.
+    Healthy,
+    /// 사용률이 70% 이상 90% 미만인 주의 상태입니다.
+    Warning,
+    /// 사용률이 90% 이상인 위험 상태입니다.
+    Critical,
+}
+
+impl ProfileUsageStatus {
+    /// 원본 사용률을 프로필 행의 표시 상태로 변환합니다.
+    ///
+    /// `used_percent`는 유효성이 검증된 사용량 창에서 받은 값이어야 하며, 반환값은 프로필
+    /// 관리자 진행 표시의 색상 선택에만 사용합니다.
+    pub fn from_used_percent(used_percent: f64) -> Self {
+        if used_percent >= 90.0 {
+            Self::Critical
+        } else if used_percent >= 70.0 {
+            Self::Warning
+        } else {
+            Self::Healthy
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProfileUsageStatus;
+
+    #[test]
+    fn profile_usage_status_uses_the_design_system_thresholds() {
+        assert_eq!(
+            ProfileUsageStatus::from_used_percent(0.0),
+            ProfileUsageStatus::Healthy
+        );
+        assert_eq!(
+            ProfileUsageStatus::from_used_percent(69.99),
+            ProfileUsageStatus::Healthy
+        );
+        assert_eq!(
+            ProfileUsageStatus::from_used_percent(70.0),
+            ProfileUsageStatus::Warning
+        );
+        assert_eq!(
+            ProfileUsageStatus::from_used_percent(89.99),
+            ProfileUsageStatus::Warning
+        );
+        assert_eq!(
+            ProfileUsageStatus::from_used_percent(90.0),
+            ProfileUsageStatus::Critical
+        );
+        assert_eq!(
+            ProfileUsageStatus::from_used_percent(125.0),
+            ProfileUsageStatus::Critical
+        );
+    }
+}
+
 /// UI에 노출할 수 있는 비민감 사용량 프로필 표시 정보입니다.
 ///
 /// 내부 경로와 계정 식별 정보는 포함하지 않으며, `label`과 `summary`만 사용자 화면에
@@ -381,6 +444,14 @@ pub struct UsageProfileView {
     pub selected: bool,
     /// 이 프로필에 Codex 로그인이 필요한지 나타냅니다.
     pub login_required: bool,
+    /// 프로필 행의 진행 표시를 위한 반올림된 사용률입니다.
+    ///
+    /// 로그인 필요, 초기 로딩 또는 사용량 부재 상태에서는 가짜 진행 표시를 막기 위해 `None`입니다.
+    pub used_percent: Option<u8>,
+    /// 프로필 행의 진행 표시 색상에 사용하는 사용률 상태입니다.
+    ///
+    /// `used_percent`와 함께 제공되며, 진행 표시가 없을 때는 `None`입니다.
+    pub usage_status: Option<ProfileUsageStatus>,
     /// 앱이 격리 저장소를 관리하는 프로필인지 나타냅니다.
     pub managed: bool,
 }
