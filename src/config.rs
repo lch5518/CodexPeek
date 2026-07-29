@@ -14,8 +14,37 @@ use crate::profiles::UsageProfileCatalog;
 
 const SCHEMA_VERSION: u32 = 2;
 const MAX_LOGICAL_COORDINATE: i32 = 2_000_000;
+const SETTINGS_DIRECTORY: &str = "CodexPeek";
+const LEGACY_SETTINGS_DIRECTORY: &str = "CodexUsageMonitor";
 static FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+/// 운영체제 설정 디렉터리 아래에서 CodexPeek 데이터 루트를 결정하고 레거시 루트를 이전합니다.
+///
+/// `config_dir`은 운영체제가 제공한 사용자별 설정 디렉터리입니다. 새 루트가 없고 레거시
+/// `CodexUsageMonitor` 디렉터리만 있으면 디렉터리 자체를 같은 부모 안에서 원자적으로 이동합니다.
+/// 새 루트가 이미 있으면 덮어쓰거나 병합하지 않으며, 이동 실패 시 기존 데이터 보존을 위해 레거시
+/// 루트를 반환합니다. 인증 파일의 내용은 열거나 복사하지 않습니다.
+fn resolve_settings_root(config_dir: &Path) -> PathBuf {
+    let current = config_dir.join(SETTINGS_DIRECTORY);
+    if fs::symlink_metadata(&current).is_ok() {
+        return current;
+    }
+
+    let legacy = config_dir.join(LEGACY_SETTINGS_DIRECTORY);
+    let legacy_is_directory = fs::symlink_metadata(&legacy)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false);
+    if !legacy_is_directory {
+        return current;
+    }
+
+    match fs::rename(&legacy, &current) {
+        Ok(()) => current,
+        Err(_) if fs::symlink_metadata(&current).is_ok() => current,
+        Err(_) => legacy,
+    }
+}
 
 /// 시작할 때 표시할 기본 화면을 나타냅니다.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -196,9 +225,8 @@ pub struct SettingsStore {
 impl SettingsStore {
     /// 기본 앱 데이터 경로를 사용하는 저장소를 만듭니다.
     pub fn new() -> Self {
-        let root = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("CodexUsageMonitor");
+        let config_dir = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+        let root = resolve_settings_root(&config_dir);
         Self::for_root(root)
     }
 
@@ -409,5 +437,98 @@ fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(not(windows))]
     {
         fs::rename(source, destination)
+    }
+}
+
+#[cfg(test)]
+mod settings_root_tests {
+    use std::{fs, path::PathBuf, sync::atomic::Ordering};
+
+    use super::{resolve_settings_root, FILE_NONCE};
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "codex-peek-{label}-{}-{}",
+                std::process::id(),
+                FILE_NONCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn default_root_uses_codex_peek_without_creating_it() {
+        let config_dir = TestRoot::new("new-settings-root");
+
+        let resolved = resolve_settings_root(&config_dir.0);
+
+        assert_eq!(resolved, config_dir.0.join("CodexPeek"));
+        assert!(!resolved.exists());
+    }
+
+    #[test]
+    fn default_root_moves_the_complete_legacy_directory_atomically() {
+        let config_dir = TestRoot::new("migrate-settings-root");
+        let legacy = config_dir.0.join("CodexUsageMonitor");
+        let legacy_home = legacy
+            .join("profiles")
+            .join("profile-0001")
+            .join("codex-home");
+        fs::create_dir_all(&legacy_home).unwrap();
+        fs::write(legacy.join("settings.json"), b"legacy-settings").unwrap();
+        fs::write(legacy_home.join("opaque-marker"), b"nested-data").unwrap();
+
+        let resolved = resolve_settings_root(&config_dir.0);
+
+        assert_eq!(resolved, config_dir.0.join("CodexPeek"));
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read(resolved.join("settings.json")).unwrap(),
+            b"legacy-settings"
+        );
+        assert_eq!(
+            fs::read(
+                resolved
+                    .join("profiles")
+                    .join("profile-0001")
+                    .join("codex-home")
+                    .join("opaque-marker")
+            )
+            .unwrap(),
+            b"nested-data"
+        );
+    }
+
+    #[test]
+    fn existing_codex_peek_root_wins_without_merging_legacy_data() {
+        let config_dir = TestRoot::new("conflicting-settings-roots");
+        let legacy = config_dir.0.join("CodexUsageMonitor");
+        let current = config_dir.0.join("CodexPeek");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::create_dir_all(&current).unwrap();
+        fs::write(legacy.join("settings.json"), b"legacy-settings").unwrap();
+        fs::write(current.join("settings.json"), b"current-settings").unwrap();
+
+        let resolved = resolve_settings_root(&config_dir.0);
+
+        assert_eq!(resolved, current);
+        assert_eq!(
+            fs::read(legacy.join("settings.json")).unwrap(),
+            b"legacy-settings"
+        );
+        assert_eq!(
+            fs::read(resolved.join("settings.json")).unwrap(),
+            b"current-settings"
+        );
     }
 }
