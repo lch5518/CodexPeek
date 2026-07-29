@@ -7,6 +7,10 @@ use codex_usage_monitor::{
     localized_text,
     windows::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
+        design::{
+            add_profile_layout, button_width, profile_manager_layout, scale_logical,
+            DialogLayoutInput,
+        },
         initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
         menu_action,
@@ -15,13 +19,13 @@ use codex_usage_monitor::{
         },
         profile_dialog::{
             add_profile_dialog_monitor_anchor, add_profile_prompt_result,
-            available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
-            profile_login_confirmation, profile_manager_accessible_row_text,
-            profile_manager_control_enabled, profile_manager_control_spec,
-            profile_manager_dialog_monitor_anchor, profile_manager_row_label,
-            profile_manager_row_text, validated_label, AddProfilePromptCommand,
-            AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, ModalCleanupAction,
-            ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+            available_profile_actions, profile_delete_confirmation, profile_dialog_button_labels,
+            profile_dialog_keyboard_result, profile_login_confirmation,
+            profile_manager_accessible_row_text, profile_manager_control_enabled,
+            profile_manager_control_spec, profile_manager_dialog_monitor_anchor,
+            profile_manager_row_label, profile_manager_row_text, validated_label,
+            AddProfilePromptCommand, AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize,
+            ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
             ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
             ProfileManagerControl, ProfileManagerDialogState, PROFILE_LABEL_MAX_UTF16_UNITS,
             PROFILE_MANAGER_CONTROLS,
@@ -94,6 +98,63 @@ fn profile_dialog_centering_uses_the_cursor_or_a_live_owner_as_its_monitor_ancho
         add_profile_dialog_monitor_anchor(owner, None),
         DialogMonitorAnchor::Cursor
     );
+}
+
+#[test]
+fn profile_dialog_button_labels_fit_single_line_actions_in_every_locale_and_dpi() {
+    for language in Language::ALL {
+        let labels = profile_dialog_button_labels(*language);
+        assert!(labels
+            .iter()
+            .all(|label| !label.contains('\r') && !label.contains('\n')));
+
+        for dpi in [96, 120, 144, 168, 192] {
+            let measured =
+                labels.map(|label| label.encode_utf16().count() as i32 * scale_logical(8, dpi));
+            let manager = profile_manager_layout(DialogLayoutInput::new(
+                620,
+                dpi,
+                *language == Language::Arabic,
+                measured[..4].try_into().unwrap(),
+            ));
+
+            assert!((1..=2).contains(&manager.action_rows));
+            assert!(manager
+                .action_buttons
+                .iter()
+                .zip(measured[..4].iter())
+                .all(|(rect, text)| rect.width() >= button_width(*text, dpi)));
+            assert!(manager
+                .action_buttons
+                .iter()
+                .all(|rect| rect.height() >= scale_logical(32, dpi)));
+            assert!(manager
+                .action_buttons
+                .iter()
+                .enumerate()
+                .all(|(index, rect)| manager.action_buttons[index + 1..]
+                    .iter()
+                    .all(|other| !rect.intersects(*other))));
+
+            let add = add_profile_layout(DialogLayoutInput::new(
+                620,
+                dpi,
+                *language == Language::Arabic,
+                [measured[4], measured[5], 0, 0],
+            ));
+            assert!((1..=2).contains(&add.action_rows));
+            assert!(add
+                .action_buttons
+                .iter()
+                .zip(measured[4..].iter())
+                .all(|(rect, text)| rect.width() >= button_width(*text, dpi)));
+            assert!(add
+                .action_buttons
+                .iter()
+                .all(|rect| rect.height() >= scale_logical(32, dpi)));
+            assert!(!add.action_buttons[0].intersects(add.action_buttons[1]));
+        }
+    }
 }
 
 #[test]

@@ -295,6 +295,22 @@ pub struct ProfileManagerControlSpec {
     pub accessible_description: Option<&'static str>,
 }
 
+/// 프로필 관리자와 추가 대화상자의 작업 버튼 문구를 실제 표시 순서로 반환합니다.
+///
+/// `language`에 해당하는 Rename, Login, Logout, Delete, Add, Cancel 문구를 반환하며 I/O나
+/// 전역 상태 변경은 수행하지 않습니다. 플랫폼 구현은 글꼴 측정과 컨트롤 생성 모두 이 배열을
+/// 사용해야 하므로 표시 문자열과 레이아웃 입력이 서로 달라지지 않습니다.
+pub fn profile_dialog_button_labels(language: Language) -> [&'static str; 6] {
+    [
+        localized_text(LocalizationKey::UsageProfileRename, language),
+        localized_text(LocalizationKey::UsageProfileLogin, language),
+        localized_text(LocalizationKey::UsageProfileLogout, language),
+        localized_text(LocalizationKey::UsageProfileDelete, language),
+        localized_text(LocalizationKey::MenuAddUsageProfile, language),
+        localized_text(LocalizationKey::UsageProfileCancel, language),
+    ]
+}
+
 /// 관리자 컨트롤 역할을 화면 문구와 접근성 설명으로 변환합니다.
 ///
 /// `language`의 기존 지역화 표를 사용하며 I/O를 수행하지 않습니다. 목록 아래 추가 컨트롤은
@@ -303,30 +319,13 @@ pub fn profile_manager_control_spec(
     control: ProfileManagerControl,
     language: Language,
 ) -> ProfileManagerControlSpec {
+    let labels = profile_dialog_button_labels(language);
     let (visible_text, accessible_description) = match control {
-        ProfileManagerControl::AddBelowList => (
-            "+",
-            Some(localized_text(
-                LocalizationKey::MenuAddUsageProfile,
-                language,
-            )),
-        ),
-        ProfileManagerControl::Rename => (
-            localized_text(LocalizationKey::UsageProfileRename, language),
-            None,
-        ),
-        ProfileManagerControl::Login => (
-            localized_text(LocalizationKey::UsageProfileLogin, language),
-            None,
-        ),
-        ProfileManagerControl::Logout => (
-            localized_text(LocalizationKey::UsageProfileLogout, language),
-            None,
-        ),
-        ProfileManagerControl::Delete => (
-            localized_text(LocalizationKey::UsageProfileDelete, language),
-            None,
-        ),
+        ProfileManagerControl::AddBelowList => ("+", Some(labels[4])),
+        ProfileManagerControl::Rename => (labels[0], None),
+        ProfileManagerControl::Login => (labels[1], None),
+        ProfileManagerControl::Logout => (labels[2], None),
+        ProfileManagerControl::Delete => (labels[3], None),
     };
     ProfileManagerControlSpec {
         visible_text,

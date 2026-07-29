@@ -10,27 +10,28 @@ use windows::{
     Win32::{
         Foundation::{
             GetLastError, COLORREF, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT,
-            POINT, RECT, WPARAM,
+            POINT, RECT, SIZE, WPARAM,
         },
         Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Graphics::Gdi::{
-            CreateFontW, CreateSolidBrush, DeleteObject, DrawFocusRect, DrawTextW, FillRect,
-            GetMonitorInfoW, GetStockObject, InvalidateRect, MonitorFromPoint, MonitorFromWindow,
-            SelectObject, SetBkColor, SetBkMode, SetDCBrushColor, SetTextColor, BACKGROUND_MODE,
-            CLIP_DEFAULT_PRECIS, CLR_INVALID, DC_BRUSH, DEFAULT_CHARSET, DEFAULT_GUI_FONT,
-            DEFAULT_PITCH, DT_END_ELLIPSIS, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE,
-            FF_SWISS, FW_MEDIUM, FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO,
-            MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS, PROOF_QUALITY,
-            TRANSPARENT,
+            CreateFontW, CreateSolidBrush, DeleteObject, DrawFocusRect, DrawTextW, FillRect, GetDC,
+            GetMonitorInfoW, GetStockObject, GetTextExtentPoint32W, InvalidateRect,
+            MonitorFromPoint, MonitorFromWindow, ReleaseDC, SelectObject, SetBkColor, SetBkMode,
+            SetDCBrushColor, SetTextColor, BACKGROUND_MODE, CLIP_DEFAULT_PRECIS, CLR_INVALID,
+            DC_BRUSH, DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS,
+            DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM,
+            FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS, PROOF_QUALITY, TRANSPARENT,
         },
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Controls::{
-                SetWindowTheme, DRAWITEMSTRUCT, EM_SETLIMITTEXT, ODS_FOCUS, ODS_SELECTED,
-                ODT_LISTBOX, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
-                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+                SetWindowTheme, CDDS_PREPAINT, CDIS_DISABLED, CDIS_FOCUS, CDIS_HOT, CDIS_SELECTED,
+                CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, EM_SETLIMITTEXT, NMCUSTOMDRAW, NM_CUSTOMDRAW,
+                ODS_FOCUS, ODS_SELECTED, ODT_LISTBOX, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
+                TTM_ADDTOOLW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
             },
-            HiDpi::GetDpiForWindow,
+            HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
@@ -44,29 +45,34 @@ use windows::{
                 LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
                 LBS_OWNERDRAWFIXED, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, LB_SETITEMHEIGHT,
                 MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MESSAGEBOX_RESULT,
-                MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WH_CBT,
-                WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLOREDIT,
-                WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM,
-                WM_ERASEBKGND, WM_NCCREATE, WM_NCDESTROY, WM_SETFONT, WM_SETTINGCHANGE,
-                WM_THEMECHANGED, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME,
-                WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+                MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+                SW_SHOW, WH_CBT, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
+                WM_CTLCOLORBTN, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
+                WM_DPICHANGED, WM_DRAWITEM, WM_ERASEBKGND, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY,
+                WM_SETFONT, WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_BORDER, WS_CAPTION,
+                WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_LAYOUTRTL, WS_EX_NOINHERITLAYOUT,
+                WS_EX_RTLREADING, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+                WS_VSCROLL,
             },
         },
     },
 };
 
 use crate::windows::{
-    design::{scale_logical, DialogColor, DialogPalette, DialogTheme},
+    design::{
+        add_profile_layout, profile_manager_layout, scale_logical, DialogColor, DialogLayoutInput,
+        DialogPalette, DialogTheme, LogicalRect,
+    },
     theme, ProfileUsageStatus,
 };
 use crate::{localized_text, Language, LocalizationKey, ProfileValidationError};
 
 use super::{
     add_profile_dialog_monitor_anchor, add_profile_prompt_result, centered_dialog_origin,
-    profile_delete_confirmation, profile_dialog_keyboard_result, profile_login_confirmation,
-    profile_manager_accessible_row_text, profile_manager_control_enabled,
-    profile_manager_control_spec, profile_manager_dialog_monitor_anchor, profile_manager_row_text,
-    show_profile_message, AddProfilePromptCommand, AddProfilePromptState,
+    profile_delete_confirmation, profile_dialog_button_labels, profile_dialog_keyboard_result,
+    profile_login_confirmation, profile_manager_accessible_row_text,
+    profile_manager_control_enabled, profile_manager_dialog_monitor_anchor,
+    profile_manager_row_text, show_profile_message, AddProfilePromptCommand, AddProfilePromptState,
     CenteredMessageBoxRequest, CenteredMessageBoxRequestState, DialogMonitorAnchor,
     DialogWindowSize, DialogWorkArea, ModalCleanupAction, ModalDialogLifecycle,
     ProfileDialogAction, ProfileDialogCommand, ProfileDialogController,
@@ -527,10 +533,22 @@ unsafe extern "system" fn apply_dialog_child_visuals(child: HWND, lparam: LPARAM
 /// HWND는 살아 있는 대화상자여야 하며 `resources`는 해당 HWND의 모든 자식보다 오래 유지됩니다.
 /// 레지스트리, DWM, 테마 API 실패는 어두운 테마 또는 기본 제목 표시줄로 안전하게 폴백합니다.
 unsafe fn rebuild_dialog_visuals(dialog: HWND, resources: *mut DialogVisualResources) {
-    let requested_dpi = GetDpiForWindow(dialog).max(96);
+    rebuild_dialog_visuals_for_dpi(dialog, resources, GetDpiForWindow(dialog).max(96));
+}
+
+/// 지정 DPI의 staged 자원을 모든 자식에 적용한 뒤 커밋하고 행 높이를 최종 DPI에 맞춥니다.
+///
+/// `resources`는 `dialog`보다 오래 살아 있는 같은 UI 스레드의 자원 집합이어야 합니다. 중첩된
+/// DPI·테마 갱신은 기존 coalescing 경계에서 합쳐지며, 행 높이와 invalidate는 최종 커밋된 DPI만
+/// 사용합니다. 지원되지 않는 DWM·테마 표면 실패는 대화상자 동작을 중단하지 않습니다.
+unsafe fn rebuild_dialog_visuals_for_dpi(
+    dialog: HWND,
+    resources: *mut DialogVisualResources,
+    requested_dpi: u32,
+) {
     let outcome = update_dialog_visual_resources(
         resources,
-        requested_dpi,
+        requested_dpi.max(96),
         current_dialog_theme(),
         |visual| {
             // SAFETY: Copy 스냅샷만 전달하며 자원 객체의 Rust 참조는 외부 호출 동안 존재하지 않습니다.
@@ -552,6 +570,262 @@ unsafe fn rebuild_dialog_visuals(dialog: HWND, resources: *mut DialogVisualResou
         }
         let _ = InvalidateRect(Some(dialog), None, true);
     }
+}
+
+const PREFERRED_DIALOG_CLIENT_WIDTH: i32 = 620;
+
+fn dialog_window_style() -> WINDOW_STYLE {
+    WS_POPUP | WS_CAPTION | WS_SYSMENU
+}
+
+fn dialog_root_ex_style(language: Language) -> WINDOW_EX_STYLE {
+    let mut style = WS_EX_DLGMODALFRAME;
+    if language == Language::Arabic {
+        style = style | WS_EX_LAYOUTRTL | WS_EX_NOINHERITLAYOUT;
+    }
+    style
+}
+
+fn dialog_child_text_ex_style(language: Language) -> WINDOW_EX_STYLE {
+    if language == Language::Arabic {
+        WS_EX_RTLREADING
+    } else {
+        WINDOW_EX_STYLE::default()
+    }
+}
+
+fn physical_to_logical_floor(value: i32, dpi: u32) -> i32 {
+    let dpi = dpi.max(96);
+    ((i64::from(value.max(0)) * 96) / i64::from(dpi)) as i32
+}
+
+/// 현재 대화상자 본문 글꼴로 한 줄 문자열의 실제 물리 픽셀 너비를 측정합니다.
+///
+/// `hdc`와 `font`는 호출 동안 유효해야 하며, 함수는 선택했던 GDI 객체를 반환 전에 복원합니다.
+/// `text`는 줄바꿈 없는 지역화 버튼 문구여야 합니다. 측정 실패는 운영체제 오류로 반환합니다.
+unsafe fn measure_text_width(hdc: HDC, font: HFONT, text: &str) -> io::Result<i32> {
+    if hdc.0.is_null() || font.0.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "dialog text measurement requires a live DC and font",
+        ));
+    }
+    if text.is_empty() {
+        return Ok(0);
+    }
+
+    let previous_font = SelectObject(hdc, HGDIOBJ(font.0));
+    if previous_font.0.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let text = text.encode_utf16().collect::<Vec<_>>();
+    let mut size = SIZE::default();
+    let measured = GetTextExtentPoint32W(hdc, &text, &mut size).as_bool();
+    let _ = SelectObject(hdc, previous_font);
+    if measured {
+        Ok(size.cx.max(0))
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+/// 활성 본문 글꼴로 공용 버튼 문구 여섯 개를 실제 표시 순서대로 측정합니다.
+///
+/// 창 DC는 성공·실패와 관계없이 반환하며 민감한 데이터나 외부 I/O를 사용하지 않습니다.
+unsafe fn measure_profile_dialog_buttons(
+    dialog: HWND,
+    font: HFONT,
+    language: Language,
+) -> io::Result<[i32; 6]> {
+    let dc = GetDC(Some(dialog));
+    if dc.0.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let labels = profile_dialog_button_labels(language);
+    let result = (|| {
+        let mut widths = [0; 6];
+        for (index, label) in labels.iter().enumerate() {
+            widths[index] = measure_text_width(dc, font, label)?;
+        }
+        Ok(widths)
+    })();
+    let _ = ReleaseDC(Some(dialog), dc);
+    result
+}
+
+unsafe fn adjusted_dialog_outer_size(
+    client: LogicalRect,
+    dpi: u32,
+    language: Language,
+) -> io::Result<DialogWindowSize> {
+    let mut outer = RECT {
+        left: 0,
+        top: 0,
+        right: client.width(),
+        bottom: client.height(),
+    };
+    AdjustWindowRectExForDpi(
+        &mut outer,
+        dialog_window_style(),
+        false,
+        dialog_root_ex_style(language),
+        dpi.max(96),
+    )
+    .map_err(win_error)?;
+    Ok(DialogWindowSize::new(
+        outer.right - outer.left,
+        outer.bottom - outer.top,
+    ))
+}
+
+unsafe fn requested_client_width_for_work_area(
+    work_area: Option<DialogWorkArea>,
+    dpi: u32,
+    language: Language,
+) -> i32 {
+    let Some(work_area) = work_area else {
+        return PREFERRED_DIALOG_CLIENT_WIDTH;
+    };
+    let work_width = (i64::from(work_area.right) - i64::from(work_area.left))
+        .clamp(0, i64::from(i32::MAX)) as i32;
+    let empty_client = LogicalRect::default();
+    let frame_width = adjusted_dialog_outer_size(empty_client, dpi, language)
+        .map(|outer| outer.width.max(0))
+        .unwrap_or_default();
+    physical_to_logical_floor((work_width - frame_width).max(1), dpi)
+        .clamp(1, PREFERRED_DIALOG_CLIENT_WIDTH)
+}
+
+unsafe fn current_requested_client_width(dialog: HWND, dpi: u32) -> i32 {
+    let mut client = RECT::default();
+    if GetClientRect(dialog, &mut client).is_ok() {
+        physical_to_logical_floor(client.right - client.left, dpi).max(1)
+    } else {
+        PREFERRED_DIALOG_CLIENT_WIDTH
+    }
+}
+
+unsafe fn resize_dialog_for_client(
+    dialog: HWND,
+    client: LogicalRect,
+    dpi: u32,
+    language: Language,
+) -> io::Result<()> {
+    let outer = adjusted_dialog_outer_size(client, dpi, language)?;
+    SetWindowPos(
+        dialog,
+        None,
+        0,
+        0,
+        outer.width,
+        outer.height,
+        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER,
+    )
+    .map_err(win_error)
+}
+
+unsafe fn move_dialog_control(control: HWND, rect: LogicalRect) -> io::Result<()> {
+    SetWindowPos(
+        control,
+        None,
+        rect.left,
+        rect.top,
+        rect.width(),
+        rect.height(),
+        SWP_NOACTIVATE | SWP_NOZORDER,
+    )
+    .map_err(win_error)
+}
+
+/// 커밋된 글꼴과 DPI로 관리자 버튼을 다시 측정하고 모든 기존 자식 HWND를 이동합니다.
+///
+/// `state`는 같은 관리자 창의 살아 있는 상태를 가리켜야 합니다. Win32 호출 전에 필요한 핸들과
+/// Copy 값만 추출하므로 `SetWindowPos`가 메시지를 재진입시켜도 Rust 참조를 유지하지 않습니다.
+unsafe fn relayout_manager_dialog(
+    dialog: HWND,
+    state: *mut DialogState,
+    requested_client_width: i32,
+) -> io::Result<()> {
+    let (language, dpi, body_font, list, name_label, edit) = {
+        let state = &*state;
+        (
+            state.language,
+            state.resources.dpi,
+            state.resources.body_font,
+            state.list,
+            state.name_label,
+            state.edit,
+        )
+    };
+    let measured = measure_profile_dialog_buttons(dialog, body_font, language)?;
+    let layout = profile_manager_layout(DialogLayoutInput::new(
+        requested_client_width,
+        dpi,
+        language == Language::Arabic,
+        measured[..4].try_into().expect("four manager widths"),
+    ));
+    resize_dialog_for_client(dialog, layout.client, dpi, language)?;
+
+    move_dialog_control(list, layout.list)?;
+    if let Ok(add) = GetDlgItem(Some(dialog), OPEN_ADD_ID) {
+        move_dialog_control(add, layout.add_control)?;
+    }
+    move_dialog_control(name_label, layout.name_label)?;
+    move_dialog_control(edit, layout.name_edit)?;
+    for (control, rect) in [
+        (RENAME_ID, layout.action_buttons[0]),
+        (LOGIN_ID, layout.action_buttons[1]),
+        (LOGOUT_ID, layout.action_buttons[2]),
+        (DELETE_ID, layout.action_buttons[3]),
+    ] {
+        if let Ok(control) = GetDlgItem(Some(dialog), control) {
+            move_dialog_control(control, rect)?;
+        }
+    }
+    let _ = InvalidateRect(Some(dialog), None, true);
+    Ok(())
+}
+
+/// 커밋된 글꼴과 DPI로 추가 대화상자의 두 작업을 측정하고 기존 자식 HWND를 이동합니다.
+///
+/// `state`에서 Copy 값만 읽은 뒤 크기 변경과 자식 이동을 수행해 DPI·테마 메시지 재진입 시 가변
+/// 참조가 겹치지 않습니다. 버튼은 항상 한 줄 문구의 실제 측정 너비와 공통 여백을 보존합니다.
+unsafe fn relayout_add_dialog(
+    dialog: HWND,
+    state: *mut AddDialogState,
+    requested_client_width: i32,
+) -> io::Result<()> {
+    let (language, dpi, body_font, name_label, edit) = {
+        let state = &*state;
+        (
+            state.language,
+            state.resources.dpi,
+            state.resources.body_font,
+            state.name_label,
+            state.edit,
+        )
+    };
+    let measured = measure_profile_dialog_buttons(dialog, body_font, language)?;
+    let layout = add_profile_layout(DialogLayoutInput::new(
+        requested_client_width,
+        dpi,
+        language == Language::Arabic,
+        [measured[4], measured[5], 0, 0],
+    ));
+    resize_dialog_for_client(dialog, layout.client, dpi, language)?;
+
+    move_dialog_control(name_label, layout.name_label)?;
+    move_dialog_control(edit, layout.name_edit)?;
+    for (control, rect) in [
+        (IDOK.0, layout.action_buttons[0]),
+        (IDCANCEL.0, layout.action_buttons[1]),
+    ] {
+        if let Ok(control) = GetDlgItem(Some(dialog), control) {
+            move_dialog_control(control, rect)?;
+        }
+    }
+    let _ = InvalidateRect(Some(dialog), None, true);
+    Ok(())
 }
 
 unsafe fn dialog_control_color(
@@ -594,11 +868,93 @@ unsafe fn erase_dialog_background(
     LRESULT(1)
 }
 
+/// 활성 기본 작업 버튼의 `NM_CUSTOMDRAW`를 건강 상태 녹색으로 한 줄 그립니다.
+///
+/// 알림이 대상 버튼·prepaint 단계가 아니거나 버튼이 비활성 상태이면 기본 네이티브 렌더링을
+/// 유지합니다. `lparam`은 현재 `WM_NOTIFY`가 제공한 `NMCUSTOMDRAW`여야 하며, GDI 선택 객체와
+/// 색상·배경 모드는 반환 전에 복원합니다. 지원되지 않는 custom draw는 비치명적으로 무시됩니다.
+unsafe fn draw_primary_button_notification(
+    lparam: LPARAM,
+    expected_id: i32,
+    label: &str,
+    font: HFONT,
+    palette: DialogPalette,
+    rtl: bool,
+) -> LRESULT {
+    if lparam.0 == 0 {
+        return LRESULT(0);
+    }
+    let draw = &*(lparam.0 as *const NMCUSTOMDRAW);
+    if draw.hdr.code != NM_CUSTOMDRAW
+        || draw.hdr.idFrom != expected_id as usize
+        || draw.dwDrawStage != CDDS_PREPAINT
+        || draw.uItemState.contains(CDIS_DISABLED)
+        || !IsWindowEnabled(draw.hdr.hwndFrom).as_bool()
+        || draw.hdc.0.is_null()
+    {
+        return LRESULT(0);
+    }
+
+    let overlay = if draw.uItemState.contains(CDIS_SELECTED) {
+        Some(palette.pressed)
+    } else if draw.uItemState.contains(CDIS_HOT) {
+        Some(palette.hover)
+    } else {
+        None
+    };
+    let surface = overlay
+        .map(|overlay| composite_dialog_color(overlay, palette.healthy))
+        .unwrap_or(palette.healthy.colorref);
+    if fill_profile_row_rect(draw.hdc, &draw.rc, palette.border.colorref).is_err() {
+        return LRESULT(0);
+    }
+    let mut inner = RECT {
+        left: draw.rc.left + 1,
+        top: draw.rc.top + 1,
+        right: draw.rc.right - 1,
+        bottom: draw.rc.bottom - 1,
+    };
+    if fill_profile_row_rect(draw.hdc, &inner, surface).is_err() {
+        return LRESULT(0);
+    }
+
+    let previous_font = SelectObject(draw.hdc, HGDIOBJ(font.0));
+    let previous_background = SetBkMode(draw.hdc, TRANSPARENT);
+    let previous_text = SetTextColor(draw.hdc, COLORREF(0x00ff_ffff));
+    let mut text = label.encode_utf16().collect::<Vec<_>>();
+    let mut format = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+    if rtl {
+        format |= DT_RTLREADING;
+    }
+    let _ = DrawTextW(draw.hdc, &mut text, &mut inner, format);
+    if previous_text.0 != CLR_INVALID {
+        let _ = SetTextColor(draw.hdc, previous_text);
+    }
+    if previous_background != 0 {
+        let _ = SetBkMode(draw.hdc, BACKGROUND_MODE(previous_background as u32));
+    }
+    if !previous_font.0.is_null() {
+        let _ = SelectObject(draw.hdc, previous_font);
+    }
+
+    if draw.uItemState.contains(CDIS_FOCUS) {
+        let focus = RECT {
+            left: draw.rc.left + 3,
+            top: draw.rc.top + 3,
+            right: draw.rc.right - 3,
+            bottom: draw.rc.bottom - 3,
+        };
+        let _ = DrawFocusRect(draw.hdc, &focus);
+    }
+    LRESULT(CDRF_SKIPDEFAULT as isize)
+}
+
 struct DialogState {
     controller: ProfileDialogController,
     interaction: ProfileManagerDialogState,
     language: Language,
     list: HWND,
+    name_label: HWND,
     edit: HWND,
     add_tooltip: HWND,
     add_tooltip_text: Vec<u16>,
@@ -606,6 +962,7 @@ struct DialogState {
 }
 
 struct AddDialogState {
+    name_label: HWND,
     edit: HWND,
     language: Language,
     result: Option<ProfileDialogAction>,
@@ -698,6 +1055,14 @@ fn profile_row_surface_color(palette: DialogPalette, role: ProfileRowSurfaceRole
     }
 }
 
+/// 프로필 행 콘텐츠에 대화상자 공통 바깥 여백을 현재 DPI로 적용합니다.
+///
+/// `dpi`가 96보다 작으면 공통 스케일 규칙에 따라 96 DPI로 보정하며, 반환값은 owner-draw
+/// 행의 텍스트와 진행 표시가 사용하는 물리 픽셀 단위 좌우 여백입니다.
+fn profile_row_content_padding(dpi: u32) -> i32 {
+    scale_logical(crate::windows::design::OUTER_PADDING, dpi)
+}
+
 /// owner-draw 프로필 행을 현재 DPI와 팔레트에 맞춰 그립니다.
 ///
 /// `item`은 현재 `WM_DRAWITEM` 메시지가 제공한 살아 있는 listbox 항목이어야 합니다.
@@ -749,7 +1114,7 @@ unsafe fn draw_profile_row(
         fill_profile_row_rect(item.hDC, &edge, visuals.palette.focus.colorref)?;
     }
 
-    let horizontal_padding = scale_logical(crate::windows::design::GAP_8, visuals.dpi);
+    let horizontal_padding = profile_row_content_padding(visuals.dpi);
     let leading_inset = horizontal_padding + edge_width;
     let content_left = item.rcItem.left
         + if rtl {
@@ -1297,6 +1662,7 @@ pub(super) unsafe fn show_profile_manager_owned(
         interaction: ProfileManagerDialogState::new(),
         language,
         list: HWND::default(),
+        name_label: HWND::default(),
         edit: HWND::default(),
         add_tooltip: HWND::default(),
         add_tooltip_text: Vec::new(),
@@ -1308,15 +1674,20 @@ pub(super) unsafe fn show_profile_manager_owned(
         language,
     ));
     let parent = (owner != HWND::default()).then_some(owner);
+    let anchor = profile_manager_dialog_monitor_anchor();
+    let work_area = dialog_work_area(anchor);
+    let (initial_x, initial_y) = work_area
+        .map(|area| (area.left, area.top))
+        .unwrap_or((CW_USEDEFAULT, CW_USEDEFAULT));
     let dialog = CreateWindowExW(
-        WS_EX_DLGMODALFRAME,
+        dialog_root_ex_style(language),
         DIALOG_CLASS,
         PCWSTR(title.as_ptr()),
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        650,
-        410,
+        dialog_window_style(),
+        initial_x,
+        initial_y,
+        1,
+        1,
         parent,
         None,
         Some(instance),
@@ -1327,7 +1698,14 @@ pub(super) unsafe fn show_profile_manager_owned(
 
     setup_controls(dialog, instance, profiles, &mut state)?;
     rebuild_dialog_visuals(dialog, std::ptr::addr_of_mut!(state.resources));
-    center_window(dialog, profile_manager_dialog_monitor_anchor());
+    let requested_width =
+        requested_client_width_for_work_area(work_area, state.resources.dpi, language);
+    relayout_manager_dialog(dialog, &mut *state, requested_width)?;
+    if let Some(work_area) = work_area {
+        center_window_in_work_area(dialog, work_area);
+    } else {
+        center_window(dialog, anchor);
+    }
 
     window_guard.disable_owner();
     let _ = ShowWindow(dialog, SW_SHOW);
@@ -1363,6 +1741,7 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
     let dialog_theme = current_dialog_theme();
 
     let mut state = Box::new(AddDialogState {
+        name_label: HWND::default(),
         edit: HWND::default(),
         language,
         result: None,
@@ -1374,15 +1753,20 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
         LocalizationKey::MenuAddUsageProfile,
         language,
     ));
+    let anchor = add_profile_dialog_monitor_anchor(owner, live_window_size(owner));
+    let work_area = dialog_work_area(anchor);
+    let (initial_x, initial_y) = work_area
+        .map(|area| (area.left, area.top))
+        .unwrap_or((CW_USEDEFAULT, CW_USEDEFAULT));
     let dialog = CreateWindowExW(
-        WS_EX_DLGMODALFRAME,
+        dialog_root_ex_style(language),
         ADD_DIALOG_CLASS,
         PCWSTR(title.as_ptr()),
-        WS_POPUP | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        560,
-        180,
+        dialog_window_style(),
+        initial_x,
+        initial_y,
+        1,
+        1,
         Some(owner),
         None,
         Some(instance),
@@ -1393,10 +1777,14 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
 
     setup_add_dialog_controls(dialog, instance, &mut state)?;
     rebuild_dialog_visuals(dialog, std::ptr::addr_of_mut!(state.resources));
-    center_window(
-        dialog,
-        add_profile_dialog_monitor_anchor(owner, live_window_size(owner)),
-    );
+    let requested_width =
+        requested_client_width_for_work_area(work_area, state.resources.dpi, language);
+    relayout_add_dialog(dialog, &mut *state, requested_width)?;
+    if let Some(work_area) = work_area {
+        center_window_in_work_area(dialog, work_area);
+    } else {
+        center_window(dialog, anchor);
+    }
 
     window_guard.disable_owner();
     let _ = ShowWindow(dialog, SW_SHOW);
@@ -1491,16 +1879,17 @@ unsafe fn setup_controls(
     profiles: &[UsageProfileView],
     state: &mut DialogState,
 ) -> io::Result<()> {
+    let child_ex_style = dialog_child_text_ex_style(state.language);
     state.list = create_control(
         dialog,
         instance,
         w!("LISTBOX"),
         "",
         PROFILE_LIST_ID,
-        16,
-        16,
-        602,
-        190,
+        0,
+        0,
+        1,
+        1,
         WS_CHILD
             | WS_VISIBLE
             | WS_BORDER
@@ -1509,12 +1898,9 @@ unsafe fn setup_controls(
             | WINDOW_STYLE(
                 (LBS_OWNERDRAWFIXED | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT) as u32,
             ),
+        child_ex_style,
     )?;
-    let row_height = scale_logical(
-        crate::windows::design::ROW_HEIGHT,
-        GetDpiForWindow(dialog).max(96),
-    )
-    .max(1);
+    let row_height = state.resources.profile_row_height();
     if SendMessageW(
         state.list,
         LB_SETITEMHEIGHT,
@@ -1529,17 +1915,18 @@ unsafe fn setup_controls(
     }
 
     let name_label = localized_text(LocalizationKey::UsageProfileName, state.language);
-    let _ = create_control(
+    state.name_label = create_control(
         dialog,
         instance,
         w!("STATIC"),
         name_label,
         0,
-        64,
-        220,
-        120,
-        22,
+        0,
+        0,
+        1,
+        1,
         WS_CHILD | WS_VISIBLE,
+        child_ex_style,
     )?;
     state.edit = create_control(
         dialog,
@@ -1547,11 +1934,12 @@ unsafe fn setup_controls(
         w!("EDIT"),
         "",
         PROFILE_NAME_ID,
-        188,
-        216,
-        430,
-        26,
+        0,
+        0,
+        1,
+        1,
         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP,
+        child_ex_style,
     )?;
     let _ = SendMessageW(
         state.edit,
@@ -1560,22 +1948,29 @@ unsafe fn setup_controls(
         None,
     );
 
+    let labels = profile_dialog_button_labels(state.language);
     for control in PROFILE_MANAGER_CONTROLS {
-        let copy = profile_manager_control_spec(control, state.language);
-        let (id, x, y, width, height) = manager_control_layout(control);
+        let (text, description) = match control {
+            ProfileManagerControl::AddBelowList => ("+", Some(labels[4])),
+            ProfileManagerControl::Rename => (labels[0], None),
+            ProfileManagerControl::Login => (labels[1], None),
+            ProfileManagerControl::Logout => (labels[2], None),
+            ProfileManagerControl::Delete => (labels[3], None),
+        };
         let control_window = create_control(
             dialog,
             instance,
             w!("BUTTON"),
-            copy.visible_text,
-            id,
-            x,
-            y,
-            width,
-            height,
+            text,
+            manager_control_id(control),
+            0,
+            0,
+            1,
+            1,
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            child_ex_style,
         )?;
-        if let Some(description) = copy.accessible_description {
+        if let Some(description) = description {
             create_add_control_tooltip(dialog, instance, control_window, description, state)?;
         }
     }
@@ -1604,17 +1999,16 @@ unsafe fn setup_controls(
     Ok(())
 }
 
-/// 공유 관리자 컨트롤 계약을 Win32 ID와 고정 배치로 변환합니다.
+/// 공유 관리자 컨트롤 역할을 기존 Win32 명령 ID에 연결합니다.
 ///
-/// 화면 문구와 접근성 설명은 플랫폼 독립 `profile_manager_control_spec`에서 가져오며, 추가 버튼은
-/// 목록 바로 아래에, 나머지 네 작업은 하단 행에 배치됩니다.
-fn manager_control_layout(control: ProfileManagerControl) -> (i32, i32, i32, i32, i32) {
+/// 위치와 크기는 반환하지 않으며 모든 기하는 `profile_manager_layout` 결과만 사용합니다.
+fn manager_control_id(control: ProfileManagerControl) -> i32 {
     match control {
-        ProfileManagerControl::AddBelowList => (OPEN_ADD_ID, 16, 216, 36, 26),
-        ProfileManagerControl::Rename => (RENAME_ID, 116, 270, 92, 30),
-        ProfileManagerControl::Login => (LOGIN_ID, 216, 270, 92, 30),
-        ProfileManagerControl::Logout => (LOGOUT_ID, 316, 270, 92, 30),
-        ProfileManagerControl::Delete => (DELETE_ID, 416, 270, 92, 30),
+        ProfileManagerControl::AddBelowList => OPEN_ADD_ID,
+        ProfileManagerControl::Rename => RENAME_ID,
+        ProfileManagerControl::Login => LOGIN_ID,
+        ProfileManagerControl::Logout => LOGOUT_ID,
+        ProfileManagerControl::Delete => DELETE_ID,
     }
 }
 
@@ -1681,17 +2075,19 @@ unsafe fn setup_add_dialog_controls(
     instance: HINSTANCE,
     state: &mut AddDialogState,
 ) -> io::Result<()> {
-    let _ = create_control(
+    let child_ex_style = dialog_child_text_ex_style(state.language);
+    state.name_label = create_control(
         dialog,
         instance,
         w!("STATIC"),
         localized_text(LocalizationKey::UsageProfileName, state.language),
         0,
-        16,
-        20,
-        112,
-        22,
+        0,
+        0,
+        1,
+        1,
         WS_CHILD | WS_VISIBLE,
+        child_ex_style,
     )?;
     state.edit = create_control(
         dialog,
@@ -1699,11 +2095,12 @@ unsafe fn setup_add_dialog_controls(
         w!("EDIT"),
         "",
         ADD_PROFILE_NAME_ID,
-        132,
-        16,
-        396,
-        26,
+        0,
+        0,
+        1,
+        1,
         WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP,
+        child_ex_style,
     )?;
     let _ = SendMessageW(
         state.edit,
@@ -1712,33 +2109,23 @@ unsafe fn setup_add_dialog_controls(
         None,
     );
 
-    for (id, key, x, width, extra_style) in [
-        (
-            IDOK.0,
-            LocalizationKey::MenuAddUsageProfile,
-            188,
-            220,
-            WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),
-        ),
-        (
-            IDCANCEL.0,
-            LocalizationKey::UsageProfileCancel,
-            416,
-            108,
-            WINDOW_STYLE(0),
-        ),
+    let labels = profile_dialog_button_labels(state.language);
+    for (id, text, extra_style) in [
+        (IDOK.0, labels[4], WINDOW_STYLE(BS_DEFPUSHBUTTON as u32)),
+        (IDCANCEL.0, labels[5], WINDOW_STYLE(0)),
     ] {
         let _ = create_control(
             dialog,
             instance,
             w!("BUTTON"),
-            localized_text(key, state.language),
+            text,
             id,
-            x,
-            70,
-            width,
-            30,
+            0,
+            0,
+            1,
+            1,
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | extra_style,
+            child_ex_style,
         )?;
     }
     Ok(())
@@ -1756,10 +2143,11 @@ unsafe fn create_control(
     width: i32,
     height: i32,
     style: WINDOW_STYLE,
+    ex_style: WINDOW_EX_STYLE,
 ) -> io::Result<HWND> {
     let text = wide(text);
     CreateWindowExW(
-        Default::default(),
+        ex_style,
         class,
         PCWSTR(text.as_ptr()),
         style,
@@ -1795,14 +2183,53 @@ unsafe extern "system" fn dialog_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
-        WM_SETTINGCHANGE | WM_THEMECHANGED | WM_DPICHANGED => {
+        WM_DPICHANGED => {
+            if lparam.0 != 0 {
+                let suggested = *(lparam.0 as *const RECT);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    suggested.left,
+                    suggested.top,
+                    suggested.right - suggested.left,
+                    suggested.bottom - suggested.top,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                );
+            }
+            let requested_dpi = ((wparam.0 >> 16) & 0xffff) as u32;
+            rebuild_dialog_visuals_for_dpi(
+                hwnd,
+                std::ptr::addr_of_mut!((*state).resources),
+                requested_dpi,
+            );
+            let committed_dpi = (*state).resources.dpi;
+            let requested_width = current_requested_client_width(hwnd, committed_dpi);
+            let _ = relayout_manager_dialog(hwnd, state, requested_width);
+            LRESULT(0)
+        }
+        WM_SETTINGCHANGE | WM_THEMECHANGED => {
             rebuild_dialog_visuals(hwnd, std::ptr::addr_of_mut!((*state).resources));
+            let committed_dpi = (*state).resources.dpi;
+            let requested_width = current_requested_client_width(hwnd, committed_dpi);
+            let _ = relayout_manager_dialog(hwnd, state, requested_width);
             LRESULT(0)
         }
         WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
         WM_DRAWITEM => handle_profile_row_draw(state, lparam),
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
             dialog_control_color(&(*state).resources, message, wparam)
+        }
+        WM_NOTIFY => {
+            let (label, font, palette, rtl) = {
+                let state = &*state;
+                (
+                    profile_dialog_button_labels(state.language)[1],
+                    state.resources.body_font,
+                    state.resources.palette,
+                    state.language == Language::Arabic,
+                )
+            };
+            draw_primary_button_notification(lparam, LOGIN_ID, label, font, palette, rtl)
         }
         WM_COMMAND => {
             if manager_accepts_commands(hwnd, state) {
@@ -1900,13 +2327,52 @@ unsafe extern "system" fn add_dialog_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
-        WM_SETTINGCHANGE | WM_THEMECHANGED | WM_DPICHANGED => {
+        WM_DPICHANGED => {
+            if lparam.0 != 0 {
+                let suggested = *(lparam.0 as *const RECT);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    suggested.left,
+                    suggested.top,
+                    suggested.right - suggested.left,
+                    suggested.bottom - suggested.top,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                );
+            }
+            let requested_dpi = ((wparam.0 >> 16) & 0xffff) as u32;
+            rebuild_dialog_visuals_for_dpi(
+                hwnd,
+                std::ptr::addr_of_mut!((*state).resources),
+                requested_dpi,
+            );
+            let committed_dpi = (*state).resources.dpi;
+            let requested_width = current_requested_client_width(hwnd, committed_dpi);
+            let _ = relayout_add_dialog(hwnd, state, requested_width);
+            LRESULT(0)
+        }
+        WM_SETTINGCHANGE | WM_THEMECHANGED => {
             rebuild_dialog_visuals(hwnd, std::ptr::addr_of_mut!((*state).resources));
+            let committed_dpi = (*state).resources.dpi;
+            let requested_width = current_requested_client_width(hwnd, committed_dpi);
+            let _ = relayout_add_dialog(hwnd, state, requested_width);
             LRESULT(0)
         }
         WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
             dialog_control_color(&(*state).resources, message, wparam)
+        }
+        WM_NOTIFY => {
+            let (label, font, palette, rtl) = {
+                let state = &*state;
+                (
+                    profile_dialog_button_labels(state.language)[4],
+                    state.resources.body_font,
+                    state.resources.palette,
+                    state.language == Language::Arabic,
+                )
+            };
+            draw_primary_button_notification(lparam, IDOK.0, label, font, palette, rtl)
         }
         WM_COMMAND => {
             if add_dialog_accepts_commands(hwnd, state) {
@@ -2267,10 +2733,9 @@ fn read_profile_label(edit: HWND) -> io::Result<String> {
 
 unsafe fn update_controls(hwnd: HWND, state: &DialogState) {
     for control in PROFILE_MANAGER_CONTROLS {
-        let (id, _, _, _, _) = manager_control_layout(control);
         set_enabled(
             hwnd,
-            id,
+            manager_control_id(control),
             profile_manager_control_enabled(&state.controller, control),
         );
     }
@@ -2423,14 +2888,25 @@ mod tests {
         add_profile_prompt_result, composite_dialog_color, confirm_profile_delete_with_presenter,
         confirm_profile_login_with_presenter, consume_centered_message_box_request,
         handle_add_profile_prompt_result_with_presenter,
-        handle_manager_rename_result_with_presenter, profile_row_surface_color,
-        profile_row_visual_state, show_add_dialog_warning_with_presenter,
-        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
-        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
-        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
-        DialogWorkArea, ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
+        handle_manager_rename_result_with_presenter, profile_row_content_padding,
+        profile_row_surface_color, profile_row_visual_state,
+        show_add_dialog_warning_with_presenter, show_safe_error_with_presenter,
+        update_dialog_visual_resources, AddDialogState, AddProfilePromptCommand,
+        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
+        DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome, DialogWorkArea,
+        ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
         ProfileRowSurfaceRole, UsageProfileView,
     };
+
+    #[test]
+    fn profile_row_content_padding_matches_shared_outer_padding() {
+        for dpi in [96, 120, 144, 168, 192] {
+            assert_eq!(
+                profile_row_content_padding(dpi),
+                crate::windows::design::scale_logical(crate::windows::design::OUTER_PADDING, dpi,)
+            );
+        }
+    }
 
     #[test]
     fn profile_row_visual_state_uses_native_selection_and_focus() {
@@ -2850,6 +3326,7 @@ mod tests {
     fn add_validation_path_presents_the_validation_route_and_restores_commands() {
         let owner = HWND(102_usize as _);
         let mut state = AddDialogState {
+            name_label: HWND::default(),
             edit: HWND::default(),
             language: Language::English,
             result: None,
@@ -2882,6 +3359,7 @@ mod tests {
     fn add_safe_error_path_presents_the_add_prompt_route() {
         let owner = HWND(103_usize as _);
         let mut state = AddDialogState {
+            name_label: HWND::default(),
             edit: HWND::default(),
             language: Language::English,
             result: None,
