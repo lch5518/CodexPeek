@@ -26,7 +26,6 @@ use windows::{
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
             LibraryLoader::GetModuleHandleW,
-            Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD},
             Threading::CreateMutexW,
         },
         UI::{
@@ -76,6 +75,7 @@ use super::super::{
         profile_header_text, progress_fill_width, select_weekly_row, widget_surface_layout,
         HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
+    theme,
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
@@ -1279,7 +1279,7 @@ unsafe fn paint_taskbar_widget(
 
     let old_bitmap = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
     let dpi = GetDpiForWindow(hwnd).max(96);
-    let palette = taskbar_palette(system_uses_light_theme());
+    let palette = taskbar_palette(theme::system_uses_light_theme());
     let background = CreateSolidBrush(COLORREF(palette.material));
     FillRect(
         memory_dc,
@@ -1451,24 +1451,6 @@ const fn taskbar_palette(light: bool) -> TaskbarPalette {
             percent: 0x00f5_f5f5,
             track: 0x0042_4242,
         }
-    }
-}
-
-fn system_uses_light_theme() -> bool {
-    unsafe {
-        let mut value = 0_u32;
-        let mut size = std::mem::size_of::<u32>() as u32;
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-            w!("SystemUsesLightTheme"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some((&mut value as *mut u32).cast()),
-            Some(&mut size),
-        )
-        .is_ok()
-            && value != 0
     }
 }
 

@@ -7,6 +7,7 @@ pub mod native;
 pub mod profile_dialog;
 pub mod taskbar;
 pub mod taskbar_widget;
+pub(crate) mod theme;
 pub(crate) mod time;
 pub mod tray;
 pub mod widget;

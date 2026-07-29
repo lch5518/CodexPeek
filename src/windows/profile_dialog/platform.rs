@@ -6,42 +6,54 @@ use std::{
 };
 
 use windows::{
-    core::{w, PCWSTR, PWSTR},
+    core::{w, BOOL, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
             GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
             RECT, WPARAM,
         },
+        Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Graphics::Gdi::{
-            GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO,
-            MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
+            CreateFontW, CreateSolidBrush, DeleteObject, FillRect, GetMonitorInfoW, GetStockObject,
+            InvalidateRect, MonitorFromPoint, MonitorFromWindow, SetBkColor, SetTextColor,
+            CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, FF_SWISS,
+            FW_MEDIUM, FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO,
+            MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS, PROOF_QUALITY,
         },
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Controls::{
-                EM_SETLIMITTEXT, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
-                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+                SetWindowTheme, EM_SETLIMITTEXT, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
+                TTM_ADDTOOLW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
             },
+            HiDpi::GetDpiForWindow,
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                GetCursorPos, GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect,
-                GetWindowTextW, IsDialogMessageW, IsWindow, IsWindowVisible, LoadCursorW,
-                MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow,
-                SetWindowLongPtrW, SetWindowPos, SetWindowTextW, SetWindowsHookExW, ShowWindow,
-                TranslateMessage, UnhookWindowsHookEx, BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW,
-                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL,
-                IDC_ARROW, IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL,
-                LB_SETCURSEL, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO,
-                MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-                SW_SHOW, WH_CBT, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_NCCREATE,
-                WM_NCDESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME,
-                WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+                EnumChildWindows, GetClientRect, GetCursorPos, GetDlgItem, GetMessageW,
+                GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsWindow,
+                IsWindowVisible, LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW,
+                SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+                SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
+                BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+                GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL, IDC_ARROW, IDOK, IDYES,
+                LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, MB_ICONERROR,
+                MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE,
+                MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WH_CBT, WINDOW_STYLE,
+                WM_CLOSE, WM_COMMAND, WM_CTLCOLORBTN, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX,
+                WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_NCCREATE,
+                WM_NCDESTROY, WM_SETFONT, WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_BORDER,
+                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
+                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
 };
 
+use crate::windows::{
+    design::{scale_logical, DialogPalette, DialogTheme},
+    theme,
+};
 use crate::{localized_text, Language, LocalizationKey, ProfileValidationError};
 
 use super::{
@@ -68,6 +80,328 @@ const LOGOUT_ID: i32 = 4105;
 const DELETE_ID: i32 = 4106;
 const ADD_PROFILE_NAME_ID: i32 = 4200;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DialogFontFace {
+    SegoeUiVariable,
+    SegoeUi,
+}
+
+/// 대화상자 전용 GDI 자원을 생성하고 해제하는 Win32 경계를 분리합니다.
+///
+/// 테스트 대역은 실제 HWND나 GDI 객체 없이 동일한 소유권 전이를 검증합니다. 구현은 0 핸들을
+/// 생성 실패로 취급하며, `delete_object`에는 이 경계가 생성해 소유한 유효 핸들만 전달합니다.
+trait DialogResourceBackend {
+    fn create_font(&mut self, dpi: u32, heading: bool, face: DialogFontFace) -> HFONT;
+    fn stock_font(&mut self) -> HFONT;
+    fn create_brush(&mut self, colorref: u32) -> HBRUSH;
+    fn delete_object(&mut self, object: HGDIOBJ);
+}
+
+struct WindowsDialogResourceBackend;
+
+impl DialogResourceBackend for WindowsDialogResourceBackend {
+    fn create_font(&mut self, dpi: u32, heading: bool, face: DialogFontFace) -> HFONT {
+        let height = if heading { 18 } else { 14 };
+        let weight = if heading { FW_MEDIUM } else { FW_NORMAL };
+        let face = match face {
+            DialogFontFace::SegoeUiVariable => w!("Segoe UI Variable"),
+            DialogFontFace::SegoeUi => w!("Segoe UI"),
+        };
+        // SAFETY: 고정된 글꼴 속성과 정적 UTF-16 글꼴 이름만 전달하며 반환 핸들의 소유권은
+        // DialogVisualResources가 즉시 인수합니다.
+        unsafe {
+            CreateFontW(
+                -scale_logical(height, dpi),
+                0,
+                0,
+                0,
+                weight.0 as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                PROOF_QUALITY,
+                u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+                face,
+            )
+        }
+    }
+
+    fn stock_font(&mut self) -> HFONT {
+        // SAFETY: DEFAULT_GUI_FONT는 프로세스가 소유하지 않는 시스템 stock 객체이며, 반환 핸들은
+        // 소유 플래그를 설정하지 않아 DeleteObject에 전달되지 않습니다.
+        unsafe { HFONT(GetStockObject(DEFAULT_GUI_FONT).0) }
+    }
+
+    fn create_brush(&mut self, colorref: u32) -> HBRUSH {
+        // SAFETY: COLORREF 값만 전달하고 반환된 브러시의 소유권을 호출자가 즉시 인수합니다.
+        unsafe { CreateSolidBrush(windows::Win32::Foundation::COLORREF(colorref)) }
+    }
+
+    fn delete_object(&mut self, object: HGDIOBJ) {
+        // SAFETY: 호출자는 이 backend가 생성한 유효하고 아직 해제되지 않은 객체만 전달합니다.
+        unsafe {
+            let _ = DeleteObject(object);
+        }
+    }
+}
+
+struct DialogResourceSet {
+    body_font: HFONT,
+    heading_font: HFONT,
+    background_brush: HBRUSH,
+    surface_brush: HBRUSH,
+    owns_body_font: bool,
+    owns_heading_font: bool,
+    owns_background_brush: bool,
+    owns_surface_brush: bool,
+}
+
+struct DialogVisualResources {
+    dpi: u32,
+    palette: DialogPalette,
+    body_font: HFONT,
+    heading_font: HFONT,
+    background_brush: HBRUSH,
+    surface_brush: HBRUSH,
+    owns_body_font: bool,
+    owns_heading_font: bool,
+    owns_background_brush: bool,
+    owns_surface_brush: bool,
+    backend: Box<dyn DialogResourceBackend>,
+}
+
+impl DialogVisualResources {
+    /// 지정한 DPI와 Windows 테마에 맞는 대화상자 글꼴 및 브러시를 생성합니다.
+    ///
+    /// 글꼴 생성에 모두 실패하면 삭제하면 안 되는 시스템 기본 글꼴을 빌리며, 생성한 GDI 객체는
+    /// 반환값이 소유해 재구성 또는 드롭 시 정확히 한 번 해제합니다.
+    fn new(dpi: u32, theme: DialogTheme) -> Self {
+        Self::new_with_backend(dpi, theme, Box::new(WindowsDialogResourceBackend))
+    }
+
+    fn new_with_backend(
+        dpi: u32,
+        theme: DialogTheme,
+        mut backend: Box<dyn DialogResourceBackend>,
+    ) -> Self {
+        let palette = DialogPalette::for_theme(theme);
+        let resources = Self::allocate(&mut *backend, dpi, palette);
+        Self {
+            dpi,
+            palette,
+            body_font: resources.body_font,
+            heading_font: resources.heading_font,
+            background_brush: resources.background_brush,
+            surface_brush: resources.surface_brush,
+            owns_body_font: resources.owns_body_font,
+            owns_heading_font: resources.owns_heading_font,
+            owns_background_brush: resources.owns_background_brush,
+            owns_surface_brush: resources.owns_surface_brush,
+            backend,
+        }
+    }
+
+    /// DPI 또는 테마가 바뀐 대화상자의 GDI 자원을 교체합니다.
+    ///
+    /// 새 자원을 먼저 만든 뒤 이전에 소유한 자원만 해제합니다. stock 글꼴은 빌린 핸들이므로
+    /// 해제하지 않으며, 새 자원은 이후 재구성 또는 드롭까지 이 객체가 소유합니다.
+    fn rebuild_for_dpi(&mut self, dpi: u32, theme: DialogTheme) {
+        let palette = DialogPalette::for_theme(theme);
+        if self.dpi == dpi && self.palette == palette {
+            return;
+        }
+        let resources = Self::allocate(&mut *self.backend, dpi, palette);
+        self.release_owned();
+        self.dpi = dpi;
+        self.palette = palette;
+        self.body_font = resources.body_font;
+        self.heading_font = resources.heading_font;
+        self.background_brush = resources.background_brush;
+        self.surface_brush = resources.surface_brush;
+        self.owns_body_font = resources.owns_body_font;
+        self.owns_heading_font = resources.owns_heading_font;
+        self.owns_background_brush = resources.owns_background_brush;
+        self.owns_surface_brush = resources.owns_surface_brush;
+    }
+
+    fn allocate(
+        backend: &mut dyn DialogResourceBackend,
+        dpi: u32,
+        palette: DialogPalette,
+    ) -> DialogResourceSet {
+        let (body_font, owns_body_font) = create_dialog_font(backend, dpi, false);
+        let (heading_font, owns_heading_font) = create_dialog_font(backend, dpi, true);
+        let background_brush = backend.create_brush(palette.background.colorref);
+        let surface_brush = backend.create_brush(palette.surface.colorref);
+        DialogResourceSet {
+            body_font,
+            heading_font,
+            background_brush,
+            surface_brush,
+            owns_body_font,
+            owns_heading_font,
+            owns_background_brush: !background_brush.0.is_null(),
+            owns_surface_brush: !surface_brush.0.is_null(),
+        }
+    }
+
+    fn release_owned(&mut self) {
+        for (object, owned) in [
+            (HGDIOBJ(self.body_font.0), &mut self.owns_body_font),
+            (HGDIOBJ(self.heading_font.0), &mut self.owns_heading_font),
+            (
+                HGDIOBJ(self.background_brush.0),
+                &mut self.owns_background_brush,
+            ),
+            (HGDIOBJ(self.surface_brush.0), &mut self.owns_surface_brush),
+        ] {
+            if *owned && !object.0.is_null() {
+                self.backend.delete_object(object);
+                *owned = false;
+            }
+        }
+    }
+}
+
+impl Drop for DialogVisualResources {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
+}
+
+fn create_dialog_font(
+    backend: &mut dyn DialogResourceBackend,
+    dpi: u32,
+    heading: bool,
+) -> (HFONT, bool) {
+    for face in [DialogFontFace::SegoeUiVariable, DialogFontFace::SegoeUi] {
+        let font = backend.create_font(dpi, heading, face);
+        if !font.0.is_null() {
+            return (font, true);
+        }
+    }
+    (backend.stock_font(), false)
+}
+
+fn current_dialog_theme() -> DialogTheme {
+    if theme::system_uses_light_theme() {
+        DialogTheme::Light
+    } else {
+        DialogTheme::Dark
+    }
+}
+
+struct DialogChildVisualContext {
+    body_font: HFONT,
+    dark: bool,
+}
+
+/// 대화상자와 모든 기본 자식 컨트롤에 현재 글꼴 및 Windows 컨트롤 테마를 적용합니다.
+///
+/// `dialog`과 열거되는 자식 HWND는 호출 동안 유효해야 하며, `resources`의 글꼴은 컨트롤보다
+/// 오래 살아 있어야 합니다. DWM 또는 개별 컨트롤 테마 적용 실패는 지원되지 않는 Windows
+/// 버전의 시각적 폴백으로 취급하고 모달 생성을 중단하지 않습니다.
+unsafe fn apply_dialog_visuals(dialog: HWND, resources: &DialogVisualResources) {
+    let dark = resources.palette == DialogPalette::for_theme(DialogTheme::Dark);
+    let dark_attribute = i32::from(dark);
+    let _ = DwmSetWindowAttribute(
+        dialog,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        (&dark_attribute as *const i32).cast(),
+        std::mem::size_of_val(&dark_attribute) as u32,
+    );
+    let _ = SendMessageW(
+        dialog,
+        WM_SETFONT,
+        Some(WPARAM(resources.heading_font.0 as usize)),
+        Some(LPARAM(1)),
+    );
+    let context = DialogChildVisualContext {
+        body_font: resources.body_font,
+        dark,
+    };
+    let _ = EnumChildWindows(
+        Some(dialog),
+        Some(apply_dialog_child_visuals),
+        LPARAM((&context as *const DialogChildVisualContext) as isize),
+    );
+}
+
+/// `lparam`은 `EnumChildWindows` 호출 동안 살아 있는 `DialogChildVisualContext`를 가리켜야
+/// 하며, 콜백은 포인터를 보관하지 않습니다.
+unsafe extern "system" fn apply_dialog_child_visuals(child: HWND, lparam: LPARAM) -> BOOL {
+    let context = &*(lparam.0 as *const DialogChildVisualContext);
+    let _ = SendMessageW(
+        child,
+        WM_SETFONT,
+        Some(WPARAM(context.body_font.0 as usize)),
+        Some(LPARAM(1)),
+    );
+    let sub_app = if context.dark {
+        w!("DarkMode_Explorer")
+    } else {
+        w!("Explorer")
+    };
+    let _ = SetWindowTheme(child, sub_app, PCWSTR::null());
+    BOOL(1)
+}
+
+/// 시스템 테마 또는 DPI 변경 후 대화상자 GDI 자원을 교체하고 자식 컨트롤을 다시 스타일링합니다.
+///
+/// HWND는 살아 있는 대화상자여야 하며 `resources`는 해당 HWND의 모든 자식보다 오래 유지됩니다.
+/// 레지스트리, DWM, 테마 API 실패는 어두운 테마 또는 기본 제목 표시줄로 안전하게 폴백합니다.
+unsafe fn rebuild_dialog_visuals(dialog: HWND, resources: *mut DialogVisualResources) {
+    let dpi = GetDpiForWindow(dialog).max(96);
+    // SAFETY: 호출자가 보장한 유효 포인터를 사용하며, 가변 참조는 재진입 가능한 컨트롤 메시지를
+    // 보내기 전에 버립니다.
+    (&mut *resources).rebuild_for_dpi(dpi, current_dialog_theme());
+    apply_dialog_visuals(dialog, &*resources);
+    let _ = InvalidateRect(Some(dialog), None, true);
+}
+
+unsafe fn dialog_control_color(
+    resources: &DialogVisualResources,
+    message: u32,
+    wparam: WPARAM,
+) -> LRESULT {
+    let dc = HDC(wparam.0 as *mut c_void);
+    let _ = SetTextColor(
+        dc,
+        windows::Win32::Foundation::COLORREF(resources.palette.text.colorref),
+    );
+    let background = if message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN {
+        resources.palette.background.colorref
+    } else {
+        resources.palette.surface.colorref
+    };
+    let _ = SetBkColor(dc, windows::Win32::Foundation::COLORREF(background));
+    let brush = if message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN {
+        resources.background_brush
+    } else {
+        resources.surface_brush
+    };
+    LRESULT(brush.0 as isize)
+}
+
+unsafe fn erase_dialog_background(
+    dialog: HWND,
+    resources: &DialogVisualResources,
+    wparam: WPARAM,
+) -> LRESULT {
+    let mut client = RECT::default();
+    if GetClientRect(dialog, &mut client).is_ok() {
+        let _ = FillRect(
+            HDC(wparam.0 as *mut c_void),
+            &client,
+            resources.background_brush,
+        );
+    }
+    LRESULT(1)
+}
+
 struct DialogState {
     controller: ProfileDialogController,
     interaction: ProfileManagerDialogState,
@@ -76,6 +410,7 @@ struct DialogState {
     edit: HWND,
     add_tooltip: HWND,
     add_tooltip_text: Vec<u16>,
+    resources: DialogVisualResources,
 }
 
 struct AddDialogState {
@@ -83,6 +418,7 @@ struct AddDialogState {
     language: Language,
     result: Option<ProfileDialogAction>,
     interaction: AddProfilePromptState,
+    resources: DialogVisualResources,
 }
 
 /// 프로필 흐름이 선택한 메시지 경로를 실제 표시 경계로 전달합니다.
@@ -475,6 +811,7 @@ pub(super) unsafe fn show_profile_manager_owned(
     let module = GetModuleHandleW(None).map_err(win_error)?;
     let instance = HINSTANCE(module.0);
     register_dialog_class(instance)?;
+    let dialog_theme = current_dialog_theme();
 
     let mut state = Box::new(DialogState {
         controller: ProfileDialogController::new(profiles, mutation_pending),
@@ -484,6 +821,7 @@ pub(super) unsafe fn show_profile_manager_owned(
         edit: HWND::default(),
         add_tooltip: HWND::default(),
         add_tooltip_text: Vec::new(),
+        resources: DialogVisualResources::new(96, dialog_theme),
     });
     let state_pointer = (&mut *state as *mut DialogState).cast::<c_void>();
     let title = wide(localized_text(
@@ -509,6 +847,7 @@ pub(super) unsafe fn show_profile_manager_owned(
     let mut window_guard = ModalWindowGuard::new(dialog, owner);
 
     setup_controls(dialog, instance, profiles, &mut state)?;
+    rebuild_dialog_visuals(dialog, std::ptr::addr_of_mut!(state.resources));
     center_window(dialog, profile_manager_dialog_monitor_anchor());
 
     window_guard.disable_owner();
@@ -542,12 +881,14 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
     let module = GetModuleHandleW(None).map_err(win_error)?;
     let instance = HINSTANCE(module.0);
     register_add_dialog_class(instance)?;
+    let dialog_theme = current_dialog_theme();
 
     let mut state = Box::new(AddDialogState {
         edit: HWND::default(),
         language,
         result: None,
         interaction: AddProfilePromptState::new(),
+        resources: DialogVisualResources::new(96, dialog_theme),
     });
     let state_pointer = (&mut *state as *mut AddDialogState).cast::<c_void>();
     let title = wide(localized_text(
@@ -572,6 +913,7 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
     let mut window_guard = ModalWindowGuard::new(dialog, owner);
 
     setup_add_dialog_controls(dialog, instance, &mut state)?;
+    rebuild_dialog_visuals(dialog, std::ptr::addr_of_mut!(state.resources));
     center_window(
         dialog,
         add_profile_dialog_monitor_anchor(owner, live_window_size(owner)),
@@ -960,6 +1302,14 @@ unsafe extern "system" fn dialog_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
+        WM_SETTINGCHANGE | WM_THEMECHANGED | WM_DPICHANGED => {
+            rebuild_dialog_visuals(hwnd, std::ptr::addr_of_mut!((*state).resources));
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
+        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            dialog_control_color(&(*state).resources, message, wparam)
+        }
         WM_COMMAND => {
             if manager_accepts_commands(hwnd, state) {
                 // SAFETY: 원시 포인터만 전달하며 중첩 메시지 루프 전후에 참조를 보관하지 않습니다.
@@ -1015,6 +1365,14 @@ unsafe extern "system" fn add_dialog_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
+        WM_SETTINGCHANGE | WM_THEMECHANGED | WM_DPICHANGED => {
+            rebuild_dialog_visuals(hwnd, std::ptr::addr_of_mut!((*state).resources));
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
+        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            dialog_control_color(&(*state).resources, message, wparam)
+        }
         WM_COMMAND => {
             if add_dialog_accepts_commands(hwnd, state) {
                 // SAFETY: 원시 포인터만 전달하며 중첩 경고 전후에 Rust 참조를 보관하지 않습니다.
@@ -1507,17 +1865,18 @@ fn win_error(error: windows::core::Error) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, io, rc::Rc, thread};
+    use std::{cell::RefCell, collections::VecDeque, ffi::c_void, io, rc::Rc, thread};
 
     use windows::Win32::{
         Foundation::HWND,
+        Graphics::Gdi::{HBRUSH, HFONT, HGDIOBJ},
         UI::WindowsAndMessaging::{
             IDCANCEL, IDOK, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT,
             MESSAGEBOX_STYLE,
         },
     };
 
-    use crate::{Language, LocalizationKey, UsageProfileId};
+    use crate::{windows::design::DialogTheme, Language, LocalizationKey, UsageProfileId};
 
     use super::{
         add_profile_prompt_result, confirm_profile_delete_with_presenter,
@@ -1525,9 +1884,110 @@ mod tests {
         handle_add_profile_prompt_result_with_presenter,
         handle_manager_rename_result_with_presenter, show_add_dialog_warning_with_presenter,
         show_safe_error_with_presenter, AddDialogState, AddProfilePromptCommand,
-        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogWorkArea,
-        ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute, UsageProfileView,
+        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
+        DialogResourceBackend, DialogVisualResources, DialogWorkArea, ProfileDialogController,
+        ProfileMessagePresenter, ProfileMessageRoute, UsageProfileView,
     };
+
+    #[derive(Default)]
+    struct ResourceCalls {
+        font_faces: Vec<DialogFontFace>,
+        deleted: Vec<usize>,
+    }
+
+    struct RecordingResourceBackend {
+        calls: Rc<RefCell<ResourceCalls>>,
+        fonts: VecDeque<usize>,
+        brushes: VecDeque<usize>,
+        stock_font: usize,
+    }
+
+    impl DialogResourceBackend for RecordingResourceBackend {
+        fn create_font(&mut self, _dpi: u32, _heading: bool, face: DialogFontFace) -> HFONT {
+            self.calls.borrow_mut().font_faces.push(face);
+            font_handle(self.fonts.pop_front().unwrap_or_default())
+        }
+
+        fn stock_font(&mut self) -> HFONT {
+            font_handle(self.stock_font)
+        }
+
+        fn create_brush(&mut self, _colorref: u32) -> HBRUSH {
+            brush_handle(self.brushes.pop_front().unwrap_or_default())
+        }
+
+        fn delete_object(&mut self, object: HGDIOBJ) {
+            self.calls.borrow_mut().deleted.push(object.0 as usize);
+        }
+    }
+
+    fn font_handle(value: usize) -> HFONT {
+        HFONT(value as *mut c_void)
+    }
+
+    fn brush_handle(value: usize) -> HBRUSH {
+        HBRUSH(value as *mut c_void)
+    }
+
+    fn test_visual_resources() -> DialogVisualResources {
+        DialogVisualResources::new_with_backend(
+            96,
+            DialogTheme::Dark,
+            Box::new(RecordingResourceBackend {
+                calls: Rc::new(RefCell::new(ResourceCalls::default())),
+                fonts: VecDeque::new(),
+                brushes: VecDeque::new(),
+                stock_font: 99,
+            }),
+        )
+    }
+
+    #[test]
+    fn font_creation_retries_segoe_ui_before_using_stock_font() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls: Rc::clone(&calls),
+            fonts: VecDeque::from([0, 0, 0, 0]),
+            brushes: VecDeque::from([21, 22]),
+            stock_font: 99,
+        };
+
+        let resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+        drop(resources);
+
+        assert_eq!(
+            calls.borrow().font_faces,
+            [
+                DialogFontFace::SegoeUiVariable,
+                DialogFontFace::SegoeUi,
+                DialogFontFace::SegoeUiVariable,
+                DialogFontFace::SegoeUi,
+            ]
+        );
+        assert!(!calls.borrow().deleted.contains(&99));
+    }
+
+    #[test]
+    fn rebuild_and_teardown_delete_each_owned_handle_once() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls: Rc::clone(&calls),
+            fonts: VecDeque::from([11, 0, 0, 31, 32]),
+            brushes: VecDeque::from([21, 22, 41, 42]),
+            stock_font: 99,
+        };
+        let mut resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+
+        resources.rebuild_for_dpi(144, DialogTheme::Light);
+        drop(resources);
+
+        let mut deleted = calls.borrow().deleted.clone();
+        deleted.sort_unstable();
+        assert_eq!(deleted, [11, 21, 22, 31, 32, 41, 42]);
+        assert!(!deleted.contains(&99));
+    }
 
     #[derive(Debug, PartialEq, Eq)]
     struct PresentedProfileMessage {
@@ -1612,6 +2072,7 @@ mod tests {
             language: Language::English,
             result: None,
             interaction: Default::default(),
+            resources: test_visual_resources(),
         };
         assert!(state.interaction.begin_command());
         let mut presenter = RecordingProfileMessagePresenter::returning(IDOK);
@@ -1643,6 +2104,7 @@ mod tests {
             language: Language::English,
             result: None,
             interaction: Default::default(),
+            resources: test_visual_resources(),
         };
         assert!(state.interaction.begin_command());
         let mut presenter = RecordingProfileMessagePresenter::returning(IDOK);
