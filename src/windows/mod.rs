@@ -1,6 +1,7 @@
 //! Windows 애플리케이션의 형식화된 UI 경계와 플랫폼 구현입니다.
 
 pub mod autostart;
+pub mod design;
 pub mod lifecycle;
 pub mod native;
 pub mod profile_dialog;
