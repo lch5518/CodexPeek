@@ -5,8 +5,8 @@ use std::{
 
 use codex_usage_monitor::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,
-    UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
-    UpdateUserAction, UreqHttpClient,
+    UpdateCheckNotice, UpdateCheckStart, UpdateChecker, UpdatePresentation,
+    UpdatePresentationStatus, UpdateUserAction, UreqHttpClient,
 };
 use semver::Version;
 
@@ -34,6 +34,11 @@ fn user_check_without_an_update_reports_current() {
     presentation.record_result(Ok(None));
 
     assert_eq!(presentation.status(), UpdatePresentationStatus::Current);
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Current)
+    );
+    assert!(presentation.take_user_notice().is_none());
     assert!(presentation.take_open_request().is_none());
 }
 
@@ -48,6 +53,11 @@ fn user_check_network_error_reports_failed() {
     presentation.record_result(Err(UpdateCheckError::Network));
 
     assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Failed)
+    );
+    assert!(presentation.take_user_notice().is_none());
     assert!(presentation.take_open_request().is_none());
 }
 
@@ -77,6 +87,11 @@ fn user_intent_during_automatic_check_opens_available_result_once_without_duplic
     assert_eq!(presentation.status(), UpdatePresentationStatus::Available);
     assert_eq!(presentation.take_open_request(), Some(update.clone()));
     assert!(presentation.take_open_request().is_none());
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Available(update.clone()))
+    );
+    assert!(presentation.take_user_notice().is_none());
     presentation.record_result(Ok(Some(available_update("4.0.0"))));
     assert_eq!(presentation.available_update(), Some(update));
 }
@@ -96,6 +111,11 @@ fn user_intent_during_automatic_check_reports_current_without_opening() {
     presentation.record_result(Ok(None));
 
     assert_eq!(presentation.status(), UpdatePresentationStatus::Current);
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Current)
+    );
+    assert!(presentation.take_user_notice().is_none());
     assert!(presentation.take_open_request().is_none());
 }
 
@@ -114,6 +134,11 @@ fn user_intent_during_automatic_check_reports_failure_without_opening() {
     presentation.record_result(Err(UpdateCheckError::Network));
 
     assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Failed)
+    );
+    assert!(presentation.take_user_notice().is_none());
     assert!(presentation.take_open_request().is_none());
 }
 
@@ -129,7 +154,24 @@ fn automatic_update_results_are_visible_without_requesting_browser_open() {
     presentation.record_result(Ok(Some(update.clone())));
 
     assert_eq!(presentation.available_update(), Some(update));
+    assert!(presentation.take_user_notice().is_none());
     assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn starting_another_check_does_not_discard_an_unconsumed_user_notice() {
+    let presentation = UpdatePresentation::default();
+    presentation.begin_check(UpdateCheckIntent::UserInitiated);
+    presentation.record_result(Ok(None));
+
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::Started
+    );
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Current)
+    );
 }
 
 #[test]
@@ -143,8 +185,13 @@ fn user_initiated_results_create_exactly_one_open_request() {
     );
     presentation.record_result(Ok(Some(update.clone())));
 
-    assert_eq!(presentation.take_open_request(), Some(update));
+    assert_eq!(presentation.take_open_request(), Some(update.clone()));
     assert!(presentation.take_open_request().is_none());
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Available(update))
+    );
+    assert!(presentation.take_user_notice().is_none());
 }
 
 #[test]
@@ -229,21 +276,40 @@ fn invalid_repository_disables_network_checks() {
 }
 
 #[test]
-fn tag_name_may_have_one_v_prefix_but_not_multiple_prefixes() {
+fn invalid_version_prefix_fails_the_check() {
     let checker = UpdateChecker::new("1.0.0", Some("https://github.com/owner/repo"), 1024).unwrap();
     let client = FakeClient::new(HttpResponse {
         status: 200,
         body: br#"{"tag_name":"vv2.0.0","html_url":"https://github.com/owner/repo/releases/tag/vv2.0.0"}"#.to_vec(),
     });
 
-    assert!(checker
-        .check_if_due(
+    assert_eq!(
+        checker.check_if_due(
             &client,
             None,
             SystemTime::UNIX_EPOCH + Duration::from_secs(100_000)
-        )
-        .unwrap()
-        .is_none());
+        ),
+        Err(UpdateCheckError::Network)
+    );
+}
+
+#[test]
+fn tag_must_match_the_final_browser_url_segment_policy() {
+    let checker = UpdateChecker::new("1.0.0", Some("https://github.com/owner/repo"), 1024).unwrap();
+    let client = FakeClient::new(HttpResponse {
+        status: 200,
+        body: br#"{"tag_name":"v2.0.0+build","html_url":"https://github.com/owner/repo/releases/tag/v2.0.0+build"}"#
+            .to_vec(),
+    });
+
+    assert_eq!(
+        checker.check_if_due(
+            &client,
+            None,
+            SystemTime::UNIX_EPOCH + Duration::from_secs(100_000)
+        ),
+        Err(UpdateCheckError::Network)
+    );
 }
 
 #[test]
@@ -297,7 +363,7 @@ fn equal_or_older_release_is_not_reported() {
 }
 
 #[test]
-fn malformed_oversized_non_success_and_unsafe_urls_do_not_report_updates() {
+fn malformed_oversized_non_success_and_unsafe_responses_fail_the_check() {
     let checker = UpdateChecker::new("1.0.0", Some("https://github.com/owner/repo"), 16).unwrap();
     for response in [
         HttpResponse {
@@ -322,14 +388,14 @@ fn malformed_oversized_non_success_and_unsafe_urls_do_not_report_updates() {
         },
     ] {
         let client = FakeClient::new(response);
-        assert!(checker
-            .check_if_due(
+        assert_eq!(
+            checker.check_if_due(
                 &client,
                 None,
                 SystemTime::UNIX_EPOCH + Duration::from_secs(100_000)
-            )
-            .unwrap()
-            .is_none());
+            ),
+            Err(UpdateCheckError::Network)
+        );
     }
 }
 
@@ -341,14 +407,14 @@ fn release_url_must_be_the_exact_tag_page() {
         body: br#"{"tag_name":"2.0.0","html_url":"https://github.com/owner/repo/releases/tag/v2.0.0/assets"}"#.to_vec(),
     });
 
-    assert!(checker
-        .check_if_due(
+    assert_eq!(
+        checker.check_if_due(
             &client,
             None,
             SystemTime::UNIX_EPOCH + Duration::from_secs(100_000)
-        )
-        .unwrap()
-        .is_none());
+        ),
+        Err(UpdateCheckError::Network)
+    );
 }
 
 #[test]

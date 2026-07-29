@@ -140,6 +140,12 @@ pub enum LocalizationKey {
     MenuShowRemaining,
     /// 주간 사용량 표시 전환 메뉴입니다.
     MenuShowWeekly,
+    /// 새 버전과 GitHub 릴리스 페이지 열기를 확인하는 문구입니다.
+    UpdateAvailablePrompt,
+    /// 업데이트 확인 실패 후 복구 방법을 안내하는 문구입니다.
+    UpdateFailedHelp,
+    /// GitHub 릴리스 페이지 열기 실패 안내입니다.
+    UpdateOpenFailed,
 }
 
 impl LocalizationKey {
@@ -191,6 +197,9 @@ impl LocalizationKey {
         Self::DiagnosticTaskbar,
         Self::MenuShowRemaining,
         Self::MenuShowWeekly,
+        Self::UpdateAvailablePrompt,
+        Self::UpdateFailedHelp,
+        Self::UpdateOpenFailed,
     ];
 
     const fn index(self) -> usize {
@@ -241,11 +250,14 @@ impl LocalizationKey {
             Self::DiagnosticTaskbar => 43,
             Self::MenuShowRemaining => 44,
             Self::MenuShowWeekly => 45,
+            Self::UpdateAvailablePrompt => 46,
+            Self::UpdateFailedHelp => 47,
+            Self::UpdateOpenFailed => 48,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 46;
+const LOCALIZATION_KEY_COUNT: usize = 49;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -294,6 +306,9 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "작업 표시줄 상태를 확인할 수 없습니다",
     "남은 사용량 표시",
     "주간 사용량 표시",
+    "버전 {version}을 사용할 수 있습니다.\n\nGitHub 릴리스 페이지를 여시겠습니까?",
+    "업데이트 확인에 실패했습니다. 네트워크 또는 프록시 설정을 확인한 후 다시 시도하세요.",
+    "GitHub 릴리스 페이지를 열 수 없습니다. 기본 브라우저 설정을 확인하세요.",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -343,6 +358,9 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Taskbar status could not be verified",
     "Show remaining usage",
     "Show weekly usage",
+    "Version {version} is available.\n\nOpen the GitHub release page?",
+    "The update check failed. Check your network or proxy settings and try again.",
+    "The GitHub release page could not be opened. Check your default browser settings.",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -392,6 +410,9 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "No se pudo verificar el estado de la barra de tareas",
     "Mostrar uso restante",
     "Mostrar uso semanal",
+    "La versión {version} está disponible.\n\n¿Abrir la página de la versión en GitHub?",
+    "La búsqueda de actualizaciones falló. Comprueba la configuración de red o proxy e inténtalo de nuevo.",
+    "No se pudo abrir la página de la versión en GitHub. Comprueba la configuración del navegador predeterminado.",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -441,6 +462,9 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Não foi possível verificar o status da barra de tarefas",
     "Mostrar uso restante",
     "Mostrar uso semanal",
+    "A versão {version} está disponível.\n\nAbrir a página da versão no GitHub?",
+    "A verificação de atualizações falhou. Verifique as configurações de rede ou proxy e tente novamente.",
+    "Não foi possível abrir a página da versão no GitHub. Verifique as configurações do navegador padrão.",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -490,6 +514,9 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Status taskbar tidak dapat diverifikasi",
     "Tampilkan sisa penggunaan",
     "Tampilkan penggunaan mingguan",
+    "Versi {version} tersedia.\n\nBuka halaman rilis GitHub?",
+    "Pemeriksaan pembaruan gagal. Periksa pengaturan jaringan atau proksi, lalu coba lagi.",
+    "Halaman rilis GitHub tidak dapat dibuka. Periksa pengaturan browser default.",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -539,6 +566,9 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "タスクバーの状態を確認できませんでした",
     "残り使用量を表示",
     "週間使用量を表示",
+    "バージョン {version} を利用できます。\n\nGitHub のリリースページを開きますか？",
+    "更新の確認に失敗しました。ネットワークまたはプロキシ設定を確認して、もう一度お試しください。",
+    "GitHub のリリースページを開けませんでした。既定のブラウザー設定を確認してください。",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -588,6 +618,9 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "टास्कबार स्थिति सत्यापित नहीं हो सकी",
     "शेष उपयोग दिखाएँ",
     "साप्ताहिक उपयोग दिखाएँ",
+    "संस्करण {version} उपलब्ध है।\n\nGitHub रिलीज़ पृष्ठ खोलें?",
+    "अपडेट जाँच विफल रही। नेटवर्क या प्रॉक्सी सेटिंग जाँचें और फिर से प्रयास करें।",
+    "GitHub रिलीज़ पृष्ठ नहीं खुल सका। डिफ़ॉल्ट ब्राउज़र सेटिंग जाँचें।",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -637,6 +670,9 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Taskleistenstatus konnte nicht verifiziert werden",
     "Verbleibende Nutzung anzeigen",
     "Wöchentliche Nutzung anzeigen",
+    "Version {version} ist verfügbar.\n\nGitHub-Release-Seite öffnen?",
+    "Die Updateprüfung ist fehlgeschlagen. Prüfen Sie die Netzwerk- oder Proxy-Einstellungen und versuchen Sie es erneut.",
+    "Die GitHub-Release-Seite konnte nicht geöffnet werden. Prüfen Sie die Einstellungen des Standardbrowsers.",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -686,6 +722,9 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "L'état de la barre des tâches n'a pas pu être vérifié",
     "Afficher l'utilisation restante",
     "Afficher l'utilisation hebdomadaire",
+    "La version {version} est disponible.\n\nOuvrir la page de version GitHub ?",
+    "La recherche de mises à jour a échoué. Vérifiez les paramètres réseau ou proxy, puis réessayez.",
+    "Impossible d'ouvrir la page de version GitHub. Vérifiez les paramètres du navigateur par défaut.",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -735,6 +774,9 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Không thể xác minh trạng thái thanh tác vụ",
     "Hiển thị mức sử dụng còn lại",
     "Hiển thị mức sử dụng hằng tuần",
+    "Phiên bản {version} hiện có.\n\nMở trang bản phát hành GitHub?",
+    "Kiểm tra cập nhật không thành công. Hãy kiểm tra cài đặt mạng hoặc proxy rồi thử lại.",
+    "Không thể mở trang bản phát hành GitHub. Hãy kiểm tra cài đặt trình duyệt mặc định.",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -784,6 +826,9 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Görev çubuğu durumu doğrulanamadı",
     "Kalan kullanımı göster",
     "Haftalık kullanımı göster",
+    "{version} sürümü kullanılabilir.\n\nGitHub sürüm sayfası açılsın mı?",
+    "Güncelleme denetimi başarısız oldu. Ağ veya proxy ayarlarını denetleyip yeniden deneyin.",
+    "GitHub sürüm sayfası açılamadı. Varsayılan tarayıcı ayarlarını denetleyin.",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -833,6 +878,9 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "تعذر التحقق من حالة شريط المهام",
     "إظهار الاستخدام المتبقي",
     "إظهار الاستخدام الأسبوعي",
+    "الإصدار {version} متاح.\n\nهل تريد فتح صفحة الإصدار على GitHub؟",
+    "فشل التحقق من التحديث. تحقق من إعدادات الشبكة أو الوكيل ثم أعد المحاولة.",
+    "تعذر فتح صفحة الإصدار على GitHub. تحقق من إعدادات المتصفح الافتراضي.",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.

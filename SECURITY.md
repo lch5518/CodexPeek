@@ -45,14 +45,15 @@ to the CLI's own authentication, configuration, and network policy.
 Official builds check release metadata at most once per day through
 `https://api.github.com/repos/lch5518/CodexPeek/releases/latest`. The request enforces
 HTTPS and response size/time limits. The monitor can open only an exact validated
-`https://github.com/lch5518/CodexPeek/releases/tag/<tag>` page, and only after an explicit
-user action. It never downloads, replaces, or executes an update. Proxy diagnostics report
-presence only; they never log proxy URLs, credentials, or environment-variable values.
+`https://github.com/lch5518/CodexPeek/releases/tag/<tag>` page. A user-initiated check always
+shows its result, and the page opens only after the user confirms the update prompt. It never
+downloads, replaces, or executes an update. Proxy diagnostics report presence only; they never
+log proxy URLs, credentials, or environment-variable values.
 
 공식 빌드는 하루에 한 번 이하로 위 GitHub API에서 릴리스 메타데이터만 확인합니다.
-HTTPS와 응답 크기·시간 제한을 적용하며, 사용자가 명시적으로 선택한 경우에만 검증된
-정확한 GitHub 릴리스 페이지를 브라우저로 엽니다. 업데이트 파일을 다운로드·교체·실행하지
-않습니다.
+HTTPS와 응답 크기·시간 제한을 적용합니다. 수동 확인 결과는 항상 대화상자로 알리고, 사용자가
+업데이트 안내에서 열기를 다시 확인한 경우에만 검증된 정확한 GitHub 릴리스 페이지를 브라우저로
+엽니다. 업데이트 파일을 다운로드·교체·실행하지 않습니다.
 
 ## Distribution integrity / 배포 파일 무결성
 

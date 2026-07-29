@@ -100,3 +100,25 @@ pub fn show_diagnostic_summary(title: &str, message: &str) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "Windows only"))
     }
 }
+
+/// 업데이트 확인 결과를 모달 Windows 대화상자로 표시합니다.
+///
+/// `confirm_open`이 참이면 사용자가 GitHub 릴리스 페이지를 열지 확인하고, 명시적으로 동의한
+/// 경우에만 `true`를 반환합니다. `warning`은 실패 결과에 경고 아이콘을 사용하도록 지정합니다.
+/// 이 함수는 UI 스레드에서 호출해야 하며 브라우저를 직접 열지 않습니다.
+pub(crate) fn show_update_dialog(
+    title: &str,
+    message: &str,
+    confirm_open: bool,
+    warning: bool,
+) -> io::Result<bool> {
+    #[cfg(windows)]
+    unsafe {
+        platform::show_update_dialog(title, message, confirm_open, warning)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (title, message, confirm_open, warning);
+        Err(io::Error::new(io::ErrorKind::Unsupported, "Windows only"))
+    }
+}

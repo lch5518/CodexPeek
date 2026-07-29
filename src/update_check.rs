@@ -19,10 +19,10 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
-/// 업데이트 검사 통신 실패를 나타내는 안전한 오류입니다.
+/// 업데이트 검사 통신 또는 응답 검증 실패를 나타내는 안전한 오류입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateCheckError {
-    /// 네트워크 요청을 완료하지 못했습니다.
+    /// 네트워크 요청을 완료하지 못했거나 릴리스 응답이 안전한 형식이 아닙니다.
     Network,
 }
 
@@ -90,6 +90,20 @@ pub struct AvailableUpdate {
     pub release_url: String,
 }
 
+/// 수동 업데이트 확인이 끝난 뒤 사용자에게 한 번 표시할 결과입니다.
+///
+/// `Available`에는 검증이 끝난 정확한 GitHub 태그 URL만 포함됩니다. 자동 확인 결과는 사용자가
+/// 진행 중인 검사에 명시적으로 합류한 경우가 아니면 이 알림으로 생성되지 않습니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateCheckNotice {
+    /// 현재 실행 중인 버전이 최신입니다.
+    Current,
+    /// 검증된 새 버전을 사용할 수 있습니다.
+    Available(AvailableUpdate),
+    /// 네트워크 요청 또는 릴리스 응답 검증에 실패했습니다.
+    Failed,
+}
+
 /// 업데이트 검사가 시작된 사용자 의도를 구분합니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateCheckIntent {
@@ -127,7 +141,7 @@ pub enum UpdatePresentationStatus {
 /// 사용자의 업데이트 메뉴 동작을 안전한 저장 상태로 해석한 결과입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdateUserAction {
-    /// 검사기가 검증해 저장한 업데이트 페이지를 엽니다.
+    /// 검사기가 검증해 저장한 업데이트를 사용자에게 제시합니다.
     Open(AvailableUpdate),
     /// 호출자가 새 검사 작업자를 시작해야 합니다.
     StartCheck,
@@ -140,14 +154,15 @@ struct UpdatePresentationInner {
     status: UpdatePresentationStatus,
     available: Option<AvailableUpdate>,
     open_requested: bool,
+    pending_user_notice: Option<UpdateCheckNotice>,
     running_intent: Option<UpdateCheckIntent>,
     pending_user_intent: bool,
 }
 
-/// 업데이트 결과와 UI 스레드가 처리할 열기 요청을 공유하는 상태입니다.
+/// 업데이트 결과와 UI 스레드가 처리할 일회성 사용자 알림을 공유하는 상태입니다.
 ///
-/// 복제본은 같은 내부 상태를 공유합니다. 검사 작업자는 결과만 기록하고, 브라우저 열기는
-/// `take_open_request`로 요청을 소비한 UI 스레드가 담당해야 합니다.
+/// 복제본은 같은 내부 상태를 공유합니다. 검사 작업자는 결과만 기록하고, 대화상자와 브라우저 같은
+/// 사용자 상호작용은 `take_user_notice`로 결과를 소비한 UI 스레드가 담당해야 합니다.
 #[derive(Clone, Default)]
 pub struct UpdatePresentation {
     inner: Arc<Mutex<UpdatePresentationInner>>,
@@ -163,10 +178,10 @@ impl UpdatePresentation {
         begin_check_locked(&mut inner, intent)
     }
 
-    /// 실행 중인 검사를 완료하고 결과와 일회성 사용자 열기 요청을 원자적으로 기록합니다.
+    /// 실행 중인 검사를 완료하고 상태와 일회성 사용자 알림을 원자적으로 기록합니다.
     ///
-    /// 새 버전이 있고 유효한 사용자 의도가 있었던 경우에만 열기 요청을 한 번 만듭니다.
-    /// 최신 상태와 네트워크 실패도 각각 `Current`, `Failed`로 보존합니다.
+    /// 유효한 사용자 의도가 있었으면 새 버전·최신 상태·검사 실패 중 하나를 알림으로 한 번 저장합니다.
+    /// 자동 검사만 실행된 경우에는 표시 상태만 갱신하고 사용자 알림을 만들지 않습니다.
     pub fn record_result(&self, result: Result<Option<AvailableUpdate>, UpdateCheckError>) {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         if inner.running_intent.is_none() {
@@ -177,20 +192,26 @@ impl UpdatePresentation {
         inner.running_intent = None;
         inner.pending_user_intent = false;
         inner.open_requested = false;
-        match result {
+        let notice = match result {
             Ok(Some(update)) => {
                 inner.status = UpdatePresentationStatus::Available;
-                inner.available = Some(update);
+                inner.available = Some(update.clone());
                 inner.open_requested = user_initiated;
+                UpdateCheckNotice::Available(update)
             }
             Ok(None) => {
                 inner.status = UpdatePresentationStatus::Current;
                 inner.available = None;
+                UpdateCheckNotice::Current
             }
             Err(_) => {
                 inner.status = UpdatePresentationStatus::Failed;
                 inner.available = None;
+                UpdateCheckNotice::Failed
             }
+        };
+        if user_initiated {
+            inner.pending_user_notice = Some(notice);
         }
     }
 
@@ -211,7 +232,7 @@ impl UpdatePresentation {
             .clone()
     }
 
-    /// 사용자 메뉴 동작을 저장된 결과 열기 또는 원자적인 검사 시작 결정으로 변환합니다.
+    /// 사용자 메뉴 동작을 저장된 결과 표시 또는 원자적인 검사 시작 결정으로 변환합니다.
     ///
     /// 결과 확인과 검사 시작을 같은 잠금에서 처리하므로 자동 검사 완료와 경합해 사용자 의도가
     /// 사라지지 않습니다. `StartCheck`인 경우에만 호출자가 새 작업자를 만들어야 합니다.
@@ -226,7 +247,10 @@ impl UpdatePresentation {
         }
     }
 
-    /// UI 스레드가 처리할 일회성 브라우저 열기 요청을 소비합니다.
+    /// UI 스레드가 처리할 기존 일회성 브라우저 열기 요청을 소비합니다.
+    ///
+    /// 호환성을 위해 유지되는 API입니다. 새 UI는 `take_user_notice`로 모든 결과를 소비하고, 반환된
+    /// 업데이트를 대화상자로 제시한 뒤 사용자가 동의한 경우에만 검증된 URL을 열어야 합니다.
     pub fn take_open_request(&self) -> Option<AvailableUpdate> {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         if !inner.open_requested {
@@ -234,6 +258,18 @@ impl UpdatePresentation {
         }
         inner.open_requested = false;
         inner.available.clone()
+    }
+
+    /// 수동 업데이트 확인 결과를 정확히 한 번 반환합니다.
+    ///
+    /// 백그라운드 작업자는 결과만 기록하며, 호출자는 UI 스레드에서 이 메서드를 호출해 대화상자 같은
+    /// 사용자 상호작용을 처리해야 합니다. 결과를 반환하면 같은 알림은 즉시 제거됩니다.
+    pub fn take_user_notice(&self) -> Option<UpdateCheckNotice> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending_user_notice
+            .take()
     }
 }
 
@@ -289,7 +325,8 @@ impl UpdateChecker {
     ///
     /// `last_check` 뒤 24시간이 지나지 않았으면 요청 없이 `Ok(None)`을 반환합니다. 그 외에는
     /// `client`로 최신 릴리스를 조회해 현재 버전보다 새롭고 정확한 GitHub 태그 페이지를 가진 경우만
-    /// `Ok(Some(...))`으로 반환합니다. 네트워크 실패만 `Err`로 전달하며, 비정상 응답은 안전하게 무시합니다.
+    /// `Ok(Some(...))`으로 반환합니다. 네트워크 실패와 비정상·과대·안전하지 않은 응답은 모두
+    /// `Err`로 반환하여 최신 상태로 오인하지 않습니다.
     pub fn check_if_due(
         &self,
         client: &dyn ReleaseHttpClient,
@@ -308,26 +345,27 @@ impl UpdateChecker {
         );
         let response = client.get(&url, USER_AGENT, REQUEST_TIMEOUT, self.max_bytes)?;
         if response.status / 100 != 2 || response.body.len() > self.max_bytes {
-            return Ok(None);
+            return Err(UpdateCheckError::Network);
         }
         let release: ReleaseDto = match serde_json::from_slice(&response.body) {
             Ok(release) => release,
-            Err(_) => return Ok(None),
+            Err(_) => return Err(UpdateCheckError::Network),
         };
         let version_text = release
             .tag_name
             .strip_prefix('v')
             .unwrap_or(&release.tag_name);
         if version_text.starts_with('v') {
-            return Ok(None);
+            return Err(UpdateCheckError::Network);
         }
         let version = match Version::parse(version_text) {
             Ok(version) => version,
-            Err(_) => return Ok(None),
+            Err(_) => return Err(UpdateCheckError::Network),
         };
-        if version <= self.current_version
-            || !self.is_safe_release_url(&release.html_url, &release.tag_name)
-        {
+        if !self.is_safe_release_url(&release.html_url, &release.tag_name) {
+            return Err(UpdateCheckError::Network);
+        }
+        if version <= self.current_version {
             return Ok(None);
         }
         Ok(Some(AvailableUpdate {
@@ -337,8 +375,7 @@ impl UpdateChecker {
     }
 
     fn is_safe_release_url(&self, value: &str, tag_name: &str) -> bool {
-        !tag_name.is_empty()
-            && !tag_name.contains(['/', '\\', '?', '#', '@'])
+        valid_segment(tag_name)
             && value
                 == format!(
                     "https://github.com/{}/{}/releases/tag/{tag_name}",

@@ -49,6 +49,9 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::DiagnosticTaskbar,
         LocalizationKey::MenuShowRemaining,
         LocalizationKey::MenuShowWeekly,
+        LocalizationKey::UpdateAvailablePrompt,
+        LocalizationKey::UpdateFailedHelp,
+        LocalizationKey::UpdateOpenFailed,
     ];
     let required_languages = [
         Language::Korean,

@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     io,
     sync::atomic::{AtomicU32, Ordering},
     sync::mpsc::{Receiver, TryRecvError},
@@ -45,12 +46,13 @@ use windows::{
                 SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
                 ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
                 CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
-                MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-                SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA,
-                WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE,
-                WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE,
-                WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS, WS_EX_LAYERED,
-                WS_EX_TOOLWINDOW, WS_POPUP,
+                IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TASKMODAL,
+                MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA,
+                SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
+                WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
+                WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS,
+                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -81,6 +83,34 @@ const TASKBAR_RECONCILE_TICKS: u8 = 30;
 const OWNER_CLASS: PCWSTR = w!("CodexUsageMonitor.Hidden.v1");
 const WIDGET_CLASS: PCWSTR = w!("CodexUsageMonitor.Widget.v1");
 static TASKBAR_CREATED_MESSAGE: AtomicU32 = AtomicU32::new(0);
+
+thread_local! {
+    static UPDATE_DIALOG_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+}
+
+struct UpdateDialogGuard;
+
+impl UpdateDialogGuard {
+    fn acquire() -> Option<Self> {
+        UPDATE_DIALOG_IN_PROGRESS.with(|in_progress| {
+            if in_progress.replace(true) {
+                None
+            } else {
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for UpdateDialogGuard {
+    fn drop(&mut self) {
+        UPDATE_DIALOG_IN_PROGRESS.with(|in_progress| in_progress.set(false));
+    }
+}
+
+fn update_dialog_in_progress() -> bool {
+    UPDATE_DIALOG_IN_PROGRESS.with(Cell::get)
+}
 
 struct TaskbarRefreshSchedule {
     startup_retries_remaining: u8,
@@ -316,6 +346,10 @@ unsafe extern "system" fn owner_proc(
     let pointer = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut NativeState<'static>;
     if pointer.is_null() {
         return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    if message == TRAY_CALLBACK && update_dialog_in_progress() {
+        return LRESULT(0);
     }
 
     if message == taskbar_created {
@@ -1443,14 +1477,58 @@ pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::
     }
 }
 
+pub(super) unsafe fn show_update_dialog(
+    title: &str,
+    message: &str,
+    confirm_open: bool,
+    warning: bool,
+) -> io::Result<bool> {
+    let Some(_guard) = UpdateDialogGuard::acquire() else {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "update dialog already in progress",
+        ));
+    };
+    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+    let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    let buttons = if confirm_open { MB_YESNO } else { MB_OK };
+    let icon = if warning {
+        MB_ICONWARNING
+    } else {
+        MB_ICONINFORMATION
+    };
+    let result = MessageBoxW(
+        None,
+        PCWSTR(message.as_ptr()),
+        PCWSTR(title.as_ptr()),
+        update_dialog_style(buttons, icon),
+    );
+    if result.0 == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(confirm_open && update_dialog_opens_release(result))
+    }
+}
+
+fn update_dialog_opens_release(result: MESSAGEBOX_RESULT) -> bool {
+    result == IDYES
+}
+
+fn update_dialog_style(buttons: MESSAGEBOX_STYLE, icon: MESSAGEBOX_STYLE) -> MESSAGEBOX_STYLE {
+    buttons | icon | MB_SETFOREGROUND | MB_TASKMODAL
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
-        taskbar_palette, TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, NIN_SELECT,
-        WM_CONTEXTMENU,
+        taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
+        update_dialog_style, TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk,
+        UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONUP, WM_RBUTTONUP};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IDNO, IDYES, MB_ICONINFORMATION, MB_TASKMODAL, MB_YESNO, WM_LBUTTONUP, WM_RBUTTONUP,
+    };
 
     #[test]
     fn tray_menu_uses_only_version_4_activation_events() {
@@ -1458,6 +1536,31 @@ mod tests {
         assert!(should_open_tray_menu(NIN_SELECT));
         assert!(!should_open_tray_menu(WM_RBUTTONUP));
         assert!(!should_open_tray_menu(WM_LBUTTONUP));
+    }
+
+    #[test]
+    fn update_dialog_opens_release_only_for_an_explicit_yes() {
+        assert!(update_dialog_opens_release(IDYES));
+        assert!(!update_dialog_opens_release(IDNO));
+    }
+
+    #[test]
+    fn update_dialog_style_is_task_modal_for_an_ownerless_dialog() {
+        let style = update_dialog_style(MB_YESNO, MB_ICONINFORMATION);
+
+        assert_eq!(style.0 & MB_TASKMODAL.0, MB_TASKMODAL.0);
+    }
+
+    #[test]
+    fn update_dialog_guard_is_scoped_and_rejects_reentry() {
+        assert!(!update_dialog_in_progress());
+
+        let guard = UpdateDialogGuard::acquire().expect("first update dialog may enter");
+        assert!(update_dialog_in_progress());
+        assert!(UpdateDialogGuard::acquire().is_none());
+
+        drop(guard);
+        assert!(!update_dialog_in_progress());
     }
 
     #[test]
