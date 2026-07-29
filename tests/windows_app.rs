@@ -726,6 +726,15 @@ fn manager_marks_only_the_custom_system_profile_as_default() {
         "Main (Default Codex account)"
     );
 
+    let default_system = UsageProfileView {
+        label: "Default Codex account".to_owned(),
+        ..system.clone()
+    };
+    assert_eq!(
+        profile_manager_row_label(&default_system, Language::English),
+        "Default Codex account"
+    );
+
     let managed = UsageProfileView {
         id: UsageProfileId::Managed(1),
         ..system.clone()

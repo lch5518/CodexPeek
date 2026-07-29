@@ -2068,17 +2068,22 @@ fn safe_path_text(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{
         data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail, proxy_presence,
-        row_view, row_view_with_reset_time, selected_usage_profile_label, status_with_update,
-        taskbar_copy, taskbar_risk_text, DiagnosticSummary,
+        row_view, row_view_with_reset_time, status_with_update, taskbar_copy, taskbar_risk_text,
+        AppRuntime, DiagnosticSummary,
     };
-    use crate::windows::WidgetDataState;
+    use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
+    use crate::windows::{UiBackend, WidgetDataState};
     use crate::{
-        domain::ResetDateTime, windows::UsageRowView, CorrelatedProfileSettingsEvent, Language,
-        PollSnapshot, ProfileRuntimeState, ProfileSettingsOperation, ProfileSettingsRequestId,
-        Settings, UpdatePresentationStatus, UsageLevel, UsageProfileId, UsageProfileRoot,
-        UsageWindow, WindowKind,
+        domain::ResetDateTime, windows::UsageRowView, CodexUsage, CorrelatedProfileSettingsEvent,
+        Language, LanguagePreference, NativeProfileFileSystem, PollSnapshot,
+        ProfileExecutionContext, ProfilePollingService, ProfileRuntimeState,
+        ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService, Settings,
+        SettingsStore, UpdatePresentation, UpdatePresentationStatus, UsageError, UsageLevel,
+        UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
     };
 
     const ALL_LANGUAGES: [Language; 12] = [
@@ -2137,11 +2142,86 @@ mod tests {
             .usage_profiles
             .rename(UsageProfileId::System, "Main")
             .unwrap();
+        settings.language = LanguagePreference::English;
 
-        let floating_label = selected_usage_profile_label(&settings, Language::English);
+        let mut runtime = test_app_runtime(settings);
+        let snapshot = runtime.snapshot();
+        let ui_settings = runtime.settings();
+        runtime.shutdown();
 
-        assert_eq!(floating_label, "Main");
-        assert!(!floating_label.contains("Default Codex account"));
+        assert_eq!(snapshot.usage_profile_label, "Main");
+        assert!(snapshot
+            .taskbar_tooltip
+            .starts_with("Usage profiles: Main\n"));
+        assert_eq!(
+            ui_settings
+                .usage_profiles
+                .iter()
+                .find(|profile| profile.id == UsageProfileId::System)
+                .map(|profile| profile.label.as_str()),
+            Some("Main")
+        );
+    }
+
+    struct DisplayProfileProvider;
+
+    impl ProfileAccountProvider for DisplayProfileProvider {
+        fn fetch_profile(
+            &self,
+            _profile: &ProfileExecutionContext,
+            _allow_auth_refresh: bool,
+            _cancellation: OperationCancellation,
+        ) -> Result<CodexUsage, UsageError> {
+            Err(UsageError::NotLoggedIn)
+        }
+
+        fn login_profile(
+            &self,
+            _profile: &ProfileExecutionContext,
+            _open: LoginPageOpener,
+            _cancellation: OperationCancellation,
+        ) -> Result<bool, UsageError> {
+            Ok(false)
+        }
+
+        fn logout_profile(
+            &self,
+            _profile: &ProfileExecutionContext,
+            _cancellation: OperationCancellation,
+        ) -> Result<(), UsageError> {
+            Ok(())
+        }
+    }
+
+    fn test_app_runtime(settings: Settings) -> AppRuntime {
+        let store = SettingsStore::for_root(std::env::temp_dir().join(format!(
+            "codex-peek-app-display-test-{}",
+            std::process::id()
+        )));
+        let profile_settings = ProfileSettingsService::start(
+            store.clone(),
+            settings.clone(),
+            NativeProfileFileSystem::default(),
+        );
+        let profile_poller = ProfilePollingService::start(
+            Arc::new(DisplayProfileProvider),
+            vec![ProfileExecutionContext::system()],
+            UsageProfileId::System,
+            settings.refresh_interval_minutes,
+            settings.auto_auth_refresh,
+        )
+        .expect("system-only profile poller starts");
+        AppRuntime {
+            profile_settings: Some(profile_settings),
+            profile_poller: Some(profile_poller),
+            profile_state: std::sync::Mutex::new(ProfileRuntimeState::new(
+                settings,
+                UsageProfileRoot::new(store.root().to_path_buf()),
+            )),
+            diagnostics: None,
+            startup_hidden: false,
+            update_presentation: UpdatePresentation::default(),
+        }
     }
 
     #[test]
