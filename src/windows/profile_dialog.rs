@@ -835,6 +835,29 @@ pub fn profile_manager_row_text(
     }
 }
 
+/// 네이티브 listbox와 보조 기술에 전달할 프로필 행의 안전한 단일 문자열을 만듭니다.
+///
+/// `profile`의 표시 이름, 지역화된 시스템·현재 표식, 기존 안전 summary만 포함합니다. 표식은
+/// 괄호 안에서 쉼표로 구분하고 summary는 em dash 뒤에 보존합니다. 빈 표식이나 빈 summary는
+/// 생략하며 인증·계정·경로 데이터에 접근하거나 I/O를 수행하지 않습니다.
+pub fn profile_manager_accessible_row_text(
+    profile: &UsageProfileView,
+    language: Language,
+) -> String {
+    let copy = profile_manager_row_text(profile, language);
+    let mut text = copy.name;
+    if !copy.markers.is_empty() {
+        text.push_str(" (");
+        text.push_str(&copy.markers.join(", "));
+        text.push(')');
+    }
+    if !copy.summary.trim().is_empty() {
+        text.push_str(" — ");
+        text.push_str(&copy.summary);
+    }
+    text
+}
+
 /// 대화상자 입력을 공용 프로필 이름 규칙으로 정규화하고 검증합니다.
 ///
 /// `value`의 앞뒤 공백은 제거되며, 비어 있거나 제한을 넘거나 경로 문자를 포함하면

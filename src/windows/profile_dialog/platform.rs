@@ -64,8 +64,8 @@ use crate::{localized_text, Language, LocalizationKey, ProfileValidationError};
 use super::{
     add_profile_dialog_monitor_anchor, add_profile_prompt_result, centered_dialog_origin,
     profile_delete_confirmation, profile_dialog_keyboard_result, profile_login_confirmation,
-    profile_manager_control_enabled, profile_manager_control_spec,
-    profile_manager_dialog_monitor_anchor, profile_manager_row_label, profile_manager_row_text,
+    profile_manager_accessible_row_text, profile_manager_control_enabled,
+    profile_manager_control_spec, profile_manager_dialog_monitor_anchor, profile_manager_row_text,
     show_profile_message, AddProfilePromptCommand, AddProfilePromptState,
     CenteredMessageBoxRequest, CenteredMessageBoxRequestState, DialogMonitorAnchor,
     DialogWindowSize, DialogWorkArea, ModalCleanupAction, ModalDialogLifecycle,
@@ -310,6 +310,14 @@ impl DialogVisualResources {
         }
     }
 
+    /// 완전히 커밋된 현재 DPI에 대응하는 owner-draw 행 높이를 반환합니다.
+    ///
+    /// 중첩된 시각 자원 갱신이 더 최신 DPI를 커밋한 경우에도 최종 `self.dpi`만 사용하며,
+    /// 반환값은 Win32 호출 전에 복사할 수 있는 물리 픽셀 높이입니다.
+    fn profile_row_height(&self) -> i32 {
+        scale_logical(crate::windows::design::ROW_HEIGHT, self.dpi).max(1)
+    }
+
     fn detach_active(&mut self) -> DialogResourceSet {
         let resources = DialogResourceSet {
             body_font: self.body_font,
@@ -519,15 +527,22 @@ unsafe extern "system" fn apply_dialog_child_visuals(child: HWND, lparam: LPARAM
 /// HWND는 살아 있는 대화상자여야 하며 `resources`는 해당 HWND의 모든 자식보다 오래 유지됩니다.
 /// 레지스트리, DWM, 테마 API 실패는 어두운 테마 또는 기본 제목 표시줄로 안전하게 폴백합니다.
 unsafe fn rebuild_dialog_visuals(dialog: HWND, resources: *mut DialogVisualResources) {
-    let dpi = GetDpiForWindow(dialog).max(96);
-    let outcome =
-        update_dialog_visual_resources(resources, dpi, current_dialog_theme(), |visual| {
+    let requested_dpi = GetDpiForWindow(dialog).max(96);
+    let outcome = update_dialog_visual_resources(
+        resources,
+        requested_dpi,
+        current_dialog_theme(),
+        |visual| {
             // SAFETY: Copy 스냅샷만 전달하며 자원 객체의 Rust 참조는 외부 호출 동안 존재하지 않습니다.
             unsafe { apply_dialog_visuals(dialog, visual) };
-        });
+        },
+    );
     if outcome == DialogVisualUpdateOutcome::Applied {
+        let row_height = {
+            // SAFETY: 갱신 완료 뒤 committed DPI만 Copy하며 외부 호출 전에 자원 borrow를 끝냅니다.
+            (&*resources).profile_row_height()
+        };
         if let Ok(list) = GetDlgItem(Some(dialog), PROFILE_LIST_ID) {
-            let row_height = scale_logical(crate::windows::design::ROW_HEIGHT, dpi).max(1);
             let _ = SendMessageW(
                 list,
                 LB_SETITEMHEIGHT,
@@ -666,6 +681,23 @@ fn composite_dialog_color(foreground: DialogColor, background: DialogColor) -> u
     blend(0) | (blend(8) << 8) | (blend(16) << 16)
 }
 
+const SELECTED_ROW_TINT_OPACITY: u8 = 20;
+
+/// 프로필 행의 선택 상태에 대응하는 불투명 Win32 표면색을 반환합니다.
+///
+/// 선택되지 않은 행은 팔레트의 중립 surface를 그대로 사용하고, 선택 행은 healthy green을
+/// 20/255 불투명도로 같은 중립 surface 위에 합성합니다. 밝은·어두운 테마 모두 같은 의미와
+/// 강도를 유지하며 GDI 자원을 만들거나 외부 상태를 변경하지 않습니다.
+fn profile_row_surface_color(palette: DialogPalette, role: ProfileRowSurfaceRole) -> u32 {
+    match role {
+        ProfileRowSurfaceRole::Neutral => palette.surface.colorref,
+        ProfileRowSurfaceRole::Selected => composite_dialog_color(
+            DialogColor::translucent(palette.healthy.colorref, SELECTED_ROW_TINT_OPACITY),
+            palette.surface,
+        ),
+    }
+}
+
 /// owner-draw 프로필 행을 현재 DPI와 팔레트에 맞춰 그립니다.
 ///
 /// `item`은 현재 `WM_DRAWITEM` 메시지가 제공한 살아 있는 listbox 항목이어야 합니다.
@@ -696,11 +728,8 @@ unsafe fn draw_profile_row(
     let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
     let focused = item.itemState.0 & ODS_FOCUS.0 != 0;
     let visual = profile_row_visual_state(profile, selected, focused);
-    let surface = match visual.surface {
-        ProfileRowSurfaceRole::Neutral => visuals.palette.surface,
-        ProfileRowSurfaceRole::Selected => visuals.palette.elevated_surface,
-    };
-    fill_profile_row_rect(item.hDC, &item.rcItem, surface.colorref)?;
+    let surface_color = profile_row_surface_color(visuals.palette, visual.surface);
+    fill_profile_row_rect(item.hDC, &item.rcItem, surface_color)?;
 
     let edge_width = scale_logical(crate::windows::design::SELECTION_EDGE, visuals.dpi).max(1);
     if selected {
@@ -748,7 +777,10 @@ unsafe fn draw_profile_row(
             right: content_right,
             bottom: progress_bottom,
         };
-        let track_color = composite_dialog_color(visuals.palette.progress_track, surface);
+        let track_color = composite_dialog_color(
+            visuals.palette.progress_track,
+            DialogColor::opaque(surface_color),
+        );
         fill_profile_row_rect(item.hDC, &progress_track, track_color)?;
 
         let track_width = (content_right - content_left).max(0);
@@ -1549,12 +1581,7 @@ unsafe fn setup_controls(
     }
 
     for profile in profiles {
-        let label = profile_manager_row_label(profile, state.language);
-        let line = if profile.summary.trim().is_empty() {
-            label
-        } else {
-            format!("{label} — {}", profile.summary)
-        };
+        let line = profile_manager_accessible_row_text(profile, state.language);
         let line = wide(&line);
         let result = SendMessageW(
             state.list,
@@ -2396,12 +2423,12 @@ mod tests {
         add_profile_prompt_result, composite_dialog_color, confirm_profile_delete_with_presenter,
         confirm_profile_login_with_presenter, consume_centered_message_box_request,
         handle_add_profile_prompt_result_with_presenter,
-        handle_manager_rename_result_with_presenter, profile_row_visual_state,
-        show_add_dialog_warning_with_presenter, show_safe_error_with_presenter,
-        update_dialog_visual_resources, AddDialogState, AddProfilePromptCommand,
-        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
-        DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome, DialogWorkArea,
-        ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
+        handle_manager_rename_result_with_presenter, profile_row_surface_color,
+        profile_row_visual_state, show_add_dialog_warning_with_presenter,
+        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
+        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
+        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
+        DialogWorkArea, ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
         ProfileRowSurfaceRole, UsageProfileView,
     };
 
@@ -2489,6 +2516,29 @@ mod tests {
                 DialogColor::opaque(0x00ff_ffff)
             ),
             0x00db_dbdb
+        );
+    }
+
+    #[test]
+    fn profile_row_selected_surface_is_a_subtle_green_tint_on_both_themes() {
+        let light = DialogPalette::for_theme(DialogTheme::Light);
+        assert_eq!(
+            profile_row_surface_color(light, ProfileRowSurfaceRole::Neutral),
+            0x00ff_ffff
+        );
+        assert_eq!(
+            profile_row_surface_color(light, ProfileRowSurfaceRole::Selected),
+            0x00f4_fbf1
+        );
+
+        let dark = DialogPalette::for_theme(DialogTheme::Dark);
+        assert_eq!(
+            profile_row_surface_color(dark, ProfileRowSurfaceRole::Neutral),
+            0x0026_2626
+        );
+        assert_eq!(
+            profile_row_surface_color(dark, ProfileRowSurfaceRole::Selected),
+            0x002c_3329
         );
     }
 
@@ -2716,6 +2766,7 @@ mod tests {
         );
         assert_eq!(resources.body_font.0 as usize, 51);
         assert_eq!(resources.heading_font.0 as usize, 52);
+        assert_eq!(resources.profile_row_height(), 112);
         assert!(!resources.update_in_progress);
         assert!(resources.pending_update.is_none());
     }

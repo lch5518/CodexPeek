@@ -16,11 +16,12 @@ use codex_usage_monitor::{
         profile_dialog::{
             add_profile_dialog_monitor_anchor, add_profile_prompt_result,
             available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
-            profile_login_confirmation, profile_manager_control_enabled,
-            profile_manager_control_spec, profile_manager_dialog_monitor_anchor,
-            profile_manager_row_label, profile_manager_row_text, validated_label,
-            AddProfilePromptCommand, AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize,
-            ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+            profile_login_confirmation, profile_manager_accessible_row_text,
+            profile_manager_control_enabled, profile_manager_control_spec,
+            profile_manager_dialog_monitor_anchor, profile_manager_row_label,
+            profile_manager_row_text, validated_label, AddProfilePromptCommand,
+            AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, ModalCleanupAction,
+            ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
             ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
             ProfileManagerControl, ProfileManagerDialogState, PROFILE_LABEL_MAX_UTF16_UNITS,
             PROFILE_MANAGER_CONTROLS,
@@ -947,10 +948,23 @@ fn profile_row_copy_marks_system_and_current_without_duplicate_default_text() {
 #[test]
 fn profile_row_copy_preserves_existing_safe_summary() {
     let mut profile = system_profile_view();
-    profile.summary = "?⑥? ?ъ슜???쒖떆: 81%".into();
+    profile.summary = "남은 사용량 표시: 81%".into();
     assert_eq!(
         profile_manager_row_text(&profile, Language::Korean).summary,
         profile.summary
+    );
+}
+
+#[test]
+fn profile_row_accessible_text_includes_system_current_and_safe_summary() {
+    let mut system = system_profile_view();
+    system.label = "Main".into();
+    system.summary = "81% used".into();
+    system.selected = true;
+
+    assert_eq!(
+        profile_manager_accessible_row_text(&system, Language::English),
+        "Main (Default Codex account, Displayed) — 81% used"
     );
 }
 
