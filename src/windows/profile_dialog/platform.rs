@@ -1064,6 +1064,63 @@ enum PrimaryButtonPaintStage {
     Surface,
 }
 
+/// 기본 버튼 fill에서 DC brush 색상 적용·복원을 관찰하는 Win32 하위 경계입니다.
+///
+/// `set_brush_color`는 실제 `SetDCBrushColor`처럼 이전 색 또는 `CLR_INVALID`를 반환합니다.
+/// `fill_rect`는 이미 선택된 stock DC brush로 지정 범위를 채우며 DC 색상을 변경하지 않습니다.
+trait PrimaryButtonBrushBackend {
+    fn set_brush_color(&mut self, color: COLORREF) -> COLORREF;
+    fn fill_rect(&mut self, rect: &RECT) -> io::Result<()>;
+}
+
+/// 기본 버튼 사각형을 채우고 DC brush 색상을 성공·실패 모든 가능한 경로에서 복원합니다.
+///
+/// 색상 적용이 실패하면 채우기를 수행하지 않습니다. 적용에 성공하면 `FillRect` 실패 여부와
+/// 관계없이 이전 색 복원을 시도하며, 채우기 또는 복원 중 하나라도 실패하면 오류를 반환해 호출자가
+/// 네이티브 기본 그리기로 대체하게 합니다.
+fn fill_primary_button_rect<B: PrimaryButtonBrushBackend>(
+    backend: &mut B,
+    rect: &RECT,
+    color: u32,
+) -> io::Result<()> {
+    let previous = backend.set_brush_color(COLORREF(color));
+    if previous.0 == CLR_INVALID {
+        return Err(io::Error::other(
+            "primary button brush color could not be applied",
+        ));
+    }
+
+    let fill_result = backend.fill_rect(rect);
+    let restored = backend.set_brush_color(previous);
+    if restored.0 == CLR_INVALID {
+        return Err(io::Error::other(
+            "primary button brush color could not be restored",
+        ));
+    }
+    fill_result
+}
+
+struct WindowsPrimaryButtonBrushBackend {
+    dc: HDC,
+    brush: HBRUSH,
+}
+
+impl PrimaryButtonBrushBackend for WindowsPrimaryButtonBrushBackend {
+    fn set_brush_color(&mut self, color: COLORREF) -> COLORREF {
+        // SAFETY: dc는 현재 NM_CUSTOMDRAW notification 동안 유효합니다.
+        unsafe { SetDCBrushColor(self.dc, color) }
+    }
+
+    fn fill_rect(&mut self, rect: &RECT) -> io::Result<()> {
+        // SAFETY: dc, stock brush, RECT는 현재 동기 custom paint 호출 동안 유효합니다.
+        if unsafe { FillRect(self.dc, rect, self.brush) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// 기본 버튼 paint 단계와 DC 상태 저장·복원을 분리하는 GDI 경계입니다.
 ///
 /// 실제 구현은 현재 notification HDC만 사용하며 테스트 구현은 각 필수 단계를 결정적으로 실패시킬
@@ -1096,8 +1153,13 @@ impl PrimaryButtonPaintBackend for WindowsPrimaryButtonPaintBackend {
         rect: &RECT,
         color: u32,
     ) -> io::Result<()> {
-        // SAFETY: backend는 현재 NM_CUSTOMDRAW HDC와 알림 RECT에서만 생성됩니다.
-        unsafe { fill_profile_row_rect(self.dc, rect, color) }
+        // SAFETY: DC_BRUSH는 프로세스가 소유하지 않는 stock 객체이며 삭제하지 않습니다.
+        let brush = unsafe { HBRUSH(GetStockObject(DC_BRUSH).0) };
+        if brush.0.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let mut backend = WindowsPrimaryButtonBrushBackend { dc: self.dc, brush };
+        fill_primary_button_rect(&mut backend, rect, color)
     }
 
     fn select_font(&mut self, font: HFONT) -> io::Result<HGDIOBJ> {
@@ -3259,7 +3321,7 @@ mod tests {
 
     use windows::Win32::{
         Foundation::{COLORREF, HWND, RECT},
-        Graphics::Gdi::{BACKGROUND_MODE, HBRUSH, HFONT, HGDIOBJ},
+        Graphics::Gdi::{BACKGROUND_MODE, CLR_INVALID, HBRUSH, HFONT, HGDIOBJ},
         UI::Controls::{CDIS_DEFAULT, CDIS_FOCUS},
         UI::WindowsAndMessaging::{
             IDCANCEL, IDOK, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT,
@@ -3278,7 +3340,7 @@ mod tests {
     use super::{
         add_profile_prompt_result, bound_dialog_outer_rect, composite_dialog_color,
         confirm_profile_delete_with_presenter, confirm_profile_login_with_presenter,
-        consume_centered_message_box_request, dialog_child_setpos_rect,
+        consume_centered_message_box_request, dialog_child_setpos_rect, fill_primary_button_rect,
         fit_manager_layout_to_client_height, handle_add_profile_prompt_result_with_presenter,
         handle_manager_rename_result_with_presenter, paint_primary_button,
         primary_button_paint_state, profile_row_content_padding, profile_row_surface_color,
@@ -3286,9 +3348,9 @@ mod tests {
         show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
         AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
         DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
-        DialogWindowSize, DialogWorkArea, PrimaryButtonCue, PrimaryButtonPaintBackend,
-        PrimaryButtonPaintStage, ProfileDialogController, ProfileMessagePresenter,
-        ProfileMessageRoute, ProfileRowSurfaceRole, UsageProfileView,
+        DialogWindowSize, DialogWorkArea, PrimaryButtonBrushBackend, PrimaryButtonCue,
+        PrimaryButtonPaintBackend, PrimaryButtonPaintStage, ProfileDialogController,
+        ProfileMessagePresenter, ProfileMessageRoute, ProfileRowSurfaceRole, UsageProfileView,
     };
 
     fn mirrored_parent_physical_rect(
@@ -3398,6 +3460,81 @@ mod tests {
         assert_eq!(focused.cue, PrimaryButtonCue::Focus);
         assert_eq!(defaulted.cue, PrimaryButtonCue::DefaultBorder);
         assert_ne!(focused.cue, defaulted.cue);
+    }
+
+    struct RecordingPrimaryButtonBrushBackend {
+        color_results: VecDeque<COLORREF>,
+        set_colors: Vec<COLORREF>,
+        fill_calls: usize,
+        fail_fill: bool,
+    }
+
+    impl PrimaryButtonBrushBackend for RecordingPrimaryButtonBrushBackend {
+        fn set_brush_color(&mut self, color: COLORREF) -> COLORREF {
+            self.set_colors.push(color);
+            self.color_results.pop_front().unwrap()
+        }
+
+        fn fill_rect(&mut self, _rect: &RECT) -> io::Result<()> {
+            self.fill_calls += 1;
+            if self.fail_fill {
+                Err(io::Error::other("injected FillRect failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn concrete_primary_fill_rejects_brush_color_apply_failure_before_fill() {
+        let mut backend = RecordingPrimaryButtonBrushBackend {
+            color_results: VecDeque::from([COLORREF(CLR_INVALID)]),
+            set_colors: Vec::new(),
+            fill_calls: 0,
+            fail_fill: false,
+        };
+        let rect = RECT {
+            left: 0,
+            top: 0,
+            right: 80,
+            bottom: 32,
+        };
+
+        assert!(fill_primary_button_rect(&mut backend, &rect, 0x0012_3456).is_err());
+        assert_eq!(backend.set_colors, [COLORREF(0x0012_3456)]);
+        assert_eq!(backend.fill_calls, 0);
+    }
+
+    #[test]
+    fn concrete_primary_fill_propagates_restore_failure_and_restores_after_fill_failure() {
+        let rect = RECT {
+            left: 0,
+            top: 0,
+            right: 80,
+            bottom: 32,
+        };
+        let previous = COLORREF(0x0065_4321);
+        let requested = 0x0012_3456;
+        let mut restore_failure = RecordingPrimaryButtonBrushBackend {
+            color_results: VecDeque::from([previous, COLORREF(CLR_INVALID)]),
+            set_colors: Vec::new(),
+            fill_calls: 0,
+            fail_fill: false,
+        };
+
+        assert!(fill_primary_button_rect(&mut restore_failure, &rect, requested).is_err());
+        assert_eq!(restore_failure.set_colors, [COLORREF(requested), previous]);
+        assert_eq!(restore_failure.fill_calls, 1);
+
+        let mut fill_failure = RecordingPrimaryButtonBrushBackend {
+            color_results: VecDeque::from([previous, COLORREF(requested)]),
+            set_colors: Vec::new(),
+            fill_calls: 0,
+            fail_fill: true,
+        };
+        assert!(fill_primary_button_rect(&mut fill_failure, &rect, requested).is_err());
+        assert_eq!(fill_failure.set_colors, [COLORREF(requested), previous]);
+        assert_eq!(fill_failure.fill_calls, 1);
     }
 
     #[derive(Default)]
