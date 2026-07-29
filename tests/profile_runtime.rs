@@ -529,6 +529,47 @@ fn failed_selection_save_retains_the_previous_render_selection() {
 }
 
 #[test]
+fn system_rename_is_normalized_and_applied_only_after_durable_success() {
+    let mut runtime = profile_runtime_fixture();
+
+    let commands = runtime
+        .state
+        .request_rename(UsageProfileId::System, "  Main  ".to_owned())
+        .unwrap();
+    runtime.record(commands);
+
+    assert_eq!(runtime.settings_commands(), ["rename:system"]);
+    assert_eq!(runtime.state.settings().usage_profiles.system_label(), None);
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::System
+    );
+    assert!(runtime.poll_commands().is_empty());
+
+    let mut renamed = Settings::default();
+    renamed
+        .usage_profiles
+        .rename(UsageProfileId::System, "Main")
+        .unwrap();
+    runtime.apply_settings_event(RuntimeSettingsEvent::Renamed {
+        request_id: runtime.last_request_id(),
+        settings: renamed,
+        id: UsageProfileId::System,
+    });
+
+    assert_eq!(
+        runtime.state.settings().usage_profiles.system_label(),
+        Some("Main")
+    );
+    assert_eq!(
+        runtime.state.settings().usage_profiles.selected(),
+        UsageProfileId::System
+    );
+    assert!(!runtime.state.mutation_pending());
+    assert!(runtime.poll_commands().is_empty());
+}
+
+#[test]
 fn preference_and_stale_failures_do_not_clear_profile_pending_request() {
     let mut runtime = selected_managed_profile_fixture();
     runtime

@@ -175,7 +175,10 @@ impl ProfileRuntimeState {
         )])
     }
 
-    /// 프로필 이름 변경을 검증해 설정 worker 명령을 생성합니다.
+    /// 시스템 또는 관리 프로필 이름 변경을 검증해 설정 worker 명령을 생성합니다.
+    ///
+    /// 검증된 이름만 내구성 설정 worker에 전달하며 성공 이벤트 전에는 로컬 표시 이름, 선택 ID,
+    /// 실행 컨텍스트 또는 CLI·IDE 계정 상태를 변경하지 않습니다.
     pub fn request_rename(
         &mut self,
         id: UsageProfileId,
@@ -184,13 +187,19 @@ impl ProfileRuntimeState {
         self.require_idle()?;
         let mut catalog = self.settings.usage_profiles.clone();
         catalog.rename(id, &label)?;
-        let normalized = catalog
-            .managed()
-            .iter()
-            .find(|profile| profile.id() == id)
-            .ok_or(ProfileValidationError::InvalidId)?
-            .label()
-            .to_owned();
+        let normalized = match id {
+            UsageProfileId::System => catalog
+                .system_label()
+                .ok_or(ProfileValidationError::InvalidId)?
+                .to_owned(),
+            UsageProfileId::Managed(_) => catalog
+                .managed()
+                .iter()
+                .find(|profile| profile.id() == id)
+                .ok_or(ProfileValidationError::InvalidId)?
+                .label()
+                .to_owned(),
+        };
         self.pending = Some(PendingProfileOperation::Settings {
             operation: ProfileSettingsOperation::Rename,
             request_id: None,
@@ -2076,14 +2085,15 @@ mod tests {
         AppRuntime, DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
-    use crate::windows::{UiBackend, WidgetDataState};
+    use crate::windows::{UiAction, UiBackend, WidgetDataState};
     use crate::{
-        domain::ResetDateTime, windows::UsageRowView, CodexUsage, CorrelatedProfileSettingsEvent,
-        Language, LanguagePreference, NativeProfileFileSystem, PollSnapshot,
-        ProfileExecutionContext, ProfilePollingService, ProfileRuntimeState,
-        ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService, Settings,
-        SettingsStore, UpdatePresentation, UpdatePresentationStatus, UsageError, UsageLevel,
-        UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
+        domain::ResetDateTime, windows::UsageRowView, AsyncDiagnosticWriter, CodexUsage,
+        CorrelatedProfileSettingsEvent, DiagnosticLogger, Language, LanguagePreference,
+        NativeProfileFileSystem, PollSnapshot, ProfileExecutionContext, ProfilePollingService,
+        ProfileRuntimeState, ProfileSettingsOperation, ProfileSettingsRequestId,
+        ProfileSettingsService, Settings, SettingsStore, UpdatePresentation,
+        UpdatePresentationStatus, UsageError, UsageLevel, UsageProfileId, UsageProfileRoot,
+        UsageWindow, WindowKind,
     };
 
     const ALL_LANGUAGES: [Language; 12] = [
@@ -2163,6 +2173,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn failed_system_rename_save_preserves_local_state_and_records_safe_diagnostic() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-peek-system-rename-failure-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let blocked_store_root = root.join("blocked-settings-root");
+        std::fs::write(&blocked_store_root, b"not a directory").unwrap();
+        let store = SettingsStore::for_root(&blocked_store_root);
+        let log_path = root.join("diagnostics.log");
+        let diagnostics = AsyncDiagnosticWriter::start(DiagnosticLogger::for_path(&log_path), 8);
+        let mut runtime =
+            test_app_runtime_with_store(Settings::default(), store, Some(diagnostics));
+
+        runtime.dispatch(UiAction::RenameUsageProfile(
+            UsageProfileId::System,
+            "Main".to_owned(),
+        ));
+        assert!(runtime
+            .profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .mutation_pending());
+
+        assert_eq!(
+            runtime.profile_settings().flush().unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        runtime.drain_profile_events();
+        let settings = runtime.settings_snapshot();
+        assert_eq!(settings.usage_profiles.system_label(), None);
+        assert_eq!(settings.usage_profiles.selected(), UsageProfileId::System);
+        assert!(!runtime
+            .profile_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .mutation_pending());
+
+        runtime.shutdown();
+        let diagnostic = std::fs::read_to_string(&log_path).unwrap();
+        assert!(diagnostic.contains("settings_invalid valid=false"));
+        assert!(!diagnostic.contains("Main"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     struct DisplayProfileProvider;
 
     impl ProfileAccountProvider for DisplayProfileProvider {
@@ -2198,6 +2258,14 @@ mod tests {
             "codex-peek-app-display-test-{}",
             std::process::id()
         )));
+        test_app_runtime_with_store(settings, store, None)
+    }
+
+    fn test_app_runtime_with_store(
+        settings: Settings,
+        store: SettingsStore,
+        diagnostics: Option<AsyncDiagnosticWriter>,
+    ) -> AppRuntime {
         let profile_settings = ProfileSettingsService::start(
             store.clone(),
             settings.clone(),
@@ -2218,7 +2286,7 @@ mod tests {
                 settings,
                 UsageProfileRoot::new(store.root().to_path_buf()),
             )),
-            diagnostics: None,
+            diagnostics,
             startup_hidden: false,
             update_presentation: UpdatePresentation::default(),
         }

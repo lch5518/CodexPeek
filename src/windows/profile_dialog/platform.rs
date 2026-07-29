@@ -1,14 +1,17 @@
 use std::{ffi::c_void, io};
 
 use windows::{
-    core::{w, PCWSTR},
+    core::{w, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
             GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
         },
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Controls::EM_SETLIMITTEXT,
+            Controls::{
+                EM_SETLIMITTEXT, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
+                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+            },
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetDlgItem,
@@ -20,8 +23,8 @@ use windows::{
                 LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, MB_ICONERROR,
                 MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MSG, SW_SHOW, WINDOW_STYLE, WM_CLOSE,
                 WM_COMMAND, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER,
-                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
-                WS_VISIBLE, WS_VSCROLL,
+                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
+                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
@@ -31,11 +34,12 @@ use crate::{localized_text, Language, LocalizationKey};
 
 use super::{
     add_profile_prompt_result, profile_delete_confirmation, profile_dialog_keyboard_result,
-    profile_login_confirmation, profile_manager_control_enabled, profile_manager_row_label,
-    AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction,
-    ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
-    ProfileDialogKeyboardResult, ProfileManagerControl, ProfileManagerDialogState,
-    UsageProfileView, PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
+    profile_login_confirmation, profile_manager_control_enabled, profile_manager_control_spec,
+    profile_manager_row_label, AddProfilePromptCommand, AddProfilePromptState, ModalCleanupAction,
+    ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand, ProfileDialogController,
+    ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult, ProfileManagerControl,
+    ProfileManagerDialogState, UsageProfileView, PROFILE_LABEL_MAX_UTF16_UNITS,
+    PROFILE_MANAGER_CONTROLS,
 };
 
 const DIALOG_CLASS: PCWSTR = w!("CodexUsageMonitor.ProfileDialog.v1");
@@ -55,12 +59,15 @@ struct DialogState {
     language: Language,
     list: HWND,
     edit: HWND,
+    add_tooltip: HWND,
+    add_tooltip_text: Vec<u16>,
 }
 
 struct AddDialogState {
     edit: HWND,
     language: Language,
     result: Option<ProfileDialogAction>,
+    interaction: AddProfilePromptState,
 }
 
 struct ModalWindowGuard {
@@ -138,6 +145,8 @@ pub(super) unsafe fn show_profile_manager_owned(
         language,
         list: HWND::default(),
         edit: HWND::default(),
+        add_tooltip: HWND::default(),
+        add_tooltip_text: Vec::new(),
     });
     let state_pointer = (&mut *state as *mut DialogState).cast::<c_void>();
     let title = wide(localized_text(
@@ -200,6 +209,7 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
         edit: HWND::default(),
         language,
         result: None,
+        interaction: AddProfilePromptState::new(),
     });
     let state_pointer = (&mut *state as *mut AddDialogState).cast::<c_void>();
     let title = wide(localized_text(
@@ -369,12 +379,13 @@ unsafe fn setup_controls(
     );
 
     for control in PROFILE_MANAGER_CONTROLS {
-        let (id, text, x, y, width, height) = manager_control_spec(control, state.language);
-        let _ = create_control(
+        let copy = profile_manager_control_spec(control, state.language);
+        let (id, x, y, width, height) = manager_control_layout(control);
+        let control_window = create_control(
             dialog,
             instance,
             w!("BUTTON"),
-            text,
+            copy.visible_text,
             id,
             x,
             y,
@@ -382,6 +393,9 @@ unsafe fn setup_controls(
             height,
             WS_CHILD | WS_VISIBLE | WS_TABSTOP,
         )?;
+        if let Some(description) = copy.accessible_description {
+            create_add_control_tooltip(dialog, instance, control_window, description, state)?;
+        }
     }
 
     for profile in profiles {
@@ -413,48 +427,72 @@ unsafe fn setup_controls(
     Ok(())
 }
 
-/// 공유 관리자 컨트롤 계약을 Win32 ID, 문구와 고정 배치로 변환합니다.
+/// 공유 관리자 컨트롤 계약을 Win32 ID와 고정 배치로 변환합니다.
 ///
-/// 추가 버튼은 목록 바로 아래의 작은 `+`로 배치되고 나머지 네 작업만 하단 행에 배치됩니다.
-fn manager_control_spec(
-    control: ProfileManagerControl,
-    language: Language,
-) -> (i32, &'static str, i32, i32, i32, i32) {
+/// 화면 문구와 접근성 설명은 플랫폼 독립 `profile_manager_control_spec`에서 가져오며, 추가 버튼은
+/// 목록 바로 아래에, 나머지 네 작업은 하단 행에 배치됩니다.
+fn manager_control_layout(control: ProfileManagerControl) -> (i32, i32, i32, i32, i32) {
     match control {
-        ProfileManagerControl::AddBelowList => (OPEN_ADD_ID, "+", 16, 216, 36, 26),
-        ProfileManagerControl::Rename => (
-            RENAME_ID,
-            localized_text(LocalizationKey::UsageProfileRename, language),
-            116,
-            270,
-            92,
-            30,
-        ),
-        ProfileManagerControl::Login => (
-            LOGIN_ID,
-            localized_text(LocalizationKey::UsageProfileLogin, language),
-            216,
-            270,
-            92,
-            30,
-        ),
-        ProfileManagerControl::Logout => (
-            LOGOUT_ID,
-            localized_text(LocalizationKey::UsageProfileLogout, language),
-            316,
-            270,
-            92,
-            30,
-        ),
-        ProfileManagerControl::Delete => (
-            DELETE_ID,
-            localized_text(LocalizationKey::UsageProfileDelete, language),
-            416,
-            270,
-            92,
-            30,
-        ),
+        ProfileManagerControl::AddBelowList => (OPEN_ADD_ID, 16, 216, 36, 26),
+        ProfileManagerControl::Rename => (RENAME_ID, 116, 270, 92, 30),
+        ProfileManagerControl::Login => (LOGIN_ID, 216, 270, 92, 30),
+        ProfileManagerControl::Logout => (LOGOUT_ID, 316, 270, 92, 30),
+        ProfileManagerControl::Delete => (DELETE_ID, 416, 270, 92, 30),
     }
+}
+
+/// 목록 아래 `+` 컨트롤에 지역화된 설명 tooltip을 연결합니다.
+///
+/// tooltip 컨트롤은 관리자 창이 소유하므로 관리자 파괴와 함께 정리됩니다. `TTM_ADDTOOLW`가
+/// 문자열 포인터를 참조하는 동안 버퍼가 이동하지 않도록 텍스트는 `DialogState`에 보관합니다.
+/// 등록이 실패하면 생성한 tooltip만 즉시 파괴하고 오류를 반환해 호출자의 모달 가드가 나머지
+/// 부분 생성 상태를 정리하게 합니다.
+unsafe fn create_add_control_tooltip(
+    dialog: HWND,
+    instance: HINSTANCE,
+    control: HWND,
+    description: &str,
+    state: &mut DialogState,
+) -> io::Result<()> {
+    let tooltip = CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        TOOLTIPS_CLASSW,
+        PCWSTR::null(),
+        WS_POPUP | WINDOW_STYLE(TTS_ALWAYSTIP | TTS_NOPREFIX),
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        Some(dialog),
+        None,
+        Some(instance),
+        None,
+    )
+    .map_err(win_error)?;
+    state.add_tooltip = tooltip;
+    state.add_tooltip_text = wide(description);
+    let tool = TTTOOLINFOW {
+        cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
+        uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+        hwnd: dialog,
+        uId: control.0 as usize,
+        hinst: instance,
+        lpszText: PWSTR(state.add_tooltip_text.as_mut_ptr()),
+        ..Default::default()
+    };
+    let added = SendMessageW(
+        tooltip,
+        TTM_ADDTOOLW,
+        Some(WPARAM(0)),
+        Some(LPARAM((&tool as *const TTTOOLINFOW) as isize)),
+    );
+    if added.0 == 0 {
+        let _ = DestroyWindow(tooltip);
+        state.add_tooltip = HWND::default();
+        state.add_tooltip_text.clear();
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// 추가 입력창의 이름 필드와 명시적인 추가·취소 버튼을 생성합니다.
@@ -607,6 +645,14 @@ unsafe fn manager_accepts_commands(hwnd: HWND, state: *mut DialogState) -> bool 
     IsWindowEnabled(hwnd).as_bool() && (&*state).interaction.accepts_manager_commands()
 }
 
+/// 현재 추가 입력창이 활성화되어 있고 중첩 처리 없이 새 명령을 받을 수 있는지 확인합니다.
+///
+/// `state`는 `GWLP_USERDATA`가 가리키는 살아 있는 모달 상태여야 합니다. 함수 안에서 만든 공유
+/// 참조는 즉시 버리므로 이후 경고 메시지 상자의 중첩 메시지 루프와 겹치지 않습니다.
+unsafe fn add_dialog_accepts_commands(hwnd: HWND, state: *mut AddDialogState) -> bool {
+    IsWindowEnabled(hwnd).as_bool() && (&*state).interaction.accepts_commands()
+}
+
 unsafe extern "system" fn add_dialog_proc(
     hwnd: HWND,
     message: u32,
@@ -628,13 +674,17 @@ unsafe extern "system" fn add_dialog_proc(
     }
     match message {
         WM_COMMAND => {
-            // SAFETY: GWLP_USERDATA는 모달 호출 동안 살아 있는 Box<AddDialogState>를 가리킵니다.
-            handle_add_dialog_command(hwnd, &mut *state, wparam);
+            if add_dialog_accepts_commands(hwnd, state) {
+                // SAFETY: 원시 포인터만 전달하며 중첩 경고 전후에 Rust 참조를 보관하지 않습니다.
+                handle_add_dialog_command(hwnd, state, wparam);
+            }
             LRESULT(0)
         }
         WM_CLOSE => {
-            // SAFETY: 상태 포인터는 WM_NCDESTROY 전까지 모달 호출의 Box에 의해 유지됩니다.
-            cancel_add_dialog(hwnd, &mut *state);
+            if add_dialog_accepts_commands(hwnd, state) {
+                // SAFETY: 상태 포인터는 WM_NCDESTROY 전까지 모달 호출의 Box에 의해 유지됩니다.
+                cancel_add_dialog(hwnd, state);
+            }
             LRESULT(0)
         }
         WM_DESTROY => LRESULT(0),
@@ -792,48 +842,125 @@ unsafe fn submit_delete(
         .confirmed_command(ProfileDialogCommand::Delete, confirmed))
 }
 
-/// 추가 입력창의 명시적 추가 또는 취소 명령을 처리합니다.
+/// 추가 입력창의 명시적 추가 또는 취소 명령을 원시 상태 포인터로 처리합니다.
 ///
-/// 추가는 edit 텍스트를 한 번만 읽어 공유 검증 계약으로 전달합니다. 검증 실패는 창을 유지하고
-/// 안전한 지역화 경고를 표시하며, 성공 또는 취소만 결과를 확정하고 창을 닫습니다.
-unsafe fn handle_add_dialog_command(hwnd: HWND, state: &mut AddDialogState, wparam: WPARAM) {
+/// `state`는 모달 호출의 `Box<AddDialogState>`를 가리켜야 합니다. 각 하위 처리는 명령을 먼저
+/// 순수 상태에 예약하고, 중첩 경고 전에 필요한 HWND·언어만 복사하므로 재진입 가능한 `&mut`
+/// 참조를 메시지 루프 너머로 보관하지 않습니다.
+unsafe fn handle_add_dialog_command(hwnd: HWND, state: *mut AddDialogState, wparam: WPARAM) {
     let control_id = (wparam.0 & 0xffff) as i32;
     match control_id {
-        id if id == IDOK.0 => {
-            let value = match read_profile_label(state.edit) {
-                Ok(value) => value,
-                Err(_) => {
-                    show_safe_error(hwnd, state.language);
-                    return;
-                }
-            };
-            match add_profile_prompt_result(&value, AddProfilePromptCommand::Submit) {
-                Ok(Some(action)) => {
-                    state.result = Some(action);
-                    let _ = DestroyWindow(hwnd);
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    let _ = show_message(
-                        hwnd,
-                        localized_text(LocalizationKey::UsageProfileInvalidLabel, state.language),
-                        localized_text(LocalizationKey::WindowTitle, state.language),
-                        MB_OK | MB_ICONWARNING,
-                    );
-                }
-            }
-        }
+        id if id == IDOK.0 => submit_add_dialog(hwnd, state),
         id if id == IDCANCEL.0 => cancel_add_dialog(hwnd, state),
         _ => {}
     }
 }
 
-/// 추가 입력창을 변경 작업 없이 닫도록 공유 취소 계약을 적용합니다.
-unsafe fn cancel_add_dialog(hwnd: HWND, state: &mut AddDialogState) {
-    if let Ok(result) = add_profile_prompt_result("", AddProfilePromptCommand::Cancel) {
-        state.result = result;
+/// 이름을 한 번 읽고 검증해 추가 결과를 확정하거나 경고 뒤 활성 입력 상태로 복구합니다.
+///
+/// 텍스트 읽기와 검증은 `Handling` 상태에서 수행하고, 경고가 필요한 경우 언어와 메시지 종류만
+/// 복사한 뒤 참조를 버립니다. 성공 결과는 `Closed` 전이가 성공한 경우에만 한 번 저장합니다.
+unsafe fn submit_add_dialog(hwnd: HWND, state: *mut AddDialogState) {
+    let edit = {
+        let state = &mut *state;
+        if !state.interaction.begin_command() {
+            return;
+        }
+        state.edit
+    };
+    let value = match read_profile_label(edit) {
+        Ok(value) => value,
+        Err(_) => {
+            show_add_dialog_warning(
+                hwnd,
+                state,
+                LocalizationKey::UsageProfileOperationFailed,
+                MB_OK | MB_ICONERROR,
+            );
+            return;
+        }
+    };
+    match add_profile_prompt_result(&value, AddProfilePromptCommand::Submit) {
+        Ok(Some(action)) => {
+            let should_close = {
+                let state = &mut *state;
+                if state.interaction.finish_close() {
+                    state.result = Some(action);
+                    true
+                } else {
+                    false
+                }
+            };
+            if should_close {
+                let _ = DestroyWindow(hwnd);
+            }
+        }
+        Ok(None) => {
+            show_add_dialog_warning(
+                hwnd,
+                state,
+                LocalizationKey::UsageProfileOperationFailed,
+                MB_OK | MB_ICONERROR,
+            );
+        }
+        Err(_) => {
+            show_add_dialog_warning(
+                hwnd,
+                state,
+                LocalizationKey::UsageProfileInvalidLabel,
+                MB_OK | MB_ICONWARNING,
+            );
+        }
+    }
+}
+
+/// 추가 입력창을 변경 작업 없이 한 번만 닫도록 공유 취소 계약을 적용합니다.
+unsafe fn cancel_add_dialog(hwnd: HWND, state: *mut AddDialogState) {
+    let should_close = {
+        let state = &mut *state;
+        if !state.interaction.begin_command() {
+            return;
+        }
+        let Ok(result) = add_profile_prompt_result("", AddProfilePromptCommand::Cancel) else {
+            return;
+        };
+        if state.interaction.finish_close() {
+            state.result = result;
+            true
+        } else {
+            false
+        }
+    };
+    if should_close {
         let _ = DestroyWindow(hwnd);
     }
+}
+
+/// 추가 입력창 상태를 경고 단계로 전환하고 지역화 메시지를 표시한 뒤 다시 활성화합니다.
+///
+/// `MessageBoxW`는 중첩 메시지 루프를 실행하므로 호출 전 언어만 복사하고 모든 Rust 참조를
+/// 버립니다. `Warning` 단계와 비활성 HWND 검사는 중첩된 제출·취소·닫기를 거부하며, 반환 뒤에만
+/// 새 가변 참조를 만들어 `Live`로 복구합니다.
+unsafe fn show_add_dialog_warning(
+    hwnd: HWND,
+    state: *mut AddDialogState,
+    message_key: LocalizationKey,
+    style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+) {
+    let language = {
+        let state = &mut *state;
+        if !state.interaction.begin_warning() {
+            return;
+        }
+        state.language
+    };
+    let _ = show_message(
+        hwnd,
+        localized_text(message_key, language),
+        localized_text(LocalizationKey::WindowTitle, language),
+        style,
+    );
+    let _ = (&mut *state).interaction.finish_warning();
 }
 
 /// 제한된 edit 컨트롤의 UTF-16 표시 이름을 한 번 읽어 Rust 문자열로 변환합니다.
@@ -849,7 +976,7 @@ fn read_profile_label(edit: HWND) -> io::Result<String> {
 
 unsafe fn update_controls(hwnd: HWND, state: &DialogState) {
     for control in PROFILE_MANAGER_CONTROLS {
-        let (id, _, _, _, _, _) = manager_control_spec(control, state.language);
+        let (id, _, _, _, _) = manager_control_layout(control);
         set_enabled(
             hwnd,
             id,

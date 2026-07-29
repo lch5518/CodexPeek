@@ -15,8 +15,9 @@ use codex_usage_monitor::{
         profile_dialog::{
             add_profile_prompt_result, available_profile_actions, profile_delete_confirmation,
             profile_dialog_keyboard_result, profile_login_confirmation,
-            profile_manager_control_enabled, profile_manager_row_label, validated_label,
-            AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction,
+            profile_manager_control_enabled, profile_manager_control_spec,
+            profile_manager_row_label, validated_label, AddProfilePromptCommand,
+            AddProfilePromptState, ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction,
             ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
             ProfileDialogKeyboardResult, ProfileManagerControl, ProfileManagerDialogState,
             PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
@@ -158,6 +159,40 @@ fn active_add_prompt_rejects_a_second_child() {
     assert!(manager.begin_add_prompt(true));
     assert!(!manager.accepts_manager_commands());
     assert!(!manager.begin_add_prompt(true));
+}
+
+#[test]
+fn add_prompt_rejects_reentrant_submit_and_close_while_warning_is_open() {
+    let mut prompt = AddProfilePromptState::new();
+
+    assert!(prompt.begin_command());
+    assert!(!prompt.accepts_commands());
+    assert!(!prompt.begin_command());
+    assert!(prompt.begin_warning());
+    assert!(!prompt.begin_command());
+    assert!(prompt.finish_warning());
+    assert!(prompt.accepts_commands());
+
+    assert!(prompt.begin_command());
+    assert!(prompt.finish_close());
+    assert!(!prompt.accepts_commands());
+    assert!(!prompt.begin_command());
+}
+
+#[test]
+fn add_control_keeps_plus_text_and_uses_the_localized_add_description() {
+    for language in Language::ALL {
+        let spec = profile_manager_control_spec(ProfileManagerControl::AddBelowList, *language);
+
+        assert_eq!(spec.visible_text, "+");
+        assert_eq!(
+            spec.accessible_description,
+            Some(codex_usage_monitor::localized_text(
+                codex_usage_monitor::LocalizationKey::MenuAddUsageProfile,
+                *language,
+            ))
+        );
+    }
 }
 
 #[test]

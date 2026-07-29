@@ -451,7 +451,7 @@ fn reject_reparse_metadata(metadata: &fs::Metadata) -> io::Result<()> {
 pub enum ProfileSettingsMutation {
     /// 검증한 표시 이름으로 새 관리 프로필을 추가합니다.
     Add { label: String },
-    /// 기존 관리 프로필의 표시 이름을 변경합니다.
+    /// 지정한 사용량 프로필(시스템 또는 관리)의 표시 이름을 변경합니다.
     Rename { id: UsageProfileId, label: String },
     /// 사용량 표시 대상으로 사용할 프로필을 선택합니다.
     Select { id: UsageProfileId },
@@ -507,7 +507,7 @@ impl ProfileSettingsRequestId {
 pub enum ProfileSettingsOperation {
     /// 관리 프로필 추가입니다.
     Add,
-    /// 관리 프로필 이름 변경입니다.
+    /// 시스템 또는 관리 프로필의 표시 이름 변경입니다.
     Rename,
     /// 표시 프로필 선택입니다.
     Select,

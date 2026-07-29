@@ -27,7 +27,7 @@ pub const PROFILE_LABEL_MAX_UTF16_UNITS: usize = 80;
 pub enum ProfileDialogAction {
     /// 검증된 표시 이름으로 관리 프로필을 추가합니다.
     Add(String),
-    /// 지정한 관리 프로필의 표시 이름을 변경합니다.
+    /// 지정한 사용량 프로필(시스템 또는 관리)의 표시 이름을 변경합니다.
     Rename(UsageProfileId, String),
     /// 지정한 프로필의 브라우저 로그인을 요청합니다.
     Login(UsageProfileId),
@@ -78,6 +78,57 @@ pub const PROFILE_MANAGER_CONTROLS: [ProfileManagerControl; 5] = [
     ProfileManagerControl::Logout,
     ProfileManagerControl::Delete,
 ];
+
+/// 프로필 관리자 컨트롤의 화면 문구와 보조 설명입니다.
+///
+/// `visible_text`는 네이티브 컨트롤에 직접 표시하고, `accessible_description`은 화면 문구만으로
+/// 목적을 알기 어려운 컨트롤의 지역화된 tooltip 또는 동등한 접근성 이름에 사용합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProfileManagerControlSpec {
+    /// 컨트롤에 표시할 지역화된 화면 문구입니다.
+    pub visible_text: &'static str,
+    /// tooltip 또는 동등한 접근성 표면에 제공할 지역화된 설명입니다.
+    pub accessible_description: Option<&'static str>,
+}
+
+/// 관리자 컨트롤 역할을 화면 문구와 접근성 설명으로 변환합니다.
+///
+/// `language`의 기존 지역화 표를 사용하며 I/O를 수행하지 않습니다. 목록 아래 추가 컨트롤은
+/// 화면에는 `+`만 유지하고 `MenuAddUsageProfile` 문구를 보조 설명으로 제공합니다.
+pub fn profile_manager_control_spec(
+    control: ProfileManagerControl,
+    language: Language,
+) -> ProfileManagerControlSpec {
+    let (visible_text, accessible_description) = match control {
+        ProfileManagerControl::AddBelowList => (
+            "+",
+            Some(localized_text(
+                LocalizationKey::MenuAddUsageProfile,
+                language,
+            )),
+        ),
+        ProfileManagerControl::Rename => (
+            localized_text(LocalizationKey::UsageProfileRename, language),
+            None,
+        ),
+        ProfileManagerControl::Login => (
+            localized_text(LocalizationKey::UsageProfileLogin, language),
+            None,
+        ),
+        ProfileManagerControl::Logout => (
+            localized_text(LocalizationKey::UsageProfileLogout, language),
+            None,
+        ),
+        ProfileManagerControl::Delete => (
+            localized_text(LocalizationKey::UsageProfileDelete, language),
+            None,
+        ),
+    };
+    ProfileManagerControlSpec {
+        visible_text,
+        accessible_description,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileManagerDialogPhase {
@@ -181,6 +232,82 @@ pub enum AddProfilePromptCommand {
     Submit,
     /// 변경 요청 없이 입력창을 닫습니다.
     Cancel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AddProfilePromptPhase {
+    Live,
+    Handling,
+    Warning,
+    Closed,
+}
+
+/// 추가 입력창의 명령 처리와 중첩 경고 수명을 직렬화하는 순수 상태입니다.
+///
+/// 네이티브 계층은 `Live`에서 시작한 명령 하나만 처리하고, 경고 메시지 상자의 중첩 메시지 루프
+/// 동안 모든 제출·취소·닫기 재진입을 거부합니다. 성공 또는 취소로 닫힌 뒤에도 두 번째 결과를
+/// 만들 수 없습니다.
+#[derive(Clone, Debug)]
+pub struct AddProfilePromptState {
+    phase: AddProfilePromptPhase,
+}
+
+impl AddProfilePromptState {
+    /// 새 명령을 받을 수 있는 추가 입력창 상태를 만듭니다.
+    pub const fn new() -> Self {
+        Self {
+            phase: AddProfilePromptPhase::Live,
+        }
+    }
+
+    /// 현재 추가 입력창이 제출·취소·닫기 명령을 받을 수 있는지 반환합니다.
+    pub const fn accepts_commands(&self) -> bool {
+        matches!(self.phase, AddProfilePromptPhase::Live)
+    }
+
+    /// 활성 입력창의 사용자 명령 처리를 한 번 시작합니다.
+    ///
+    /// 이미 명령·경고를 처리 중이거나 닫힌 상태이면 `false`를 반환해 재진입을 거부합니다.
+    pub fn begin_command(&mut self) -> bool {
+        if !self.accepts_commands() {
+            return false;
+        }
+        self.phase = AddProfilePromptPhase::Handling;
+        true
+    }
+
+    /// 처리 중인 명령이 경고 메시지 상자를 열기 직전임을 기록합니다.
+    pub fn begin_warning(&mut self) -> bool {
+        if self.phase != AddProfilePromptPhase::Handling {
+            return false;
+        }
+        self.phase = AddProfilePromptPhase::Warning;
+        true
+    }
+
+    /// 중첩 경고가 닫힌 뒤 입력창을 다시 명령 가능한 상태로 복구합니다.
+    pub fn finish_warning(&mut self) -> bool {
+        if self.phase != AddProfilePromptPhase::Warning {
+            return false;
+        }
+        self.phase = AddProfilePromptPhase::Live;
+        true
+    }
+
+    /// 처리 중인 성공 또는 취소 명령으로 입력창을 한 번만 닫을 상태로 전환합니다.
+    pub fn finish_close(&mut self) -> bool {
+        if self.phase != AddProfilePromptPhase::Handling {
+            return false;
+        }
+        self.phase = AddProfilePromptPhase::Closed;
+        true
+    }
+}
+
+impl Default for AddProfilePromptState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// `IsDialogMessageW`가 변환한 표준 모달 키보드 명령입니다.
