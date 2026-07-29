@@ -138,6 +138,88 @@ pub fn add_profile_dialog_monitor_anchor(
 /// 모든 스칼라가 보조 평면 문자여도 각각 서로게이트 쌍 두 단위를 사용하므로 80단위면 공용
 /// `normalize_profile_label` 제한을 자르지 않고 수용합니다. 네이티브 edit 버퍼는 널 종료를 위해
 /// 한 단위를 추가로 확보해야 합니다.
+/// 사용량 프로필 흐름에서 메시지 상자를 요청한 화면 경로입니다.
+///
+/// 각 경로는 기존 문구, 버튼 스타일, 반환값을 유지하면서 공통 가운데 배치 경계를 사용합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileMessageRoute {
+    /// 프로필 관리자에서 안전한 작업 실패 오류를 표시합니다.
+    ManagerSafeError,
+    /// 프로필 추가 창에서 안전한 작업 실패 오류를 표시합니다.
+    AddPromptSafeError,
+    /// 관리자 또는 추가 창에서 이름 검증 경고를 표시합니다.
+    ValidationWarning,
+    /// 관리 프로필 삭제 확인을 표시합니다.
+    DeleteConfirmation,
+    /// 선택하거나 새로 추가한 프로필의 로그인 확인을 표시합니다.
+    LoginConfirmation,
+    /// 네이티브 UI 액션 처리 중 프로필 작업 실패 오류를 표시합니다.
+    NativeOperationError,
+}
+
+/// 사용량 프로필 메시지 상자의 화면 배치 계약입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileMessagePlacement {
+    /// 선택한 모니터의 작업 영역 가운데에 배치합니다.
+    Centered,
+}
+
+/// 프로필 메시지 경로에 적용할 화면 배치 계약을 반환합니다.
+///
+/// `route`는 메시지의 호출 출처이며, 반환값은 플랫폼 코드가 실제 메시지 상자 경계를 선택할 때
+/// 사용합니다. 이 함수는 Win32 호출이나 I/O를 수행하지 않습니다.
+pub const fn profile_message_placement(route: ProfileMessageRoute) -> ProfileMessagePlacement {
+    match route {
+        ProfileMessageRoute::ManagerSafeError
+        | ProfileMessageRoute::AddPromptSafeError
+        | ProfileMessageRoute::ValidationWarning
+        | ProfileMessageRoute::DeleteConfirmation
+        | ProfileMessageRoute::LoginConfirmation
+        | ProfileMessageRoute::NativeOperationError => ProfileMessagePlacement::Centered,
+    }
+}
+
+/// 한 번의 `MessageBoxW` 활성화에서 사용할 복사 가능한 가운데 배치 요청입니다.
+///
+/// 메시지 루프 안으로 Rust 참조를 가져가지 않도록 호출 전에 해석한 작업 영역만 보관합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CenteredMessageBoxRequest {
+    work_area: DialogWorkArea,
+}
+
+impl CenteredMessageBoxRequest {
+    /// 조회가 끝난 모니터 작업 영역으로 한 번 소비할 요청을 만듭니다.
+    const fn new(work_area: DialogWorkArea) -> Self {
+        Self { work_area }
+    }
+}
+
+/// 현재 스레드의 메시지 상자 가운데 배치 요청과 중첩 호출 복원 상태를 관리합니다.
+///
+/// 설치 시 이전 요청을 값으로 반환하고, 활성화 훅은 `consume`으로 현재 요청을 정확히 한 번
+/// 가져갑니다. 호출 종료 시 반환받은 값을 `restore`해야 바깥쪽 중첩 호출의 상태가 보존됩니다.
+#[derive(Debug, Default)]
+struct CenteredMessageBoxRequestState {
+    current: Option<CenteredMessageBoxRequest>,
+}
+
+impl CenteredMessageBoxRequestState {
+    /// 새 요청을 설치하고 중첩 호출 종료 시 복원할 이전 요청을 반환합니다.
+    fn install(&mut self, request: CenteredMessageBoxRequest) -> Option<CenteredMessageBoxRequest> {
+        self.current.replace(request)
+    }
+
+    /// 현재 요청을 값으로 꺼내며, 같은 활성화 요청에서 다시 호출하면 `None`을 반환합니다.
+    fn consume(&mut self) -> Option<CenteredMessageBoxRequest> {
+        self.current.take()
+    }
+
+    /// 중첩 메시지 상자 호출 전에 저장한 요청 상태를 복원합니다.
+    fn restore(&mut self, previous: Option<CenteredMessageBoxRequest>) {
+        self.current = previous;
+    }
+}
+
 pub const PROFILE_LABEL_MAX_UTF16_UNITS: usize = 80;
 
 /// 프로필 관리 대화상자가 애플리케이션 계층에 전달하는 변경 요청입니다.
@@ -795,6 +877,49 @@ pub(crate) unsafe fn show_profile_manager_owned(
 ///
 /// `label`은 확인 창에만 표시하며, 문구는 Codex CLI와 IDE 로그인이 바뀌지 않음을 함께 안내합니다.
 /// 실제 로그인·브라우저 작업은 수행하지 않습니다.
+/// 사용량 프로필 흐름의 메시지를 경로별 배치 계약에 따라 표시합니다.
+///
+/// `route`는 호출 출처를 구분하며, `owner`, 문구, 제목, 버튼 스타일은 변경하지 않고 플랫폼의
+/// 공통 메시지 상자 경계로 전달합니다. 반환값은 원래 `MessageBoxW` 결과를 보존합니다.
+///
+/// # Safety
+///
+/// `owner`가 0이 아니면 호출 동안 유효한 Win32 창 핸들이어야 합니다. 이 함수는
+/// `MessageBoxW`의 중첩 메시지 루프를 동기적으로 실행합니다.
+#[cfg(windows)]
+pub(crate) unsafe fn show_profile_message(
+    route: ProfileMessageRoute,
+    owner: windows::Win32::Foundation::HWND,
+    message: &str,
+    title: &str,
+    style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+) -> io::Result<windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_RESULT> {
+    match profile_message_placement(route) {
+        ProfileMessagePlacement::Centered => {
+            show_centered_profile_message(owner, message, title, style)
+        }
+    }
+}
+
+/// 사용량 프로필 메시지 상자를 선택한 작업 영역 가운데에 표시합니다.
+///
+/// 유효하고 보이는 `owner`가 있으면 그 창의 모니터를 사용하고, 그렇지 않으면 커서 모니터를
+/// 사용합니다. 모니터 조회, 훅 설치, 창 이동 실패는 Windows 기본 배치로 안전하게 대체됩니다.
+///
+/// # Safety
+///
+/// `owner`가 0이 아니면 호출 동안 Win32가 처리할 수 있는 창 핸들이어야 합니다. 이 함수는
+/// `MessageBoxW`의 중첩 메시지 루프를 동기적으로 실행합니다.
+#[cfg(windows)]
+pub(crate) unsafe fn show_centered_profile_message(
+    owner: windows::Win32::Foundation::HWND,
+    message: &str,
+    title: &str,
+    style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+) -> io::Result<windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_RESULT> {
+    platform::show_centered_profile_message(owner, message, title, style)
+}
+
 #[cfg(windows)]
 pub(crate) unsafe fn confirm_profile_login_owned(
     owner: windows::Win32::Foundation::HWND,
@@ -845,6 +970,35 @@ pub fn confirm_profile_delete(label: &str, language: Language) -> io::Result<boo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn centered_message_box_request_is_consumed_only_once() {
+        let request = CenteredMessageBoxRequest::new(DialogWorkArea::new(-1600, 40, 0, 1040));
+        let mut state = CenteredMessageBoxRequestState::default();
+
+        let restore = state.install(request);
+
+        assert_eq!(state.consume(), Some(request));
+        assert_eq!(state.consume(), None);
+        state.restore(restore);
+        assert_eq!(state.consume(), None);
+    }
+
+    #[test]
+    fn centered_message_box_request_restores_outer_state_after_nested_scope() {
+        let outer = CenteredMessageBoxRequest::new(DialogWorkArea::new(0, 0, 1920, 1040));
+        let inner = CenteredMessageBoxRequest::new(DialogWorkArea::new(1920, -900, 3520, 0));
+        let mut state = CenteredMessageBoxRequestState::default();
+
+        let outer_restore = state.install(outer);
+        let inner_restore = state.install(inner);
+
+        assert_eq!(state.consume(), Some(inner));
+        state.restore(inner_restore);
+        assert_eq!(state.consume(), Some(outer));
+        state.restore(outer_restore);
+        assert_eq!(state.consume(), None);
+    }
 
     #[test]
     fn centered_dialog_centers_a_standard_manager_in_the_work_area() {

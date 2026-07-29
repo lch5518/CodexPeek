@@ -17,12 +17,12 @@ use codex_usage_monitor::{
             available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
             profile_login_confirmation, profile_manager_control_enabled,
             profile_manager_control_spec, profile_manager_dialog_monitor_anchor,
-            profile_manager_row_label, validated_label, AddProfilePromptCommand,
-            AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, ModalCleanupAction,
-            ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+            profile_manager_row_label, profile_message_placement, validated_label,
+            AddProfilePromptCommand, AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize,
+            ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
             ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
-            ProfileManagerControl, ProfileManagerDialogState, PROFILE_LABEL_MAX_UTF16_UNITS,
-            PROFILE_MANAGER_CONTROLS,
+            ProfileManagerControl, ProfileManagerDialogState, ProfileMessagePlacement,
+            ProfileMessageRoute, PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -90,6 +90,26 @@ fn profile_dialog_centering_uses_the_cursor_or_a_live_owner_as_its_monitor_ancho
         add_profile_dialog_monitor_anchor(owner, None),
         DialogMonitorAnchor::Cursor
     );
+}
+
+#[test]
+fn profile_message_centering_routes_every_usage_profile_message_origin() {
+    let routes = [
+        ProfileMessageRoute::ManagerSafeError,
+        ProfileMessageRoute::AddPromptSafeError,
+        ProfileMessageRoute::ValidationWarning,
+        ProfileMessageRoute::DeleteConfirmation,
+        ProfileMessageRoute::LoginConfirmation,
+        ProfileMessageRoute::NativeOperationError,
+    ];
+
+    for route in routes {
+        assert_eq!(
+            profile_message_placement(route),
+            ProfileMessagePlacement::Centered,
+            "{route:?}"
+        );
+    }
 }
 
 #[test]

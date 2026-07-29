@@ -62,7 +62,10 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
-    profile_dialog::{confirm_profile_login_owned, show_profile_manager_owned},
+    profile_dialog::{
+        confirm_profile_login_owned, show_profile_manager_owned, show_profile_message,
+        ProfileMessageRoute,
+    },
     taskbar::{
         attach_to_taskbar, reconcile_widget_surfaces, reposition_taskbar_widget, TaskbarObserver,
         TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
@@ -628,18 +631,14 @@ unsafe fn open_profile_dialog(state_pointer: *mut NativeState<'_>) {
 }
 
 unsafe fn show_profile_dialog_error(owner: HWND, language: crate::Language) {
-    let title = localized_window_title(language);
-    let message: Vec<u16> = crate::localized_text(
-        crate::LocalizationKey::UsageProfileOperationFailed,
-        language,
-    )
-    .encode_utf16()
-    .chain(Some(0))
-    .collect();
-    let _ = MessageBoxW(
-        Some(owner),
-        PCWSTR(message.as_ptr()),
-        PCWSTR(title.as_ptr()),
+    let _ = show_profile_message(
+        ProfileMessageRoute::NativeOperationError,
+        owner,
+        crate::localized_text(
+            crate::LocalizationKey::UsageProfileOperationFailed,
+            language,
+        ),
+        crate::localized_text(crate::LocalizationKey::WindowTitle, language),
         MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR,
     );
 }

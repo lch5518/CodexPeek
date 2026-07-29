@@ -138,6 +138,19 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
       verify focus order, Enter/Escape behavior, access keys, and focus restoration
 - [ ] Verify English and an RTL language (Arabic), including mirrored layout, label clipping,
       confirmation text, and profile menu alignment
+- [ ] At 100%, 125%, 150%, and 200% DPI, open the manager, add prompt, validation warning,
+      login/delete confirmations, and safe profile errors; verify each message stays centered in
+      the selected monitor work area without clipping or changing its existing buttons
+- [ ] With negative-coordinate monitors and monitors arranged above and below the primary, open
+      the complete profile flow from each monitor; verify a live visible owner wins and a hidden,
+      closed, or zero owner falls back to the cursor monitor
+- [ ] Move from manager to add prompt, warning, and confirmation on every monitor; verify centering
+      continuity and that the add tooltip and every message remain fully visible
+- [ ] Cancel and press Escape from the add prompt and every cancellable confirmation; verify the
+      owner is restored, focus returns safely, and the manager can be reopened without duplicate
+      commands or a stuck disabled window
+- [ ] Repeat warning, confirmation, and error messages in Arabic; verify the exact localized RTL
+      copy remains readable and visible with the existing button order and semantics
 - [ ] Add, rename, select, sign in again, sign out, and delete a managed profile using a
       40-character Unicode label
 - [ ] Add two profiles with intentionally distinct ChatGPT accounts and verify their usage

@@ -1,4 +1,9 @@
-use std::{ffi::c_void, io};
+use std::{
+    cell::RefCell,
+    ffi::c_void,
+    io,
+    panic::{catch_unwind, AssertUnwindSafe},
+};
 
 use windows::{
     core::{w, PCWSTR, PWSTR},
@@ -11,7 +16,7 @@ use windows::{
             GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO,
             MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
         },
-        System::LibraryLoader::GetModuleHandleW,
+        System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Controls::{
                 EM_SETLIMITTEXT, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
@@ -19,18 +24,19 @@ use windows::{
             },
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
-                GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
-                IsDialogMessageW, IsWindow, LoadCursorW, MessageBoxW, PostQuitMessage,
-                RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-                SetWindowTextW, ShowWindow, TranslateMessage, BS_DEFPUSHBUTTON, CREATESTRUCTW,
-                CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HMENU, IDCANCEL, IDC_ARROW,
-                IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL,
-                MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MSG, SWP_NOACTIVATE,
-                SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY,
-                WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
-                WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
-                WS_VISIBLE, WS_VSCROLL,
+                CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+                GetCursorPos, GetDlgItem, GetMessageW, GetWindowLongPtrW, GetWindowRect,
+                GetWindowTextW, IsDialogMessageW, IsWindow, IsWindowVisible, LoadCursorW,
+                MessageBoxW, PostQuitMessage, RegisterClassW, SendMessageW, SetForegroundWindow,
+                SetWindowLongPtrW, SetWindowPos, SetWindowTextW, SetWindowsHookExW, ShowWindow,
+                TranslateMessage, UnhookWindowsHookEx, BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW,
+                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL,
+                IDC_ARROW, IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL,
+                LB_SETCURSEL, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MSG,
+                SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WH_CBT, WINDOW_STYLE, WM_CLOSE,
+                WM_COMMAND, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER,
+                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
+                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
@@ -42,11 +48,12 @@ use super::{
     add_profile_dialog_monitor_anchor, add_profile_prompt_result, centered_dialog_origin,
     profile_delete_confirmation, profile_dialog_keyboard_result, profile_login_confirmation,
     profile_manager_control_enabled, profile_manager_control_spec,
-    profile_manager_dialog_monitor_anchor, profile_manager_row_label, AddProfilePromptCommand,
-    AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, DialogWorkArea,
+    profile_manager_dialog_monitor_anchor, profile_manager_row_label, show_profile_message,
+    AddProfilePromptCommand, AddProfilePromptState, CenteredMessageBoxRequest,
+    CenteredMessageBoxRequestState, DialogMonitorAnchor, DialogWindowSize, DialogWorkArea,
     ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
     ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
-    ProfileManagerControl, ProfileManagerDialogState, UsageProfileView,
+    ProfileManagerControl, ProfileManagerDialogState, ProfileMessageRoute, UsageProfileView,
     PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
 };
 
@@ -129,6 +136,104 @@ impl Drop for ModalWindowGuard {
     }
 }
 
+thread_local! {
+    /// 현재 UI 스레드에서 다음 프로필 `MessageBoxW` 활성화가 소비할 작업 영역입니다.
+    static CENTERED_MESSAGE_BOX_REQUEST: RefCell<CenteredMessageBoxRequestState> =
+        RefCell::new(CenteredMessageBoxRequestState::default());
+}
+
+/// 한 번의 프로필 `MessageBoxW` 호출에만 적용되는 현재 스레드 CBT 훅입니다.
+///
+/// 생성 시 이전 스레드 로컬 요청을 값으로 저장하며, 소멸 시 훅 해제 성공 여부와 관계없이 그
+/// 요청을 복원합니다. 따라서 중첩 호출도 바깥쪽 요청을 잃지 않습니다.
+struct CenteredMessageBoxHookGuard {
+    hook: HHOOK,
+    previous_request: Option<CenteredMessageBoxRequest>,
+}
+
+impl CenteredMessageBoxHookGuard {
+    /// 이미 해석한 작업 영역을 설치하고 현재 스레드에만 CBT 훅을 연결합니다.
+    ///
+    /// 훅 설치나 스레드 로컬 접근이 실패하면 요청을 남기지 않고 `None`을 반환합니다. 호출자는
+    /// 이 경우에도 `MessageBoxW`를 호출해 Windows 기본 배치를 유지해야 합니다.
+    unsafe fn install(work_area: DialogWorkArea) -> Option<Self> {
+        let request = CenteredMessageBoxRequest::new(work_area);
+        let previous_request = CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
+            state
+                .try_borrow_mut()
+                .ok()
+                .map(|mut state| state.install(request))
+        })?;
+
+        let hook = match SetWindowsHookExW(
+            WH_CBT,
+            Some(centered_message_box_hook),
+            None,
+            GetCurrentThreadId(),
+        ) {
+            Ok(hook) => hook,
+            Err(_) => {
+                CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
+                    state.borrow_mut().restore(previous_request);
+                });
+                return None;
+            }
+        };
+
+        Some(Self {
+            hook,
+            previous_request,
+        })
+    }
+}
+
+impl Drop for CenteredMessageBoxHookGuard {
+    fn drop(&mut self) {
+        // SAFETY: `hook`은 이 가드가 현재 스레드에 설치해 소유한 핸들이며 여기서 정확히 한 번
+        // 해제를 시도합니다. 해제 실패도 메시지 결과나 이전 요청 복원을 막지 않습니다.
+        unsafe {
+            let _ = UnhookWindowsHookEx(self.hook);
+        }
+        CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
+            state.borrow_mut().restore(self.previous_request);
+        });
+    }
+}
+
+/// 현재 스레드의 첫 `HCBT_ACTIVATE` 요청을 소비해 프로필 메시지 상자를 가운데로 옮깁니다.
+///
+/// # Safety
+///
+/// Windows가 `WH_CBT` 훅 계약에 따라 호출해야 합니다. 콜백 내부 작업은 패닉 경계로 감싸 FFI
+/// 밖으로 언와인드하지 않으며, 모든 코드 경로에서 다음 훅을 호출합니다.
+unsafe extern "system" fn centered_message_box_hook(
+    code: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if code != HCBT_ACTIVATE as i32 {
+            return;
+        }
+        let request = CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
+            state
+                .try_borrow_mut()
+                .ok()
+                .and_then(|mut state| state.consume())
+        });
+        if let Some(request) = request {
+            // SAFETY: `HCBT_ACTIVATE`의 `wparam`은 활성화되는 창의 HWND 값입니다. 요청은 여기서
+            // 이미 값으로 소비되어 중첩 메시지 루프에 Rust 참조를 유지하지 않습니다.
+            unsafe {
+                center_window_in_work_area(HWND(wparam.0 as *mut c_void), request.work_area);
+            }
+        }
+    }));
+
+    // SAFETY: Win32 훅 계약상 처리 여부와 관계없이 체인의 다음 훅으로 원래 인자를 전달합니다.
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
 /// 지정한 기준에 맞는 모니터 작업 영역의 가운데로 창을 이동합니다.
 ///
 /// 배치에 필요한 Win32 조회나 이동이 실패하면 창의 기존 기본 위치를 유지합니다. 첫 이동 뒤 DPI
@@ -142,6 +247,16 @@ unsafe fn center_window(dialog: HWND, anchor: DialogMonitorAnchor) {
     let Some(work_area) = dialog_work_area(anchor) else {
         return;
     };
+    center_window_in_work_area(dialog, work_area);
+}
+
+/// 미리 해석한 작업 영역 가운데로 창을 옮기며 DPI 변화로 크기가 바뀐 경우 한 번 보정합니다.
+///
+/// # Safety
+///
+/// `dialog`는 호출 시점에 유효한 최상위 창이어야 합니다. 조회나 이동 실패는 기존 창 위치를
+/// 보존하며 호출자에게 전파하지 않습니다.
+unsafe fn center_window_in_work_area(dialog: HWND, work_area: DialogWorkArea) {
     let Some(initial_size) = live_window_size(dialog) else {
         return;
     };
@@ -226,6 +341,19 @@ unsafe fn live_window_size(window: HWND) -> Option<DialogWindowSize> {
         width.min(i64::from(i32::MAX)) as i32,
         height.min(i64::from(i32::MAX)) as i32,
     ))
+}
+
+/// 프로필 메시지 상자가 사용할 모니터 작업 영역을 호출 전에 결정합니다.
+///
+/// 보이고 크기가 유효한 소유자만 소유자 모니터를 선택하며, 숨김 창, 0 핸들, 잘못된 창,
+/// 조회 실패는 커서 모니터 정책으로 대체합니다. 최종 모니터 정보 실패는 `None`입니다.
+unsafe fn profile_message_work_area(owner: HWND) -> Option<DialogWorkArea> {
+    let owner_size = if owner != HWND::default() && IsWindowVisible(owner).as_bool() {
+        live_window_size(owner)
+    } else {
+        None
+    };
+    dialog_work_area(add_profile_dialog_monitor_anchor(owner, owner_size))
 }
 
 /// 현재 외곽 크기를 보존한 채 창의 좌상단을 작업 영역 가운데로 옮깁니다.
@@ -942,7 +1070,8 @@ unsafe fn submit_rename_label(
     match action {
         Ok(action) => Ok(action),
         Err(_) => {
-            show_message(
+            show_profile_message(
+                ProfileMessageRoute::ValidationWarning,
                 hwnd,
                 localized_text(LocalizationKey::UsageProfileInvalidLabel, language),
                 localized_text(LocalizationKey::WindowTitle, language),
@@ -1086,7 +1215,13 @@ unsafe fn show_add_dialog_warning(
         }
         state.language
     };
-    let _ = show_message(
+    let route = if message_key == LocalizationKey::UsageProfileInvalidLabel {
+        ProfileMessageRoute::ValidationWarning
+    } else {
+        ProfileMessageRoute::AddPromptSafeError
+    };
+    let _ = show_profile_message(
+        route,
         hwnd,
         localized_text(message_key, language),
         localized_text(LocalizationKey::WindowTitle, language),
@@ -1134,7 +1269,14 @@ pub(super) unsafe fn confirm_profile_login_owned(
 ) -> io::Result<bool> {
     let message = profile_login_confirmation(label, language);
     let title = localized_text(LocalizationKey::UsageProfileLogin, language);
-    show_message(owner, &message, title, MB_OKCANCEL | MB_ICONWARNING).map(|result| result == IDOK)
+    show_profile_message(
+        ProfileMessageRoute::LoginConfirmation,
+        owner,
+        &message,
+        title,
+        MB_OKCANCEL | MB_ICONWARNING,
+    )
+    .map(|result| result == IDOK)
 }
 
 unsafe fn confirm_profile_delete_owned(
@@ -1144,11 +1286,19 @@ unsafe fn confirm_profile_delete_owned(
 ) -> io::Result<bool> {
     let message = profile_delete_confirmation(label, language);
     let title = localized_text(LocalizationKey::UsageProfileDelete, language);
-    show_message(owner, &message, title, MB_YESNO | MB_ICONWARNING).map(|result| result == IDYES)
+    show_profile_message(
+        ProfileMessageRoute::DeleteConfirmation,
+        owner,
+        &message,
+        title,
+        MB_YESNO | MB_ICONWARNING,
+    )
+    .map(|result| result == IDYES)
 }
 
 unsafe fn show_safe_error(owner: HWND, language: Language) {
-    let _ = show_message(
+    let _ = show_profile_message(
+        ProfileMessageRoute::ManagerSafeError,
         owner,
         localized_text(LocalizationKey::UsageProfileOperationFailed, language),
         localized_text(LocalizationKey::WindowTitle, language),
@@ -1156,23 +1306,28 @@ unsafe fn show_safe_error(owner: HWND, language: Language) {
     );
 }
 
-unsafe fn show_message(
+pub(super) unsafe fn show_centered_profile_message(
     owner: HWND,
     message: &str,
     title: &str,
     style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
 ) -> io::Result<windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_RESULT> {
+    let work_area = profile_message_work_area(owner);
     let message = wide(message);
     let title = wide(title);
     let parent = (owner != HWND::default()).then_some(owner);
+    let centering_guard =
+        work_area.and_then(|work_area| CenteredMessageBoxHookGuard::install(work_area));
     let result = MessageBoxW(
         parent,
         PCWSTR(message.as_ptr()),
         PCWSTR(title.as_ptr()),
         style,
     );
-    if result.0 == 0 {
-        Err(io::Error::last_os_error())
+    let error = (result.0 == 0).then(io::Error::last_os_error);
+    drop(centering_guard);
+    if let Some(error) = error {
+        Err(error)
     } else {
         Ok(result)
     }
