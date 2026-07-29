@@ -14,11 +14,12 @@ use codex_usage_monitor::{
         },
         profile_dialog::{
             add_profile_prompt_result, available_profile_actions, profile_delete_confirmation,
-            profile_dialog_keyboard_result, profile_login_confirmation, profile_manager_row_label,
-            validated_label, AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle,
+            profile_dialog_keyboard_result, profile_login_confirmation,
+            profile_manager_control_enabled, profile_manager_row_label, validated_label,
+            AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction,
             ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
-            ProfileDialogKeyboardResult, ProfileManagerControl, PROFILE_LABEL_MAX_UTF16_UNITS,
-            PROFILE_MANAGER_CONTROLS,
+            ProfileDialogKeyboardResult, ProfileManagerControl, ProfileManagerDialogState,
+            PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -117,35 +118,71 @@ fn profile_manager_controls_exclude_bottom_add_and_close() {
             ProfileManagerControl::Delete,
         ]
     );
+}
 
-    let controller = ProfileDialogController::new(&[system_profile_view()], true);
-    assert!(PROFILE_MANAGER_CONTROLS.contains(&ProfileManagerControl::AddBelowList));
-    assert!(!controller.can_add());
+#[test]
+fn profile_manager_add_enablement_follows_can_add_exactly() {
+    let available = ProfileDialogController::new(&[system_profile_view()], false);
+    let pending = ProfileDialogController::new(&[system_profile_view()], true);
+    let mut full_profiles = vec![system_profile_view()];
+    for sequence in 1..8 {
+        full_profiles.push(UsageProfileView {
+            id: UsageProfileId::Managed(sequence),
+            label: format!("Profile {sequence}"),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        });
+    }
+    let full = ProfileDialogController::new(&full_profiles, false);
+
+    assert!(profile_manager_control_enabled(
+        &available,
+        ProfileManagerControl::AddBelowList
+    ));
+    assert!(!profile_manager_control_enabled(
+        &pending,
+        ProfileManagerControl::AddBelowList
+    ));
+    assert!(!profile_manager_control_enabled(
+        &full,
+        ProfileManagerControl::AddBelowList
+    ));
+}
+
+#[test]
+fn active_add_prompt_rejects_a_second_child() {
+    let mut manager = ProfileManagerDialogState::new();
+
+    assert!(manager.begin_add_prompt(true));
+    assert!(!manager.accepts_manager_commands());
+    assert!(!manager.begin_add_prompt(true));
 }
 
 #[test]
 fn cancelled_add_prompt_restores_the_live_manager() {
-    let mut manager = ModalDialogLifecycle::new(false, false);
-    manager.window_created();
-    let mut prompt = ModalDialogLifecycle::new(true, true);
-    prompt.window_created();
-    prompt.owner_disabled();
+    let mut manager = ProfileManagerDialogState::new();
+    assert!(manager.begin_add_prompt(true));
 
-    let action = add_profile_prompt_result("ignored", AddProfilePromptCommand::Cancel).unwrap();
-    prompt.window_destroyed();
+    assert!(manager.finish_add_prompt(None));
+    assert!(manager.accepts_manager_commands());
+    assert_eq!(manager.take_result(), None);
+}
 
-    assert_eq!(action, None);
+#[test]
+fn submitted_add_prompt_returns_exactly_one_action() {
+    let mut manager = ProfileManagerDialogState::new();
+    assert!(manager.begin_add_prompt(true));
+
+    assert!(manager.finish_add_prompt(Some(ProfileDialogAction::Add("Work".to_owned()))));
+    assert!(!manager.finish_add_prompt(Some(ProfileDialogAction::Add("Duplicate".to_owned()))));
+    assert!(!manager.accepts_manager_commands());
     assert_eq!(
-        prompt.cleanup_actions(),
-        vec![ModalCleanupAction::RestoreOwner]
+        manager.take_result(),
+        Some(ProfileDialogAction::Add("Work".to_owned()))
     );
-    assert_eq!(
-        manager.cleanup_actions(),
-        vec![
-            ModalCleanupAction::ClearWindowState,
-            ModalCleanupAction::DestroyWindow,
-        ]
-    );
+    assert_eq!(manager.take_result(), None);
 }
 
 #[test]

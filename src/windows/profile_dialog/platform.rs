@@ -31,11 +31,11 @@ use crate::{localized_text, Language, LocalizationKey};
 
 use super::{
     add_profile_prompt_result, profile_delete_confirmation, profile_dialog_keyboard_result,
-    profile_login_confirmation, profile_manager_row_label, AddProfilePromptCommand,
-    ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
-    ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
-    ProfileManagerControl, UsageProfileView, PROFILE_LABEL_MAX_UTF16_UNITS,
-    PROFILE_MANAGER_CONTROLS,
+    profile_login_confirmation, profile_manager_control_enabled, profile_manager_row_label,
+    AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle, ProfileDialogAction,
+    ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
+    ProfileDialogKeyboardResult, ProfileManagerControl, ProfileManagerDialogState,
+    UsageProfileView, PROFILE_LABEL_MAX_UTF16_UNITS, PROFILE_MANAGER_CONTROLS,
 };
 
 const DIALOG_CLASS: PCWSTR = w!("CodexUsageMonitor.ProfileDialog.v1");
@@ -51,8 +51,8 @@ const ADD_PROFILE_NAME_ID: i32 = 4200;
 
 struct DialogState {
     controller: ProfileDialogController,
+    interaction: ProfileManagerDialogState,
     language: Language,
-    result: Option<ProfileDialogAction>,
     list: HWND,
     edit: HWND,
 }
@@ -134,8 +134,8 @@ pub(super) unsafe fn show_profile_manager_owned(
 
     let mut state = Box::new(DialogState {
         controller: ProfileDialogController::new(profiles, mutation_pending),
+        interaction: ProfileManagerDialogState::new(),
         language,
-        result: None,
         list: HWND::default(),
         edit: HWND::default(),
     });
@@ -170,7 +170,7 @@ pub(super) unsafe fn show_profile_manager_owned(
     let _ = SetFocus(Some(state.edit));
 
     run_modal_message_loop(dialog)?;
-    Ok(state.result.take())
+    Ok(state.interaction.take_result())
 }
 
 /// 활성 프로필 관리자를 소유자로 사용해 프로필 이름 추가 입력창을 표시합니다.
@@ -581,16 +581,30 @@ unsafe extern "system" fn dialog_proc(
     }
     match message {
         WM_COMMAND => {
-            handle_command(hwnd, &mut *state, wparam);
+            if manager_accepts_commands(hwnd, state) {
+                // SAFETY: 원시 포인터만 전달하며 중첩 메시지 루프 전후에 참조를 보관하지 않습니다.
+                handle_command(hwnd, state, wparam);
+            }
             LRESULT(0)
         }
         WM_CLOSE => {
-            let _ = DestroyWindow(hwnd);
+            if manager_accepts_commands(hwnd, state) {
+                let _ = DestroyWindow(hwnd);
+            }
             LRESULT(0)
         }
         WM_DESTROY => LRESULT(0),
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
     }
+}
+
+/// 현재 관리자 HWND와 순수 중첩 상태가 사용자 명령을 모두 허용하는지 확인합니다.
+///
+/// 자식 모달 또는 메시지 상자가 소유자를 비활성화했거나 추가 입력창 전이가 진행 중이면 명령을
+/// 거부합니다. `state`는 `GWLP_USERDATA`에서 읽은 살아 있는 관리자 상태여야 합니다. 반환 전에
+/// 임시 공유 참조를 버리므로 이후 중첩 메시지 루프와 겹치지 않습니다.
+unsafe fn manager_accepts_commands(hwnd: HWND, state: *mut DialogState) -> bool {
+    IsWindowEnabled(hwnd).as_bool() && (&*state).interaction.accepts_manager_commands()
 }
 
 unsafe extern "system" fn add_dialog_proc(
@@ -628,7 +642,12 @@ unsafe extern "system" fn add_dialog_proc(
     }
 }
 
-unsafe fn handle_command(hwnd: HWND, state: &mut DialogState, wparam: WPARAM) {
+/// 관리자 명령을 처리하되 중첩 모달 호출을 가로질러 Rust 참조를 보관하지 않습니다.
+///
+/// `state`는 관리자 모달 호출의 `Box<DialogState>`를 가리키며 `GWLP_USERDATA`가 제거되기 전의
+/// 같은 UI 스레드에서만 호출해야 합니다. 중첩 호출 전 필요한 값만 복사하고, 반환 후 새로
+/// 참조를 만들기 때문에 재진입 시 별칭 가능한 `&mut DialogState`가 남지 않습니다.
+unsafe fn handle_command(hwnd: HWND, state: *mut DialogState, wparam: WPARAM) {
     let control_id = (wparam.0 & 0xffff) as i32;
     let notification = ((wparam.0 >> 16) & 0xffff) as u32;
     let keyboard_command = if control_id == IDCANCEL.0 {
@@ -647,65 +666,130 @@ unsafe fn handle_command(hwnd: HWND, state: &mut DialogState, wparam: WPARAM) {
         return;
     }
     if control_id == PROFILE_LIST_ID && notification == LBN_SELCHANGE {
-        let selected = SendMessageW(state.list, LB_GETCURSEL, None, None).0;
-        if selected >= 0 && state.controller.select(selected as usize) {
-            update_controls(hwnd, state);
+        let list = (&*state).list;
+        let selected = SendMessageW(list, LB_GETCURSEL, None, None).0;
+        if selected >= 0 {
+            let state = &mut *state;
+            if state.controller.select(selected as usize) {
+                update_controls(hwnd, state);
+            }
         }
         return;
     }
 
     let action = match control_id {
         OPEN_ADD_ID => {
-            show_add_profile_prompt_owned(hwnd, state.controller.can_add(), state.language)
+            open_add_profile_prompt(hwnd, state);
+            return;
         }
         RENAME_ID => submit_rename_label(hwnd, state),
-        LOGIN_ID => Ok(state
+        LOGIN_ID => Ok((&*state)
             .controller
             .confirmed_command(ProfileDialogCommand::Login, true)),
-        LOGOUT_ID => Ok(state
+        LOGOUT_ID => Ok((&*state)
             .controller
             .confirmed_command(ProfileDialogCommand::Logout, true)),
-        DELETE_ID => {
-            let Some(profile) = state.controller.selected_profile() else {
-                return;
-            };
-            match confirm_profile_delete_owned(hwnd, &profile.label, state.language) {
-                Ok(confirmed) => Ok(state
-                    .controller
-                    .confirmed_command(ProfileDialogCommand::Delete, confirmed)),
-                Err(error) => Err(error),
-            }
-        }
+        DELETE_ID => submit_delete(hwnd, state),
         _ => return,
     };
 
     match action {
         Ok(Some(action)) => {
-            state.result = Some(action);
-            let _ = DestroyWindow(hwnd);
+            if (&mut *state).interaction.close_with_action(action) {
+                let _ = DestroyWindow(hwnd);
+            }
         }
         Ok(None) => {}
-        Err(_) => show_safe_error(hwnd, state.language),
+        Err(_) => {
+            let language = (&*state).language;
+            show_safe_error(hwnd, language);
+        }
     }
 }
 
+/// 추가 입력창을 단일 자식 전이로 실행하고 결과를 관리자에 한 번 반영합니다.
+///
+/// 순수 상태를 먼저 `AddPromptActive`로 전환한 뒤 모든 Rust 참조를 버리고 중첩 메시지 루프에
+/// 진입합니다. 오류와 취소는 활성 관리자로 복귀하며, Add 결과만 관리자를 닫습니다.
+unsafe fn open_add_profile_prompt(hwnd: HWND, state: *mut DialogState) {
+    let (can_add, language) = {
+        let state = &mut *state;
+        let can_add = state.controller.can_add();
+        if !state.interaction.begin_add_prompt(can_add) {
+            return;
+        }
+        (can_add, state.language)
+    };
+
+    let prompt_result = show_add_profile_prompt_owned(hwnd, can_add, language);
+    match prompt_result {
+        Ok(result) => {
+            let (accepted, close_manager) = {
+                let state = &mut *state;
+                let accepted = state.interaction.finish_add_prompt(result);
+                let close_manager = !state.interaction.accepts_manager_commands();
+                (accepted, close_manager)
+            };
+            if !accepted {
+                show_safe_error(hwnd, language);
+            } else if close_manager {
+                let _ = DestroyWindow(hwnd);
+            }
+        }
+        Err(_) => {
+            let _ = (&mut *state).interaction.finish_add_prompt(None);
+            show_safe_error(hwnd, language);
+        }
+    }
+}
+
+/// 관리자 상태 참조를 보관하지 않고 이름 변경 입력을 검증합니다.
+///
+/// `state`는 모달 호출의 살아 있는 상태 포인터여야 하며, 경고 메시지 상자 전에 edit와 언어를
+/// 값으로 복사하고 검증 결과를 소유 값으로 변환합니다.
 unsafe fn submit_rename_label(
     hwnd: HWND,
-    state: &DialogState,
+    state: *mut DialogState,
 ) -> Result<Option<ProfileDialogAction>, io::Error> {
-    let value = read_profile_label(state.edit)?;
-    match state.controller.submit_rename(&value) {
+    let (edit, language) = {
+        let state = &*state;
+        (state.edit, state.language)
+    };
+    let value = read_profile_label(edit)?;
+    let action = (&*state).controller.submit_rename(&value);
+    match action {
         Ok(action) => Ok(action),
         Err(_) => {
             show_message(
                 hwnd,
-                localized_text(LocalizationKey::UsageProfileInvalidLabel, state.language),
-                localized_text(LocalizationKey::WindowTitle, state.language),
+                localized_text(LocalizationKey::UsageProfileInvalidLabel, language),
+                localized_text(LocalizationKey::WindowTitle, language),
                 MB_OK | MB_ICONWARNING,
             )?;
             Ok(None)
         }
     }
+}
+
+/// 삭제 확인 중 관리자 상태 참조를 보관하지 않고 확인 결과를 현재 선택에 적용합니다.
+///
+/// `state`는 모달 호출의 살아 있는 상태 포인터여야 합니다. 확인 전에 표시 이름과 언어만
+/// 복사하고, 중첩 메시지 상자가 닫힌 뒤 새 참조로 명령 가용성을 다시 확인합니다.
+unsafe fn submit_delete(
+    hwnd: HWND,
+    state: *mut DialogState,
+) -> Result<Option<ProfileDialogAction>, io::Error> {
+    let (label, language) = {
+        let state = &*state;
+        let Some(profile) = state.controller.selected_profile() else {
+            return Ok(None);
+        };
+        (profile.label.clone(), state.language)
+    };
+    let confirmed = confirm_profile_delete_owned(hwnd, &label, language)?;
+    Ok((&*state)
+        .controller
+        .confirmed_command(ProfileDialogCommand::Delete, confirmed))
 }
 
 /// 추가 입력창의 명시적 추가 또는 취소 명령을 처리합니다.
@@ -764,35 +848,14 @@ fn read_profile_label(edit: HWND) -> io::Result<String> {
 }
 
 unsafe fn update_controls(hwnd: HWND, state: &DialogState) {
-    set_enabled(hwnd, OPEN_ADD_ID, state.controller.can_add());
-    set_enabled(
-        hwnd,
-        RENAME_ID,
-        state
-            .controller
-            .command_enabled(ProfileDialogCommand::Rename),
-    );
-    set_enabled(
-        hwnd,
-        LOGIN_ID,
-        state
-            .controller
-            .command_enabled(ProfileDialogCommand::Login),
-    );
-    set_enabled(
-        hwnd,
-        LOGOUT_ID,
-        state
-            .controller
-            .command_enabled(ProfileDialogCommand::Logout),
-    );
-    set_enabled(
-        hwnd,
-        DELETE_ID,
-        state
-            .controller
-            .command_enabled(ProfileDialogCommand::Delete),
-    );
+    for control in PROFILE_MANAGER_CONTROLS {
+        let (id, _, _, _, _, _) = manager_control_spec(control, state.language);
+        set_enabled(
+            hwnd,
+            id,
+            profile_manager_control_enabled(&state.controller, control),
+        );
+    }
     if let Some(profile) = state.controller.selected_profile() {
         let label = wide(&profile.label);
         let _ = SetWindowTextW(state.edit, PCWSTR(label.as_ptr()));

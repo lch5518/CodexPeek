@@ -79,6 +79,98 @@ pub const PROFILE_MANAGER_CONTROLS: [ProfileManagerControl; 5] = [
     ProfileManagerControl::Delete,
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileManagerDialogPhase {
+    Live,
+    AddPromptActive,
+    Closed,
+}
+
+/// 프로필 관리자와 소유 추가 입력창 사이의 단일 중첩 전이를 관리합니다.
+///
+/// 관리자가 활성 상태일 때만 추가 입력창을 열 수 있고, 입력창이 열린 동안 두 번째 자식이나
+/// 관리자 명령을 거부합니다. 취소는 관리자를 다시 활성 상태로 만들며, 제출은 정확히 한 개의
+/// 검증된 Add 작업을 보관하고 관리자를 닫을 상태로 전환합니다.
+#[derive(Clone, Debug)]
+pub struct ProfileManagerDialogState {
+    phase: ProfileManagerDialogPhase,
+    result: Option<ProfileDialogAction>,
+}
+
+impl ProfileManagerDialogState {
+    /// 작업 결과가 없는 활성 관리자 상태를 만듭니다.
+    pub const fn new() -> Self {
+        Self {
+            phase: ProfileManagerDialogPhase::Live,
+            result: None,
+        }
+    }
+
+    /// 관리자가 현재 사용자 명령을 받을 수 있는지 반환합니다.
+    pub const fn accepts_manager_commands(&self) -> bool {
+        matches!(self.phase, ProfileManagerDialogPhase::Live)
+    }
+
+    /// 추가가 활성화되고 다른 자식이 없을 때만 추가 입력창 시작을 기록합니다.
+    ///
+    /// 시작에 성공하면 입력창 완료 전까지 관리자 명령과 추가 입력창 재진입을 거부합니다.
+    pub fn begin_add_prompt(&mut self, add_enabled: bool) -> bool {
+        if !add_enabled || !self.accepts_manager_commands() {
+            return false;
+        }
+        self.phase = ProfileManagerDialogPhase::AddPromptActive;
+        true
+    }
+
+    /// 열린 추가 입력창의 결과를 관리자 상태에 한 번 반영합니다.
+    ///
+    /// `None`은 작업 없이 활성 관리자로 복귀합니다. Add 작업은 관리자를 닫을 상태로 전환하고
+    /// 한 번만 꺼낼 수 있게 보관합니다. 열린 자식이 없거나 Add 이외 작업이면 거부합니다.
+    pub fn finish_add_prompt(&mut self, result: Option<ProfileDialogAction>) -> bool {
+        if self.phase != ProfileManagerDialogPhase::AddPromptActive {
+            return false;
+        }
+        match result {
+            None => {
+                self.phase = ProfileManagerDialogPhase::Live;
+                true
+            }
+            Some(action @ ProfileDialogAction::Add(_)) => {
+                self.result = Some(action);
+                self.phase = ProfileManagerDialogPhase::Closed;
+                true
+            }
+            Some(_) => {
+                self.phase = ProfileManagerDialogPhase::Live;
+                false
+            }
+        }
+    }
+
+    /// 활성 관리자를 지정 작업으로 닫고 결과를 한 번 보관합니다.
+    ///
+    /// 자식 입력창이 열렸거나 이미 닫힌 상태이면 작업을 거부합니다.
+    pub(crate) fn close_with_action(&mut self, action: ProfileDialogAction) -> bool {
+        if !self.accepts_manager_commands() {
+            return false;
+        }
+        self.result = Some(action);
+        self.phase = ProfileManagerDialogPhase::Closed;
+        true
+    }
+
+    /// 관리자가 보관한 작업을 한 번 꺼내며, 작업이 없거나 이미 소비됐으면 `None`을 반환합니다.
+    pub fn take_result(&mut self) -> Option<ProfileDialogAction> {
+        self.result.take()
+    }
+}
+
+impl Default for ProfileManagerDialogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 사용량 프로필 추가 입력창에서 사용자가 선택한 순수 명령입니다.
 ///
 /// `Submit`은 표시 이름 검증을 수행하지만, `Cancel`은 입력값과 무관하게 창을 닫는
@@ -308,6 +400,23 @@ impl ProfileDialogController {
             ProfileDialogCommand::Delete => Some(ProfileDialogAction::Delete(id)),
             ProfileDialogCommand::Rename => None,
         }
+    }
+}
+
+/// 관리자 컨트롤의 활성 상태를 선택·변경 진행·프로필 제한 정책으로 계산합니다.
+///
+/// 네이티브 계층은 모든 관리자 버튼에 이 매핑을 적용하므로 추가 버튼은 `can_add()`가 참일
+/// 때만 활성화되고, 선택 기반 작업은 공용 명령 가용성 규칙을 그대로 따릅니다.
+pub fn profile_manager_control_enabled(
+    controller: &ProfileDialogController,
+    control: ProfileManagerControl,
+) -> bool {
+    match control {
+        ProfileManagerControl::AddBelowList => controller.can_add(),
+        ProfileManagerControl::Rename => controller.command_enabled(ProfileDialogCommand::Rename),
+        ProfileManagerControl::Login => controller.command_enabled(ProfileDialogCommand::Login),
+        ProfileManagerControl::Logout => controller.command_enabled(ProfileDialogCommand::Logout),
+        ProfileManagerControl::Delete => controller.command_enabled(ProfileDialogCommand::Delete),
     }
 }
 
