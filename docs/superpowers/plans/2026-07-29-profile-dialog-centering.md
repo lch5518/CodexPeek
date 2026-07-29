@@ -140,4 +140,3 @@
 - [ ] **Step 8: Commit Task 2**
 
   Commit: `fix: Center usage profile messages`
-
