@@ -70,6 +70,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::UsageProfileCliIdeUnchanged,
         LocalizationKey::UsageProfileDeleteIrrecoverable,
         LocalizationKey::UsageProfileOperationFailed,
+        LocalizationKey::UsageProfileCancel,
     ];
     let required_languages = [
         Language::Korean,
@@ -86,7 +87,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Arabic,
     ];
 
-    assert_eq!(LocalizationKey::ALL.len(), 67);
+    assert_eq!(LocalizationKey::ALL.len(), 68);
     assert_eq!(LocalizationKey::ALL.len(), required_keys.len());
     for required_key in required_keys {
         assert!(LocalizationKey::ALL.contains(&required_key));
@@ -169,5 +170,13 @@ fn korean_and_english_contracts_stay_stable() {
     assert_eq!(
         localized_text(LocalizationKey::UsageProfileCliUnchanged, Language::English),
         "Codex CLI sign-in is unchanged"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileCancel, Language::Korean),
+        "취소"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileCancel, Language::English),
+        "Cancel"
     );
 }

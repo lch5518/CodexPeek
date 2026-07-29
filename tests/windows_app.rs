@@ -13,11 +13,11 @@ use codex_usage_monitor::{
             profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch,
         },
         profile_dialog::{
-            available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
-            profile_login_confirmation, profile_manager_row_label, validated_label,
-            ModalCleanupAction, ModalDialogLifecycle, ProfileDialogCommand,
-            ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
-            PROFILE_LABEL_MAX_UTF16_UNITS,
+            add_profile_prompt_result, available_profile_actions, profile_delete_confirmation,
+            profile_dialog_keyboard_result, profile_login_confirmation, profile_manager_row_label,
+            validated_label, AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle,
+            ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
+            ProfileDialogKeyboardResult, PROFILE_LABEL_MAX_UTF16_UNITS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -61,18 +61,18 @@ fn system_profile_view() -> UsageProfileView {
 }
 
 #[test]
-fn system_profile_never_offers_rename_or_delete() {
+fn system_profile_offers_rename_but_not_logout_or_delete() {
     let actions = available_profile_actions(&system_profile_view());
 
-    assert!(!actions.contains(&ProfileDialogCommand::Rename));
+    assert!(actions.contains(&ProfileDialogCommand::Rename));
+    assert!(actions.contains(&ProfileDialogCommand::Login));
     assert!(!actions.contains(&ProfileDialogCommand::Delete));
     assert!(!actions.contains(&ProfileDialogCommand::Logout));
-    assert!(actions.contains(&ProfileDialogCommand::Login));
 
     let mut inconsistent_view = system_profile_view();
     inconsistent_view.managed = true;
     let actions = available_profile_actions(&inconsistent_view);
-    assert!(!actions.contains(&ProfileDialogCommand::Rename));
+    assert!(actions.contains(&ProfileDialogCommand::Rename));
     assert!(!actions.contains(&ProfileDialogCommand::Delete));
     assert!(!actions.contains(&ProfileDialogCommand::Logout));
 }
@@ -82,6 +82,24 @@ fn dialog_labels_use_shared_validation() {
     assert_eq!(validated_label("  Work  ").unwrap(), "Work");
     assert_eq!(
         validated_label("bad\\name"),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+}
+
+#[test]
+fn add_prompt_cancel_emits_no_action_and_submit_validates_the_name() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    assert_eq!(
+        add_profile_prompt_result("Work", AddProfilePromptCommand::Cancel),
+        Ok(None)
+    );
+    assert_eq!(
+        add_profile_prompt_result("  Work  ", AddProfilePromptCommand::Submit),
+        Ok(Some(ProfileDialogAction::Add("Work".to_owned())))
+    );
+    assert_eq!(
+        add_profile_prompt_result("", AddProfilePromptCommand::Submit),
         Err(ProfileValidationError::InvalidLabel)
     );
 }
@@ -215,7 +233,7 @@ fn profile_dialog_controls_follow_the_selected_profile_state() {
     ];
     let mut controller = ProfileDialogController::new(&profiles, false);
 
-    assert!(!controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
     assert!(!controller.command_enabled(ProfileDialogCommand::Logout));
     assert!(!controller.command_enabled(ProfileDialogCommand::Delete));
 

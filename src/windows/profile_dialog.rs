@@ -50,6 +50,18 @@ pub enum ProfileDialogCommand {
     Delete,
 }
 
+/// 사용량 프로필 추가 입력창에서 사용자가 선택한 순수 명령입니다.
+///
+/// `Submit`은 표시 이름 검증을 수행하지만, `Cancel`은 입력값과 무관하게 창을 닫는
+/// 결과만 나타냅니다. 이 열거형은 UI 이벤트를 파일·설정·Codex I/O 없이 처리합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddProfilePromptCommand {
+    /// 입력한 표시 이름으로 프로필 추가를 요청합니다.
+    Submit,
+    /// 변경 요청 없이 입력창을 닫습니다.
+    Cancel,
+}
+
 /// `IsDialogMessageW`가 변환한 표준 모달 키보드 명령입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProfileDialogKeyboardCommand {
@@ -189,8 +201,8 @@ impl ProfileDialogController {
 
     /// 현재 선택된 프로필에서 지정 명령을 실행할 수 있는지 반환합니다.
     ///
-    /// 변경 작업이 진행 중이면 모든 명령을 거부하고, 시스템 프로필의 이름 변경·로그아웃·삭제도
-    /// 항상 거부합니다.
+    /// 변경 작업이 진행 중이면 모든 명령을 거부합니다. 시스템 프로필은 이름 변경과 로그인만
+    /// 허용하고, 로그아웃·삭제는 항상 거부합니다.
     pub fn command_enabled(&self, command: ProfileDialogCommand) -> bool {
         if self.mutation_pending {
             return false;
@@ -231,9 +243,9 @@ impl ProfileDialogController {
         validated_label(value).map(|label| Some(ProfileDialogAction::Add(label)))
     }
 
-    /// 선택된 관리 프로필의 이름 변경 입력을 검증해 타입 지정 작업으로 변환합니다.
+    /// 선택된 프로필의 이름 변경 입력을 검증해 타입 지정 작업으로 변환합니다.
     ///
-    /// 시스템 프로필이거나 변경 중이면 `Ok(None)`을 반환하며, 실제 설정 변경은 수행하지
+    /// 변경 중이거나 선택 항목이 없으면 `Ok(None)`을 반환하며, 실제 설정 변경은 수행하지
     /// 않습니다.
     pub fn submit_rename(
         &self,
@@ -272,15 +284,13 @@ impl ProfileDialogController {
 
 /// 프로필 종류와 로그인 상태에 따라 허용되는 관리 명령을 반환합니다.
 ///
-/// 시스템 프로필에는 이름 변경, 로그아웃, 삭제를 절대 제공하지 않습니다. 반환값 계산은 I/O나
-/// 환경 변경을 수행하지 않습니다.
+/// 시스템 프로필에는 이름 변경과 로그인을 제공하고, 로그아웃·삭제는 관리 프로필에만 제공합니다.
+/// 반환값 계산은 I/O나 환경 변경을 수행하지 않습니다.
 pub fn available_profile_actions(profile: &UsageProfileView) -> Vec<ProfileDialogCommand> {
     let mut actions = Vec::with_capacity(5);
     let mutable_managed_profile =
         profile.managed && matches!(profile.id, UsageProfileId::Managed(_));
-    if mutable_managed_profile {
-        actions.push(ProfileDialogCommand::Rename);
-    }
+    actions.push(ProfileDialogCommand::Rename);
     actions.push(ProfileDialogCommand::Login);
     if mutable_managed_profile && !profile.login_required {
         actions.push(ProfileDialogCommand::Logout);
@@ -313,6 +323,23 @@ pub fn profile_manager_row_label(profile: &UsageProfileView, language: Language)
 /// `ProfileValidationError`를 반환합니다.
 pub fn validated_label(value: &str) -> Result<String, ProfileValidationError> {
     normalize_profile_label(value)
+}
+
+/// 프로필 추가 입력창 명령을 검증된 프로필 작업으로 변환합니다.
+///
+/// `value`는 `Submit`일 때 공유 표시 이름 규칙으로 정규화·검증됩니다. 잘못된 값은
+/// `ProfileValidationError`로 반환되어 UI가 입력창을 닫지 않고 오류를 표시할 수 있습니다.
+/// `Cancel`은 입력값을 검사하지 않고 `Ok(None)`을 반환하며, 이 함수는 I/O를 수행하지 않습니다.
+pub fn add_profile_prompt_result(
+    value: &str,
+    command: AddProfilePromptCommand,
+) -> Result<Option<ProfileDialogAction>, ProfileValidationError> {
+    match command {
+        AddProfilePromptCommand::Submit => {
+            validated_label(value).map(|label| Some(ProfileDialogAction::Add(label)))
+        }
+        AddProfilePromptCommand::Cancel => Ok(None),
+    }
 }
 
 /// 선택한 표시 프로필의 브라우저 로그인 확인 문구를 만듭니다.

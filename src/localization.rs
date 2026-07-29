@@ -182,6 +182,8 @@ pub enum LocalizationKey {
     UsageProfileDeleteIrrecoverable,
     /// 프로필 대화상자 작업 실패의 안전한 안내입니다.
     UsageProfileOperationFailed,
+    /// 프로필 추가 입력창을 닫는 동작입니다.
+    UsageProfileCancel,
 }
 
 impl LocalizationKey {
@@ -254,6 +256,7 @@ impl LocalizationKey {
         Self::UsageProfileCliIdeUnchanged,
         Self::UsageProfileDeleteIrrecoverable,
         Self::UsageProfileOperationFailed,
+        Self::UsageProfileCancel,
     ];
 
     const fn index(self) -> usize {
@@ -325,11 +328,12 @@ impl LocalizationKey {
             Self::UsageProfileCliIdeUnchanged => 64,
             Self::UsageProfileDeleteIrrecoverable => 65,
             Self::UsageProfileOperationFailed => 66,
+            Self::UsageProfileCancel => 67,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 67;
+const LOCALIZATION_KEY_COUNT: usize = 68;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -399,6 +403,7 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex CLI와 IDE 로그인은 변경되지 않습니다",
     "로컬 프로필 데이터는 복구할 수 없습니다",
     "프로필 작업을 완료할 수 없습니다",
+    "취소",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -469,6 +474,7 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex CLI and IDE sign-ins are unchanged",
     "local profile data cannot be recovered",
     "The profile operation could not be completed",
+    "Cancel",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -539,6 +545,7 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Los inicios de sesión de Codex CLI e IDE no cambian",
     "Los datos locales del perfil no se pueden recuperar",
     "No se pudo completar la operación del perfil",
+    "Cancelar",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -609,6 +616,7 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Os logins do Codex CLI e da IDE não são alterados",
     "Os dados locais do perfil não podem ser recuperados",
     "Não foi possível concluir a operação do perfil",
+    "Cancelar",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -679,6 +687,7 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Login Codex CLI dan IDE tidak berubah",
     "Data profil lokal tidak dapat dipulihkan",
     "Operasi profil tidak dapat diselesaikan",
+    "Batal",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -749,6 +758,7 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex CLI と IDE のサインインは変更されません",
     "ローカルプロファイルデータは復元できません",
     "プロファイル操作を完了できませんでした",
+    "キャンセル",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -819,6 +829,7 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex CLI और IDE साइन-इन अपरिवर्तित रहते हैं",
     "स्थानीय प्रोफ़ाइल डेटा पुनर्प्राप्त नहीं किया जा सकता",
     "प्रोफ़ाइल कार्रवाई पूरी नहीं हो सकी",
+    "रद्द करें",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -889,6 +900,7 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex-CLI- und IDE-Anmeldungen bleiben unverändert",
     "Lokale Profildaten können nicht wiederhergestellt werden",
     "Der Profilvorgang konnte nicht abgeschlossen werden",
+    "Abbrechen",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -959,6 +971,7 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Les connexions à Codex CLI et à l'IDE restent inchangées",
     "Les données locales du profil sont irrécupérables",
     "L'opération de profil n'a pas pu être effectuée",
+    "Annuler",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1029,6 +1042,7 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Đăng nhập Codex CLI và IDE không thay đổi",
     "Không thể khôi phục dữ liệu hồ sơ cục bộ",
     "Không thể hoàn tất thao tác hồ sơ",
+    "Hủy",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1099,6 +1113,7 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Codex CLI ve IDE oturumları değişmez",
     "Yerel profil verileri kurtarılamaz",
     "Profil işlemi tamamlanamadı",
+    "İptal",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1169,6 +1184,7 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "لا تتغير عمليات تسجيل الدخول في Codex CLI وIDE",
     "لا يمكن استعادة بيانات ملف التعريف المحلية",
     "تعذر إكمال عملية ملف التعريف",
+    "إلغاء",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.
