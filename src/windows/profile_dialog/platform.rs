@@ -26,10 +26,11 @@ use windows::{
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
             Controls::{
-                SetWindowTheme, CDDS_PREPAINT, CDIS_DISABLED, CDIS_FOCUS, CDIS_HOT, CDIS_SELECTED,
-                CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, EM_SETLIMITTEXT, NMCUSTOMDRAW, NM_CUSTOMDRAW,
-                ODS_FOCUS, ODS_SELECTED, ODT_LISTBOX, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
-                TTM_ADDTOOLW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+                SetWindowTheme, CDDS_PREPAINT, CDIS_DEFAULT, CDIS_DISABLED, CDIS_FOCUS, CDIS_HOT,
+                CDIS_SELECTED, CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, EM_SETLIMITTEXT, NMCUSTOMDRAW,
+                NMCUSTOMDRAW_DRAW_STATE_FLAGS, NM_CUSTOMDRAW, ODS_FOCUS, ODS_SELECTED, ODT_LISTBOX,
+                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTS_ALWAYSTIP,
+                TTS_NOPREFIX, TTTOOLINFOW,
             },
             HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
@@ -696,12 +697,90 @@ unsafe fn requested_client_width_for_work_area(
         .clamp(1, PREFERRED_DIALOG_CLIENT_WIDTH)
 }
 
-unsafe fn current_requested_client_width(dialog: HWND, dpi: u32) -> i32 {
-    let mut client = RECT::default();
-    if GetClientRect(dialog, &mut client).is_ok() {
-        physical_to_logical_floor(client.right - client.left, dpi).max(1)
-    } else {
-        PREFERRED_DIALOG_CLIENT_WIDTH
+unsafe fn maximum_client_height_for_work_area(
+    work_area: DialogWorkArea,
+    dpi: u32,
+    language: Language,
+) -> i32 {
+    let work_height = (i64::from(work_area.bottom) - i64::from(work_area.top))
+        .clamp(0, i64::from(i32::MAX)) as i32;
+    let frame_height = adjusted_dialog_outer_size(LogicalRect::default(), dpi, language)
+        .map(|outer| outer.height.max(0))
+        .unwrap_or_default();
+    (work_height - frame_height).max(0)
+}
+
+fn translate_rect_y(rect: LogicalRect, offset: i32) -> LogicalRect {
+    LogicalRect::new(
+        rect.left,
+        rect.top + offset,
+        rect.right,
+        rect.bottom + offset,
+    )
+}
+
+/// 관리자의 고정 높이 컨트롤을 보존하면서 목록 viewport만 완전한 행 단위로 줄입니다.
+///
+/// `maximum_client_height`에 1개 행과 나머지 컨트롤이 들어갈 수 있으면 1~3개 완전한 행만
+/// 선택합니다. 그보다 작은 작업 영역에서는 컨트롤 높이를 훼손하지 않도록 1개 행의 최소 레이아웃을
+/// 반환하고, 최종 외곽 제한 단계가 보이는 작업 영역에 창 자체를 제한합니다.
+fn fit_manager_layout_to_client_height(
+    mut layout: crate::windows::design::ProfileManagerLayout,
+    maximum_client_height: i32,
+    dpi: u32,
+) -> crate::windows::design::ProfileManagerLayout {
+    let row_height = scale_logical(crate::windows::design::ROW_HEIGHT, dpi).max(1);
+    let original_rows = (layout.list.height() / row_height).max(1);
+    let fixed_height = layout.client.height() - layout.list.height();
+    let fitting_rows =
+        ((maximum_client_height - fixed_height) / row_height).clamp(1, original_rows);
+    let new_list_height = fitting_rows * row_height;
+    let reduction = layout.list.height() - new_list_height;
+    if reduction <= 0 {
+        return layout;
+    }
+
+    layout.list.bottom -= reduction;
+    layout.selection_edge.bottom = layout.list.bottom;
+    for rect in [
+        &mut layout.add_control,
+        &mut layout.name_label,
+        &mut layout.name_edit,
+    ] {
+        *rect = translate_rect_y(*rect, -reduction);
+    }
+    for rect in &mut layout.action_buttons {
+        *rect = translate_rect_y(*rect, -reduction);
+    }
+    layout.client.bottom -= reduction;
+    layout.content.bottom -= reduction;
+    layout
+}
+
+/// 요청 외곽 크기를 목적지 작업 영역의 양 축에 제한하고 현재 좌상단을 보이는 범위로 옮깁니다.
+///
+/// 음수 좌표 모니터와 작업 영역보다 큰 요청을 지원합니다. 반환 RECT는 작업 영역을 넘지 않으며,
+/// 폭·높이는 가능한 범위에서 요청값을 유지합니다.
+fn bound_dialog_outer_rect(
+    current: RECT,
+    desired: DialogWindowSize,
+    work_area: DialogWorkArea,
+) -> RECT {
+    let work_width = (i64::from(work_area.right) - i64::from(work_area.left))
+        .clamp(0, i64::from(i32::MAX)) as i32;
+    let work_height = (i64::from(work_area.bottom) - i64::from(work_area.top))
+        .clamp(0, i64::from(i32::MAX)) as i32;
+    let width = desired.width.clamp(0, work_width);
+    let height = desired.height.clamp(0, work_height);
+    let maximum_left = work_area.right - width;
+    let maximum_top = work_area.bottom - height;
+    let left = current.left.clamp(work_area.left, maximum_left);
+    let top = current.top.clamp(work_area.top, maximum_top);
+    RECT {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
     }
 }
 
@@ -710,21 +789,67 @@ unsafe fn resize_dialog_for_client(
     client: LogicalRect,
     dpi: u32,
     language: Language,
+    work_area: Option<DialogWorkArea>,
 ) -> io::Result<()> {
     let outer = adjusted_dialog_outer_size(client, dpi, language)?;
-    SetWindowPos(
-        dialog,
-        None,
-        0,
-        0,
-        outer.width,
-        outer.height,
-        SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER,
-    )
-    .map_err(win_error)
+    let mut current = RECT::default();
+    let has_current = GetWindowRect(dialog, &mut current).is_ok();
+    let bounded = work_area.map(|work_area| {
+        if !has_current {
+            current.left = work_area.left;
+            current.top = work_area.top;
+        }
+        bound_dialog_outer_rect(current, outer, work_area)
+    });
+    let (x, y, width, height, flags) = if let Some(rect) = bounded {
+        (
+            rect.left,
+            rect.top,
+            rect.right - rect.left,
+            rect.bottom - rect.top,
+            SWP_NOACTIVATE | SWP_NOZORDER,
+        )
+    } else {
+        (
+            0,
+            0,
+            outer.width,
+            outer.height,
+            SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER,
+        )
+    };
+    SetWindowPos(dialog, None, x, y, width, height, flags).map_err(win_error)
 }
 
-unsafe fn move_dialog_control(control: HWND, rect: LogicalRect) -> io::Result<()> {
+/// 순수 레이아웃의 물리적 사각형을 부모 창의 `SetWindowPos` 좌표계로 변환합니다.
+///
+/// `mirrored_parent`가 참이면 `WS_EX_LAYOUTRTL` 부모가 다시 좌우 반전할 것을 상쇄해 최종 화면
+/// 사각형이 입력 `rect`와 정확히 같아지게 합니다. 세로 좌표와 크기는 변경하지 않습니다.
+fn dialog_child_setpos_rect(
+    rect: LogicalRect,
+    parent_client_width: i32,
+    mirrored_parent: bool,
+) -> LogicalRect {
+    if mirrored_parent {
+        LogicalRect::new(
+            parent_client_width - rect.right,
+            rect.top,
+            parent_client_width - rect.left,
+            rect.bottom,
+        )
+    } else {
+        rect
+    }
+}
+
+unsafe fn move_dialog_control(
+    control: HWND,
+    desired_physical_rect: LogicalRect,
+    parent_client_width: i32,
+    mirrored_parent: bool,
+) -> io::Result<()> {
+    let rect =
+        dialog_child_setpos_rect(desired_physical_rect, parent_client_width, mirrored_parent);
     SetWindowPos(
         control,
         None,
@@ -745,6 +870,7 @@ unsafe fn relayout_manager_dialog(
     dialog: HWND,
     state: *mut DialogState,
     requested_client_width: i32,
+    work_area: Option<DialogWorkArea>,
 ) -> io::Result<()> {
     let (language, dpi, body_font, list, name_label, edit) = {
         let state = &*state;
@@ -758,20 +884,29 @@ unsafe fn relayout_manager_dialog(
         )
     };
     let measured = measure_profile_dialog_buttons(dialog, body_font, language)?;
-    let layout = profile_manager_layout(DialogLayoutInput::new(
+    let mut layout = profile_manager_layout(DialogLayoutInput::new(
         requested_client_width,
         dpi,
         language == Language::Arabic,
         measured[..4].try_into().expect("four manager widths"),
     ));
-    resize_dialog_for_client(dialog, layout.client, dpi, language)?;
-
-    move_dialog_control(list, layout.list)?;
-    if let Ok(add) = GetDlgItem(Some(dialog), OPEN_ADD_ID) {
-        move_dialog_control(add, layout.add_control)?;
+    if let Some(work_area) = work_area {
+        layout = fit_manager_layout_to_client_height(
+            layout,
+            maximum_client_height_for_work_area(work_area, dpi, language),
+            dpi,
+        );
     }
-    move_dialog_control(name_label, layout.name_label)?;
-    move_dialog_control(edit, layout.name_edit)?;
+    resize_dialog_for_client(dialog, layout.client, dpi, language, work_area)?;
+    let rtl = language == Language::Arabic;
+    let client_width = layout.client.width();
+
+    move_dialog_control(list, layout.list, client_width, rtl)?;
+    if let Ok(add) = GetDlgItem(Some(dialog), OPEN_ADD_ID) {
+        move_dialog_control(add, layout.add_control, client_width, rtl)?;
+    }
+    move_dialog_control(name_label, layout.name_label, client_width, rtl)?;
+    move_dialog_control(edit, layout.name_edit, client_width, rtl)?;
     for (control, rect) in [
         (RENAME_ID, layout.action_buttons[0]),
         (LOGIN_ID, layout.action_buttons[1]),
@@ -779,7 +914,7 @@ unsafe fn relayout_manager_dialog(
         (DELETE_ID, layout.action_buttons[3]),
     ] {
         if let Ok(control) = GetDlgItem(Some(dialog), control) {
-            move_dialog_control(control, rect)?;
+            move_dialog_control(control, rect, client_width, rtl)?;
         }
     }
     let _ = InvalidateRect(Some(dialog), None, true);
@@ -794,6 +929,7 @@ unsafe fn relayout_add_dialog(
     dialog: HWND,
     state: *mut AddDialogState,
     requested_client_width: i32,
+    work_area: Option<DialogWorkArea>,
 ) -> io::Result<()> {
     let (language, dpi, body_font, name_label, edit) = {
         let state = &*state;
@@ -812,16 +948,18 @@ unsafe fn relayout_add_dialog(
         language == Language::Arabic,
         [measured[4], measured[5], 0, 0],
     ));
-    resize_dialog_for_client(dialog, layout.client, dpi, language)?;
+    resize_dialog_for_client(dialog, layout.client, dpi, language, work_area)?;
+    let rtl = language == Language::Arabic;
+    let client_width = layout.client.width();
 
-    move_dialog_control(name_label, layout.name_label)?;
-    move_dialog_control(edit, layout.name_edit)?;
+    move_dialog_control(name_label, layout.name_label, client_width, rtl)?;
+    move_dialog_control(edit, layout.name_edit, client_width, rtl)?;
     for (control, rect) in [
         (IDOK.0, layout.action_buttons[0]),
         (IDCANCEL.0, layout.action_buttons[1]),
     ] {
         if let Ok(control) = GetDlgItem(Some(dialog), control) {
-            move_dialog_control(control, rect)?;
+            move_dialog_control(control, rect, client_width, rtl)?;
         }
     }
     let _ = InvalidateRect(Some(dialog), None, true);
@@ -868,6 +1006,269 @@ unsafe fn erase_dialog_background(
     LRESULT(1)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryButtonSurface {
+    Normal,
+    Hot,
+    Pressed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryButtonCue {
+    None,
+    Focus,
+    DefaultBorder,
+    DefaultBorderAndFocus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PrimaryButtonPaintState {
+    surface: PrimaryButtonSurface,
+    cue: PrimaryButtonCue,
+}
+
+/// 네이티브 custom-draw 플래그를 기본 버튼의 의미 있는 시각 상태로 변환합니다.
+///
+/// 비활성 버튼은 `None`으로 네이티브 중립 렌더링을 유지합니다. 기본 버튼 테두리와 일반 포커스
+/// 사각형을 별도로 구분하며 두 플래그가 함께 있으면 두 cue를 모두 보존합니다.
+fn primary_button_paint_state(
+    item_state: NMCUSTOMDRAW_DRAW_STATE_FLAGS,
+    enabled: bool,
+) -> Option<PrimaryButtonPaintState> {
+    if !enabled || item_state.contains(CDIS_DISABLED) {
+        return None;
+    }
+    let surface = if item_state.contains(CDIS_SELECTED) {
+        PrimaryButtonSurface::Pressed
+    } else if item_state.contains(CDIS_HOT) {
+        PrimaryButtonSurface::Hot
+    } else {
+        PrimaryButtonSurface::Normal
+    };
+    let cue = match (
+        item_state.contains(CDIS_DEFAULT),
+        item_state.contains(CDIS_FOCUS),
+    ) {
+        (true, true) => PrimaryButtonCue::DefaultBorderAndFocus,
+        (true, false) => PrimaryButtonCue::DefaultBorder,
+        (false, true) => PrimaryButtonCue::Focus,
+        (false, false) => PrimaryButtonCue::None,
+    };
+    Some(PrimaryButtonPaintState { surface, cue })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryButtonPaintStage {
+    DefaultBorder,
+    Border,
+    Surface,
+}
+
+/// 기본 버튼 paint 단계와 DC 상태 저장·복원을 분리하는 GDI 경계입니다.
+///
+/// 실제 구현은 현재 notification HDC만 사용하며 테스트 구현은 각 필수 단계를 결정적으로 실패시킬
+/// 수 있습니다. 성공한 선택·색상 변경은 호출자가 반드시 대응 restore 메서드로 복원합니다.
+trait PrimaryButtonPaintBackend {
+    fn fill_rect(
+        &mut self,
+        stage: PrimaryButtonPaintStage,
+        rect: &RECT,
+        color: u32,
+    ) -> io::Result<()>;
+    fn select_font(&mut self, font: HFONT) -> io::Result<HGDIOBJ>;
+    fn set_transparent_background(&mut self) -> io::Result<BACKGROUND_MODE>;
+    fn set_text_color(&mut self, color: COLORREF) -> io::Result<COLORREF>;
+    fn draw_text(&mut self, text: &str, rect: &mut RECT, rtl: bool) -> io::Result<()>;
+    fn draw_focus(&mut self, rect: &RECT) -> io::Result<()>;
+    fn restore_font(&mut self, font: HGDIOBJ) -> io::Result<()>;
+    fn restore_background(&mut self, mode: BACKGROUND_MODE) -> io::Result<()>;
+    fn restore_text_color(&mut self, color: COLORREF) -> io::Result<()>;
+}
+
+struct WindowsPrimaryButtonPaintBackend {
+    dc: HDC,
+}
+
+impl PrimaryButtonPaintBackend for WindowsPrimaryButtonPaintBackend {
+    fn fill_rect(
+        &mut self,
+        _stage: PrimaryButtonPaintStage,
+        rect: &RECT,
+        color: u32,
+    ) -> io::Result<()> {
+        // SAFETY: backend는 현재 NM_CUSTOMDRAW HDC와 알림 RECT에서만 생성됩니다.
+        unsafe { fill_profile_row_rect(self.dc, rect, color) }
+    }
+
+    fn select_font(&mut self, font: HFONT) -> io::Result<HGDIOBJ> {
+        // SAFETY: font는 커밋된 대화상자 자원이며 notification이 끝날 때까지 살아 있습니다.
+        let previous = unsafe { SelectObject(self.dc, HGDIOBJ(font.0)) };
+        if previous.0.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(previous)
+        }
+    }
+
+    fn set_transparent_background(&mut self) -> io::Result<BACKGROUND_MODE> {
+        // SAFETY: dc는 현재 notification 동안 유효합니다.
+        let previous = unsafe { SetBkMode(self.dc, TRANSPARENT) };
+        if previous == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(BACKGROUND_MODE(previous as u32))
+        }
+    }
+
+    fn set_text_color(&mut self, color: COLORREF) -> io::Result<COLORREF> {
+        // SAFETY: dc는 현재 notification 동안 유효합니다.
+        let previous = unsafe { SetTextColor(self.dc, color) };
+        if previous.0 == CLR_INVALID {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(previous)
+        }
+    }
+
+    fn draw_text(&mut self, text: &str, rect: &mut RECT, rtl: bool) -> io::Result<()> {
+        let mut text = text.encode_utf16().collect::<Vec<_>>();
+        let mut format = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
+        if rtl {
+            format |= DT_RTLREADING;
+        }
+        // SAFETY: UTF-16 버퍼와 RECT는 동기 DrawTextW 호출 동안 살아 있습니다.
+        if unsafe { DrawTextW(self.dc, &mut text, rect, format) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn draw_focus(&mut self, rect: &RECT) -> io::Result<()> {
+        // SAFETY: dc와 RECT는 현재 notification 범위에서 유효합니다.
+        if unsafe { DrawFocusRect(self.dc, rect) }.as_bool() {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn restore_font(&mut self, font: HGDIOBJ) -> io::Result<()> {
+        // SAFETY: font는 같은 backend가 이번 paint에서 저장한 이전 선택 객체입니다.
+        if unsafe { SelectObject(self.dc, font) }.0.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn restore_background(&mut self, mode: BACKGROUND_MODE) -> io::Result<()> {
+        // SAFETY: mode는 같은 backend가 이번 paint에서 저장한 이전 배경 모드입니다.
+        if unsafe { SetBkMode(self.dc, mode) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn restore_text_color(&mut self, color: COLORREF) -> io::Result<()> {
+        // SAFETY: color는 같은 backend가 이번 paint에서 저장한 이전 텍스트 색입니다.
+        if unsafe { SetTextColor(self.dc, color) }.0 == CLR_INVALID {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// 기본 버튼 custom paint의 모든 필수 단계를 실행하고 완전 성공 여부만 반환합니다.
+///
+/// 실패 지점과 관계없이 이미 획득한 font/background/text DC 상태를 역순으로 복원합니다. `false`는
+/// 호출자가 `CDRF_SKIPDEFAULT`를 반환하지 않고 네이티브 기본 렌더링을 사용해야 함을 뜻합니다.
+fn paint_primary_button<B: PrimaryButtonPaintBackend>(
+    backend: &mut B,
+    rect: RECT,
+    label: &str,
+    font: HFONT,
+    palette: DialogPalette,
+    rtl: bool,
+    state: PrimaryButtonPaintState,
+) -> bool {
+    if rect.right <= rect.left || rect.bottom <= rect.top || label.is_empty() || font.0.is_null() {
+        return false;
+    }
+    let overlay = match state.surface {
+        PrimaryButtonSurface::Pressed => Some(palette.pressed),
+        PrimaryButtonSurface::Hot => Some(palette.hover),
+        PrimaryButtonSurface::Normal => None,
+    };
+    let surface = overlay
+        .map(|overlay| composite_dialog_color(overlay, palette.healthy))
+        .unwrap_or(palette.healthy.colorref);
+
+    let mut border_rect = rect;
+    let mut previous_font = None;
+    let mut previous_background = None;
+    let mut previous_text = None;
+    let painted = (|| -> io::Result<()> {
+        if matches!(
+            state.cue,
+            PrimaryButtonCue::DefaultBorder | PrimaryButtonCue::DefaultBorderAndFocus
+        ) {
+            backend.fill_rect(
+                PrimaryButtonPaintStage::DefaultBorder,
+                &border_rect,
+                palette.focus.colorref,
+            )?;
+            border_rect.left += 2;
+            border_rect.top += 2;
+            border_rect.right -= 2;
+            border_rect.bottom -= 2;
+        }
+        backend.fill_rect(
+            PrimaryButtonPaintStage::Border,
+            &border_rect,
+            palette.border.colorref,
+        )?;
+        let mut inner = RECT {
+            left: border_rect.left + 1,
+            top: border_rect.top + 1,
+            right: border_rect.right - 1,
+            bottom: border_rect.bottom - 1,
+        };
+        backend.fill_rect(PrimaryButtonPaintStage::Surface, &inner, surface)?;
+        previous_font = Some(backend.select_font(font)?);
+        previous_background = Some(backend.set_transparent_background()?);
+        previous_text = Some(backend.set_text_color(COLORREF(0x00ff_ffff))?);
+        backend.draw_text(label, &mut inner, rtl)?;
+        if matches!(
+            state.cue,
+            PrimaryButtonCue::Focus | PrimaryButtonCue::DefaultBorderAndFocus
+        ) {
+            let focus = RECT {
+                left: rect.left + 4,
+                top: rect.top + 4,
+                right: rect.right - 4,
+                bottom: rect.bottom - 4,
+            };
+            backend.draw_focus(&focus)?;
+        }
+        Ok(())
+    })();
+
+    let mut restored = true;
+    if let Some(color) = previous_text {
+        restored &= backend.restore_text_color(color).is_ok();
+    }
+    if let Some(mode) = previous_background {
+        restored &= backend.restore_background(mode).is_ok();
+    }
+    if let Some(font) = previous_font {
+        restored &= backend.restore_font(font).is_ok();
+    }
+    painted.is_ok() && restored
+}
+
 /// 활성 기본 작업 버튼의 `NM_CUSTOMDRAW`를 건강 상태 녹색으로 한 줄 그립니다.
 ///
 /// 알림이 대상 버튼·prepaint 단계가 아니거나 버튼이 비활성 상태이면 기본 네이티브 렌더링을
@@ -888,65 +1289,22 @@ unsafe fn draw_primary_button_notification(
     if draw.hdr.code != NM_CUSTOMDRAW
         || draw.hdr.idFrom != expected_id as usize
         || draw.dwDrawStage != CDDS_PREPAINT
-        || draw.uItemState.contains(CDIS_DISABLED)
-        || !IsWindowEnabled(draw.hdr.hwndFrom).as_bool()
         || draw.hdc.0.is_null()
     {
         return LRESULT(0);
     }
-
-    let overlay = if draw.uItemState.contains(CDIS_SELECTED) {
-        Some(palette.pressed)
-    } else if draw.uItemState.contains(CDIS_HOT) {
-        Some(palette.hover)
+    let Some(state) = primary_button_paint_state(
+        draw.uItemState,
+        IsWindowEnabled(draw.hdr.hwndFrom).as_bool(),
+    ) else {
+        return LRESULT(0);
+    };
+    let mut backend = WindowsPrimaryButtonPaintBackend { dc: draw.hdc };
+    if paint_primary_button(&mut backend, draw.rc, label, font, palette, rtl, state) {
+        LRESULT(CDRF_SKIPDEFAULT as isize)
     } else {
-        None
-    };
-    let surface = overlay
-        .map(|overlay| composite_dialog_color(overlay, palette.healthy))
-        .unwrap_or(palette.healthy.colorref);
-    if fill_profile_row_rect(draw.hdc, &draw.rc, palette.border.colorref).is_err() {
-        return LRESULT(0);
+        LRESULT(0)
     }
-    let mut inner = RECT {
-        left: draw.rc.left + 1,
-        top: draw.rc.top + 1,
-        right: draw.rc.right - 1,
-        bottom: draw.rc.bottom - 1,
-    };
-    if fill_profile_row_rect(draw.hdc, &inner, surface).is_err() {
-        return LRESULT(0);
-    }
-
-    let previous_font = SelectObject(draw.hdc, HGDIOBJ(font.0));
-    let previous_background = SetBkMode(draw.hdc, TRANSPARENT);
-    let previous_text = SetTextColor(draw.hdc, COLORREF(0x00ff_ffff));
-    let mut text = label.encode_utf16().collect::<Vec<_>>();
-    let mut format = DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX;
-    if rtl {
-        format |= DT_RTLREADING;
-    }
-    let _ = DrawTextW(draw.hdc, &mut text, &mut inner, format);
-    if previous_text.0 != CLR_INVALID {
-        let _ = SetTextColor(draw.hdc, previous_text);
-    }
-    if previous_background != 0 {
-        let _ = SetBkMode(draw.hdc, BACKGROUND_MODE(previous_background as u32));
-    }
-    if !previous_font.0.is_null() {
-        let _ = SelectObject(draw.hdc, previous_font);
-    }
-
-    if draw.uItemState.contains(CDIS_FOCUS) {
-        let focus = RECT {
-            left: draw.rc.left + 3,
-            top: draw.rc.top + 3,
-            right: draw.rc.right - 3,
-            bottom: draw.rc.bottom - 3,
-        };
-        let _ = DrawFocusRect(draw.hdc, &focus);
-    }
-    LRESULT(CDRF_SKIPDEFAULT as isize)
 }
 
 struct DialogState {
@@ -1571,6 +1929,30 @@ unsafe fn dialog_work_area(anchor: DialogMonitorAnchor) -> Option<DialogWorkArea
     ))
 }
 
+/// 현재 창이 실제로 놓인 목적지 모니터의 작업 영역을 반환합니다.
+///
+/// DPI suggested RECT를 적용한 뒤 호출하면 소유자나 커서가 아니라 이동된 창 자체의 모니터를
+/// 기준으로 합니다. 조회 실패는 `None`으로 안전하게 대체됩니다.
+unsafe fn dialog_window_work_area(dialog: HWND) -> Option<DialogWorkArea> {
+    let monitor = MonitorFromWindow(dialog, MONITOR_DEFAULTTONEAREST);
+    if monitor == Default::default() {
+        return None;
+    }
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+        return None;
+    }
+    Some(DialogWorkArea::new(
+        info.rcWork.left,
+        info.rcWork.top,
+        info.rcWork.right,
+        info.rcWork.bottom,
+    ))
+}
+
 /// 현재 커서 위치의 가장 가까운 모니터를 찾고, 조회 실패 시 기본 모니터를 사용합니다.
 unsafe fn cursor_monitor() -> windows::Win32::Graphics::Gdi::HMONITOR {
     let mut point = POINT::default();
@@ -1700,7 +2082,7 @@ pub(super) unsafe fn show_profile_manager_owned(
     rebuild_dialog_visuals(dialog, std::ptr::addr_of_mut!(state.resources));
     let requested_width =
         requested_client_width_for_work_area(work_area, state.resources.dpi, language);
-    relayout_manager_dialog(dialog, &mut *state, requested_width)?;
+    relayout_manager_dialog(dialog, &mut *state, requested_width, work_area)?;
     if let Some(work_area) = work_area {
         center_window_in_work_area(dialog, work_area);
     } else {
@@ -1779,7 +2161,7 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
     rebuild_dialog_visuals(dialog, std::ptr::addr_of_mut!(state.resources));
     let requested_width =
         requested_client_width_for_work_area(work_area, state.resources.dpi, language);
-    relayout_add_dialog(dialog, &mut *state, requested_width)?;
+    relayout_add_dialog(dialog, &mut *state, requested_width, work_area)?;
     if let Some(work_area) = work_area {
         center_window_in_work_area(dialog, work_area);
     } else {
@@ -2203,15 +2585,19 @@ unsafe extern "system" fn dialog_proc(
                 requested_dpi,
             );
             let committed_dpi = (*state).resources.dpi;
-            let requested_width = current_requested_client_width(hwnd, committed_dpi);
-            let _ = relayout_manager_dialog(hwnd, state, requested_width);
+            let work_area = dialog_window_work_area(hwnd);
+            let requested_width =
+                requested_client_width_for_work_area(work_area, committed_dpi, (*state).language);
+            let _ = relayout_manager_dialog(hwnd, state, requested_width, work_area);
             LRESULT(0)
         }
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
             rebuild_dialog_visuals(hwnd, std::ptr::addr_of_mut!((*state).resources));
             let committed_dpi = (*state).resources.dpi;
-            let requested_width = current_requested_client_width(hwnd, committed_dpi);
-            let _ = relayout_manager_dialog(hwnd, state, requested_width);
+            let work_area = dialog_window_work_area(hwnd);
+            let requested_width =
+                requested_client_width_for_work_area(work_area, committed_dpi, (*state).language);
+            let _ = relayout_manager_dialog(hwnd, state, requested_width, work_area);
             LRESULT(0)
         }
         WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
@@ -2347,15 +2733,19 @@ unsafe extern "system" fn add_dialog_proc(
                 requested_dpi,
             );
             let committed_dpi = (*state).resources.dpi;
-            let requested_width = current_requested_client_width(hwnd, committed_dpi);
-            let _ = relayout_add_dialog(hwnd, state, requested_width);
+            let work_area = dialog_window_work_area(hwnd);
+            let requested_width =
+                requested_client_width_for_work_area(work_area, committed_dpi, (*state).language);
+            let _ = relayout_add_dialog(hwnd, state, requested_width, work_area);
             LRESULT(0)
         }
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
             rebuild_dialog_visuals(hwnd, std::ptr::addr_of_mut!((*state).resources));
             let committed_dpi = (*state).resources.dpi;
-            let requested_width = current_requested_client_width(hwnd, committed_dpi);
-            let _ = relayout_add_dialog(hwnd, state, requested_width);
+            let work_area = dialog_window_work_area(hwnd);
+            let requested_width =
+                requested_client_width_for_work_area(work_area, committed_dpi, (*state).language);
+            let _ = relayout_add_dialog(hwnd, state, requested_width, work_area);
             LRESULT(0)
         }
         WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
@@ -2868,8 +3258,9 @@ mod tests {
     use std::{cell::RefCell, collections::VecDeque, ffi::c_void, io, rc::Rc, thread};
 
     use windows::Win32::{
-        Foundation::HWND,
-        Graphics::Gdi::{HBRUSH, HFONT, HGDIOBJ},
+        Foundation::{COLORREF, HWND, RECT},
+        Graphics::Gdi::{BACKGROUND_MODE, HBRUSH, HFONT, HGDIOBJ},
+        UI::Controls::{CDIS_DEFAULT, CDIS_FOCUS},
         UI::WindowsAndMessaging::{
             IDCANCEL, IDOK, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT,
             MESSAGEBOX_STYLE,
@@ -2885,18 +3276,259 @@ mod tests {
     };
 
     use super::{
-        add_profile_prompt_result, composite_dialog_color, confirm_profile_delete_with_presenter,
-        confirm_profile_login_with_presenter, consume_centered_message_box_request,
-        handle_add_profile_prompt_result_with_presenter,
-        handle_manager_rename_result_with_presenter, profile_row_content_padding,
-        profile_row_surface_color, profile_row_visual_state,
-        show_add_dialog_warning_with_presenter, show_safe_error_with_presenter,
-        update_dialog_visual_resources, AddDialogState, AddProfilePromptCommand,
-        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
-        DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome, DialogWorkArea,
-        ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
-        ProfileRowSurfaceRole, UsageProfileView,
+        add_profile_prompt_result, bound_dialog_outer_rect, composite_dialog_color,
+        confirm_profile_delete_with_presenter, confirm_profile_login_with_presenter,
+        consume_centered_message_box_request, dialog_child_setpos_rect,
+        fit_manager_layout_to_client_height, handle_add_profile_prompt_result_with_presenter,
+        handle_manager_rename_result_with_presenter, paint_primary_button,
+        primary_button_paint_state, profile_row_content_padding, profile_row_surface_color,
+        profile_row_visual_state, show_add_dialog_warning_with_presenter,
+        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
+        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
+        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
+        DialogWindowSize, DialogWorkArea, PrimaryButtonCue, PrimaryButtonPaintBackend,
+        PrimaryButtonPaintStage, ProfileDialogController, ProfileMessagePresenter,
+        ProfileMessageRoute, ProfileRowSurfaceRole, UsageProfileView,
     };
+
+    fn mirrored_parent_physical_rect(
+        rect: crate::windows::design::LogicalRect,
+        width: i32,
+    ) -> crate::windows::design::LogicalRect {
+        crate::windows::design::LogicalRect::new(
+            width - rect.right,
+            rect.top,
+            width - rect.left,
+            rect.bottom,
+        )
+    }
+
+    #[test]
+    fn rtl_child_setpos_coordinates_produce_the_pure_layout_physical_rectangles_once() {
+        let layout = crate::windows::design::profile_manager_layout(
+            crate::windows::design::DialogLayoutInput::new(620, 144, true, [160, 120, 140, 100]),
+        );
+
+        for desired in [
+            layout.add_control,
+            layout.name_edit,
+            layout.action_buttons[0],
+            layout.action_buttons[1],
+            layout.action_buttons[2],
+            layout.action_buttons[3],
+        ] {
+            let setpos = dialog_child_setpos_rect(desired, layout.client.width(), true);
+            assert_eq!(
+                mirrored_parent_physical_rect(setpos, layout.client.width()),
+                desired,
+            );
+        }
+    }
+
+    #[test]
+    fn constrained_manager_height_reduces_only_the_list_to_whole_rows() {
+        for (dpi, expected_rows) in [(144, 2), (192, 1)] {
+            let layout = crate::windows::design::profile_manager_layout(
+                crate::windows::design::DialogLayoutInput::new(
+                    620,
+                    dpi,
+                    false,
+                    [160, 120, 140, 100],
+                ),
+            );
+            let row_height = crate::windows::design::scale_logical(56, dpi);
+            let fixed_height = layout.client.height() - layout.list.height();
+            let maximum_height = fixed_height + row_height * expected_rows;
+
+            let fitted = fit_manager_layout_to_client_height(layout, maximum_height, dpi);
+
+            assert_eq!(fitted.client.height(), maximum_height);
+            assert_eq!(fitted.list.height(), row_height * expected_rows);
+            assert_eq!(fitted.add_control.height(), layout.add_control.height());
+            assert_eq!(fitted.name_edit.height(), layout.name_edit.height());
+            assert!(fitted
+                .action_buttons
+                .iter()
+                .zip(layout.action_buttons)
+                .all(|(actual, original)| actual.height() == original.height()));
+            assert!(fitted.list.bottom <= fitted.add_control.top);
+            assert!(fitted
+                .action_buttons
+                .iter()
+                .all(|rect| rect.bottom <= fitted.client.bottom));
+        }
+    }
+
+    #[test]
+    fn destination_work_area_bounds_and_repositions_the_outer_window_on_both_axes() {
+        let work_area = DialogWorkArea::new(-1280, 0, 0, 720);
+        let suggested = RECT {
+            left: -900,
+            top: 300,
+            right: 500,
+            bottom: 1200,
+        };
+
+        assert_eq!(
+            bound_dialog_outer_rect(suggested, DialogWindowSize::new(1400, 900), work_area,),
+            RECT {
+                left: -1280,
+                top: 0,
+                right: 0,
+                bottom: 720,
+            }
+        );
+
+        assert_eq!(
+            bound_dialog_outer_rect(suggested, DialogWindowSize::new(900, 600), work_area,),
+            RECT {
+                left: -900,
+                top: 120,
+                right: 0,
+                bottom: 720,
+            }
+        );
+    }
+
+    #[test]
+    fn primary_button_default_state_has_a_distinct_default_border_cue() {
+        let focused = primary_button_paint_state(CDIS_FOCUS, true).unwrap();
+        let defaulted = primary_button_paint_state(CDIS_DEFAULT, true).unwrap();
+
+        assert_eq!(focused.cue, PrimaryButtonCue::Focus);
+        assert_eq!(defaulted.cue, PrimaryButtonCue::DefaultBorder);
+        assert_ne!(focused.cue, defaulted.cue);
+    }
+
+    #[derive(Default)]
+    struct FailingPrimaryPaintBackend {
+        failure: Option<InjectedPrimaryPaintFailure>,
+        acquired: usize,
+        restore_attempts: usize,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum InjectedPrimaryPaintFailure {
+        DefaultBorder,
+        Border,
+        Surface,
+        SelectFont,
+        SetBackground,
+        SetTextColor,
+        Text,
+        Focus,
+        RestoreTextColor,
+        RestoreBackground,
+        RestoreFont,
+    }
+
+    impl PrimaryButtonPaintBackend for FailingPrimaryPaintBackend {
+        fn fill_rect(
+            &mut self,
+            stage: PrimaryButtonPaintStage,
+            _rect: &RECT,
+            _color: u32,
+        ) -> io::Result<()> {
+            self.complete(match stage {
+                PrimaryButtonPaintStage::DefaultBorder => {
+                    InjectedPrimaryPaintFailure::DefaultBorder
+                }
+                PrimaryButtonPaintStage::Border => InjectedPrimaryPaintFailure::Border,
+                PrimaryButtonPaintStage::Surface => InjectedPrimaryPaintFailure::Surface,
+            })
+        }
+
+        fn select_font(&mut self, _font: HFONT) -> io::Result<HGDIOBJ> {
+            self.complete(InjectedPrimaryPaintFailure::SelectFont)?;
+            self.acquired += 1;
+            Ok(HGDIOBJ(11_usize as _))
+        }
+
+        fn set_transparent_background(&mut self) -> io::Result<BACKGROUND_MODE> {
+            self.complete(InjectedPrimaryPaintFailure::SetBackground)?;
+            self.acquired += 1;
+            Ok(BACKGROUND_MODE(1))
+        }
+
+        fn set_text_color(&mut self, _color: COLORREF) -> io::Result<COLORREF> {
+            self.complete(InjectedPrimaryPaintFailure::SetTextColor)?;
+            self.acquired += 1;
+            Ok(COLORREF(0x0011_2233))
+        }
+
+        fn draw_text(&mut self, _text: &str, _rect: &mut RECT, _rtl: bool) -> io::Result<()> {
+            self.complete(InjectedPrimaryPaintFailure::Text)
+        }
+
+        fn draw_focus(&mut self, _rect: &RECT) -> io::Result<()> {
+            self.complete(InjectedPrimaryPaintFailure::Focus)
+        }
+
+        fn restore_font(&mut self, _font: HGDIOBJ) -> io::Result<()> {
+            self.restore_attempts += 1;
+            self.complete(InjectedPrimaryPaintFailure::RestoreFont)
+        }
+
+        fn restore_background(&mut self, _mode: BACKGROUND_MODE) -> io::Result<()> {
+            self.restore_attempts += 1;
+            self.complete(InjectedPrimaryPaintFailure::RestoreBackground)
+        }
+
+        fn restore_text_color(&mut self, _color: COLORREF) -> io::Result<()> {
+            self.restore_attempts += 1;
+            self.complete(InjectedPrimaryPaintFailure::RestoreTextColor)
+        }
+    }
+
+    impl FailingPrimaryPaintBackend {
+        fn complete(&self, stage: InjectedPrimaryPaintFailure) -> io::Result<()> {
+            if self.failure == Some(stage) {
+                Err(io::Error::other("injected primary paint failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn primary_button_paint_failure_at_every_required_stage_restores_and_uses_native_fallback() {
+        let state = primary_button_paint_state(CDIS_DEFAULT | CDIS_FOCUS, true).unwrap();
+        let rect = RECT {
+            left: 0,
+            top: 0,
+            right: 120,
+            bottom: 40,
+        };
+        for failure in [
+            InjectedPrimaryPaintFailure::DefaultBorder,
+            InjectedPrimaryPaintFailure::Border,
+            InjectedPrimaryPaintFailure::Surface,
+            InjectedPrimaryPaintFailure::SelectFont,
+            InjectedPrimaryPaintFailure::SetBackground,
+            InjectedPrimaryPaintFailure::SetTextColor,
+            InjectedPrimaryPaintFailure::Text,
+            InjectedPrimaryPaintFailure::Focus,
+            InjectedPrimaryPaintFailure::RestoreTextColor,
+            InjectedPrimaryPaintFailure::RestoreBackground,
+            InjectedPrimaryPaintFailure::RestoreFont,
+        ] {
+            let mut backend = FailingPrimaryPaintBackend {
+                failure: Some(failure),
+                ..Default::default()
+            };
+
+            assert!(!paint_primary_button(
+                &mut backend,
+                rect,
+                "Add",
+                font_handle(1),
+                DialogPalette::for_theme(DialogTheme::Light),
+                false,
+                state,
+            ));
+            assert_eq!(backend.restore_attempts, backend.acquired, "{failure:?}");
+        }
+    }
 
     #[test]
     fn profile_row_content_padding_matches_shared_outer_padding() {
