@@ -46,12 +46,12 @@ use windows::{
                 SendMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
                 ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
                 CS_VREDRAW, CW_USEDEFAULT, GWLP_HWNDPARENT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
-                HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG, SWP_FRAMECHANGED,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA,
-                SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
-                WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
-                WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
-                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                HWND_TOPMOST, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MESSAGEBOX_RESULT,
+                MESSAGEBOX_STYLE, MSG, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE,
+                WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE,
+                WM_NCCREATE, WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER,
+                WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -630,8 +630,79 @@ unsafe fn open_profile_dialog(state_pointer: *mut NativeState<'_>) {
     }
 }
 
+/// 네이티브 UI가 프로필 메시지와 일반 애플리케이션 메시지를 서로 다른 경계로 표시합니다.
+trait NativeMessagePresenter {
+    fn present_profile(
+        &mut self,
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT>;
+
+    fn present_application(
+        &mut self,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT>;
+}
+
+struct WindowsNativeMessagePresenter;
+
+impl NativeMessagePresenter for WindowsNativeMessagePresenter {
+    fn present_profile(
+        &mut self,
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT> {
+        // SAFETY: 네이티브 UI 호출자는 기존과 동일한 owner 수명 계약을 지키며, 공통 경계가
+        // 문자열을 소유 UTF-16 버퍼로 복사한 뒤 동기적으로 표시합니다.
+        unsafe { show_profile_message(route, owner, message, title, style) }
+    }
+
+    fn present_application(
+        &mut self,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT> {
+        let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+        let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: 두 버퍼는 NUL 종료되어 있고 동기 `MessageBoxW` 호출이 반환될 때까지 살아
+        // 있습니다. 소유자를 전달하지 않아 기존 애플리케이션 메시지 동작을 유지합니다.
+        let result = unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(message.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                style,
+            )
+        };
+        if result.0 == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(result)
+        }
+    }
+}
+
 unsafe fn show_profile_dialog_error(owner: HWND, language: crate::Language) {
-    let _ = show_profile_message(
+    let mut presenter = WindowsNativeMessagePresenter;
+    show_profile_dialog_error_with_presenter(owner, language, &mut presenter);
+}
+
+/// 네이티브 프로필 작업 오류를 프로필 전용 가운데 배치 경계로 전달합니다.
+fn show_profile_dialog_error_with_presenter<P: NativeMessagePresenter>(
+    owner: HWND,
+    language: crate::Language,
+    presenter: &mut P,
+) {
+    let _ = presenter.present_profile(
         ProfileMessageRoute::NativeOperationError,
         owner,
         crate::localized_text(
@@ -1717,29 +1788,103 @@ unsafe fn open_browser_url(url: &str) -> io::Result<()> {
 }
 
 pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::Result<()> {
-    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
-    let result = MessageBoxW(
-        None,
-        PCWSTR(message.as_ptr()),
-        PCWSTR(title.as_ptr()),
-        MB_OK | MB_ICONINFORMATION,
-    );
-    if result.0 == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    let mut presenter = WindowsNativeMessagePresenter;
+    show_diagnostic_summary_with_presenter(title, message, &mut presenter)
+}
+
+/// 진단 요약을 프로필 라우팅과 분리된 일반 애플리케이션 메시지 경계로 전달합니다.
+fn show_diagnostic_summary_with_presenter<P: NativeMessagePresenter>(
+    title: &str,
+    message: &str,
+    presenter: &mut P,
+) -> io::Result<()> {
+    presenter
+        .present_application(message, title, MB_OK | MB_ICONINFORMATION)
+        .map(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use super::{
         compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
-        taskbar_palette, TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, NIN_SELECT,
-        WM_CONTEXTMENU,
+        show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
+        taskbar_palette, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
+        TaskbarRisk, NIN_SELECT, WM_CONTEXTMENU,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{WM_LBUTTONUP, WM_RBUTTONUP};
+    use crate::{windows::profile_dialog::ProfileMessageRoute, Language};
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            IDOK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, WM_LBUTTONUP, WM_RBUTTONUP,
+        },
+    };
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum PresentedNativeMessage {
+        Profile(ProfileMessageRoute),
+        Application,
+    }
+
+    #[derive(Default)]
+    struct RecordingNativeMessagePresenter {
+        messages: Vec<PresentedNativeMessage>,
+    }
+
+    impl NativeMessagePresenter for RecordingNativeMessagePresenter {
+        fn present_profile(
+            &mut self,
+            route: ProfileMessageRoute,
+            _owner: HWND,
+            _message: &str,
+            _title: &str,
+            _style: MESSAGEBOX_STYLE,
+        ) -> io::Result<MESSAGEBOX_RESULT> {
+            self.messages.push(PresentedNativeMessage::Profile(route));
+            Ok(IDOK)
+        }
+
+        fn present_application(
+            &mut self,
+            _message: &str,
+            _title: &str,
+            _style: MESSAGEBOX_STYLE,
+        ) -> io::Result<MESSAGEBOX_RESULT> {
+            self.messages.push(PresentedNativeMessage::Application);
+            Ok(IDOK)
+        }
+    }
+
+    #[test]
+    fn native_profile_operation_error_uses_the_profile_message_boundary() {
+        let mut presenter = RecordingNativeMessagePresenter::default();
+
+        show_profile_dialog_error_with_presenter(
+            HWND(201_usize as _),
+            Language::English,
+            &mut presenter,
+        );
+
+        assert_eq!(
+            presenter.messages,
+            vec![PresentedNativeMessage::Profile(
+                ProfileMessageRoute::NativeOperationError
+            )]
+        );
+    }
+
+    #[test]
+    fn diagnostic_summary_stays_outside_the_profile_message_boundary() {
+        let mut presenter = RecordingNativeMessagePresenter::default();
+
+        show_diagnostic_summary_with_presenter("Diagnostics", "Ready", &mut presenter).unwrap();
+
+        assert_eq!(
+            presenter.messages,
+            vec![PresentedNativeMessage::Application]
+        );
+    }
 
     #[test]
     fn tray_menu_uses_only_version_4_activation_events() {

@@ -972,35 +972,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn centered_message_box_request_is_consumed_only_once() {
-        let request = CenteredMessageBoxRequest::new(DialogWorkArea::new(-1600, 40, 0, 1040));
-        let mut state = CenteredMessageBoxRequestState::default();
-
-        let restore = state.install(request);
-
-        assert_eq!(state.consume(), Some(request));
-        assert_eq!(state.consume(), None);
-        state.restore(restore);
-        assert_eq!(state.consume(), None);
-    }
-
-    #[test]
-    fn centered_message_box_request_restores_outer_state_after_nested_scope() {
-        let outer = CenteredMessageBoxRequest::new(DialogWorkArea::new(0, 0, 1920, 1040));
-        let inner = CenteredMessageBoxRequest::new(DialogWorkArea::new(1920, -900, 3520, 0));
-        let mut state = CenteredMessageBoxRequestState::default();
-
-        let outer_restore = state.install(outer);
-        let inner_restore = state.install(inner);
-
-        assert_eq!(state.consume(), Some(inner));
-        state.restore(inner_restore);
-        assert_eq!(state.consume(), Some(outer));
-        state.restore(outer_restore);
-        assert_eq!(state.consume(), None);
-    }
-
-    #[test]
     fn centered_dialog_centers_a_standard_manager_in_the_work_area() {
         let origin = centered_dialog_origin(
             DialogWorkArea::new(0, 0, 1920, 1040),

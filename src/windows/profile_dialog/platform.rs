@@ -32,17 +32,17 @@ use windows::{
                 TranslateMessage, UnhookWindowsHookEx, BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW,
                 CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL,
                 IDC_ARROW, IDOK, IDYES, LBN_SELCHANGE, LBS_NOTIFY, LB_ADDSTRING, LB_GETCURSEL,
-                LB_SETCURSEL, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MSG,
-                SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOW, WH_CBT, WINDOW_STYLE, WM_CLOSE,
-                WM_COMMAND, WM_DESTROY, WM_NCCREATE, WM_NCDESTROY, WNDCLASSW, WS_BORDER,
-                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU,
-                WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+                LB_SETCURSEL, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO,
+                MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+                SW_SHOW, WH_CBT, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_NCCREATE,
+                WM_NCDESTROY, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME,
+                WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
             },
         },
     },
 };
 
-use crate::{localized_text, Language, LocalizationKey};
+use crate::{localized_text, Language, LocalizationKey, ProfileValidationError};
 
 use super::{
     add_profile_dialog_monitor_anchor, add_profile_prompt_result, centered_dialog_origin,
@@ -83,6 +83,38 @@ struct AddDialogState {
     language: Language,
     result: Option<ProfileDialogAction>,
     interaction: AddProfilePromptState,
+}
+
+/// 프로필 흐름이 선택한 메시지 경로를 실제 표시 경계로 전달합니다.
+///
+/// 테스트 백엔드는 Win32 UI를 열지 않고 경로와 결과 매핑을 관찰하며, 제품 백엔드는 기존
+/// 가운데 배치 `MessageBoxW` 경계를 호출합니다.
+trait ProfileMessagePresenter {
+    fn present(
+        &mut self,
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT>;
+}
+
+struct CenteredProfileMessagePresenter;
+
+impl ProfileMessagePresenter for CenteredProfileMessagePresenter {
+    fn present(
+        &mut self,
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT> {
+        // SAFETY: 제품 호출자는 기존과 동일하게 살아 있는 모달 소유자 또는 0 핸들을 전달하며,
+        // presenter는 입력 문자열을 공통 경계에서 UTF-16 소유 버퍼로 복사합니다.
+        unsafe { show_profile_message(route, owner, message, title, style) }
+    }
 }
 
 struct ModalWindowGuard {
@@ -146,17 +178,65 @@ thread_local! {
 ///
 /// 생성 시 이전 스레드 로컬 요청을 값으로 저장하며, 소멸 시 훅 해제 성공 여부와 관계없이 그
 /// 요청을 복원합니다. 따라서 중첩 호출도 바깥쪽 요청을 잃지 않습니다.
-struct CenteredMessageBoxHookGuard {
-    hook: HHOOK,
+trait CenteredMessageBoxHookBackend {
+    type Hook;
+
+    /// 현재 스레드에 CBT 훅을 설치하고 소유권을 나타내는 핸들을 반환합니다.
+    fn install(&mut self) -> Option<Self::Hook>;
+
+    /// 이 백엔드가 설치한 훅을 정확히 한 번 해제합니다.
+    fn unhook(&mut self, hook: Self::Hook);
+}
+
+struct WindowsCenteredMessageBoxHookBackend;
+
+impl CenteredMessageBoxHookBackend for WindowsCenteredMessageBoxHookBackend {
+    type Hook = HHOOK;
+
+    fn install(&mut self) -> Option<Self::Hook> {
+        // SAFETY: 정적 콜백을 현재 호출 스레드에만 연결하며 모듈 간 훅을 설치하지 않습니다.
+        unsafe {
+            SetWindowsHookExW(
+                WH_CBT,
+                Some(centered_message_box_hook),
+                None,
+                GetCurrentThreadId(),
+            )
+            .ok()
+        }
+    }
+
+    fn unhook(&mut self, hook: Self::Hook) {
+        // SAFETY: `hook`은 같은 백엔드가 성공적으로 설치해 가드에 넘긴 핸들입니다.
+        unsafe {
+            let _ = UnhookWindowsHookEx(hook);
+        }
+    }
+}
+
+struct CenteredMessageBoxHookGuard<
+    B: CenteredMessageBoxHookBackend = WindowsCenteredMessageBoxHookBackend,
+> {
+    hook: Option<B::Hook>,
+    backend: B,
     previous_request: Option<CenteredMessageBoxRequest>,
 }
 
-impl CenteredMessageBoxHookGuard {
+impl CenteredMessageBoxHookGuard<WindowsCenteredMessageBoxHookBackend> {
     /// 이미 해석한 작업 영역을 설치하고 현재 스레드에만 CBT 훅을 연결합니다.
     ///
     /// 훅 설치나 스레드 로컬 접근이 실패하면 요청을 남기지 않고 `None`을 반환합니다. 호출자는
     /// 이 경우에도 `MessageBoxW`를 호출해 Windows 기본 배치를 유지해야 합니다.
-    unsafe fn install(work_area: DialogWorkArea) -> Option<Self> {
+    fn install(work_area: DialogWorkArea) -> Option<Self> {
+        Self::install_with_backend(work_area, WindowsCenteredMessageBoxHookBackend)
+    }
+}
+
+impl<B: CenteredMessageBoxHookBackend> CenteredMessageBoxHookGuard<B> {
+    /// 작업 영역 요청과 주입된 훅 백엔드를 하나의 RAII 수명으로 묶습니다.
+    ///
+    /// 백엔드 설치 실패 시 새 요청을 남기지 않고 이전 스레드 로컬 값을 즉시 복원합니다.
+    fn install_with_backend(work_area: DialogWorkArea, mut backend: B) -> Option<Self> {
         let request = CenteredMessageBoxRequest::new(work_area);
         let previous_request = CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
             state
@@ -165,14 +245,9 @@ impl CenteredMessageBoxHookGuard {
                 .map(|mut state| state.install(request))
         })?;
 
-        let hook = match SetWindowsHookExW(
-            WH_CBT,
-            Some(centered_message_box_hook),
-            None,
-            GetCurrentThreadId(),
-        ) {
-            Ok(hook) => hook,
-            Err(_) => {
+        let hook = match backend.install() {
+            Some(hook) => hook,
+            None => {
                 CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
                     state.borrow_mut().restore(previous_request);
                 });
@@ -181,18 +256,17 @@ impl CenteredMessageBoxHookGuard {
         };
 
         Some(Self {
-            hook,
+            hook: Some(hook),
+            backend,
             previous_request,
         })
     }
 }
 
-impl Drop for CenteredMessageBoxHookGuard {
+impl<B: CenteredMessageBoxHookBackend> Drop for CenteredMessageBoxHookGuard<B> {
     fn drop(&mut self) {
-        // SAFETY: `hook`은 이 가드가 현재 스레드에 설치해 소유한 핸들이며 여기서 정확히 한 번
-        // 해제를 시도합니다. 해제 실패도 메시지 결과나 이전 요청 복원을 막지 않습니다.
-        unsafe {
-            let _ = UnhookWindowsHookEx(self.hook);
+        if let Some(hook) = self.hook.take() {
+            self.backend.unhook(hook);
         }
         CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
             state.borrow_mut().restore(self.previous_request);
@@ -215,12 +289,7 @@ unsafe extern "system" fn centered_message_box_hook(
         if code != HCBT_ACTIVATE as i32 {
             return;
         }
-        let request = CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
-            state
-                .try_borrow_mut()
-                .ok()
-                .and_then(|mut state| state.consume())
-        });
+        let request = consume_centered_message_box_request();
         if let Some(request) = request {
             // SAFETY: `HCBT_ACTIVATE`의 `wparam`은 활성화되는 창의 HWND 값입니다. 요청은 여기서
             // 이미 값으로 소비되어 중첩 메시지 루프에 Rust 참조를 유지하지 않습니다.
@@ -232,6 +301,19 @@ unsafe extern "system" fn centered_message_box_hook(
 
     // SAFETY: Win32 훅 계약상 처리 여부와 관계없이 체인의 다음 훅으로 원래 인자를 전달합니다.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// 현재 스레드의 가운데 배치 요청을 정확히 한 번 값으로 소비합니다.
+///
+/// 훅 콜백과 테스트 가능한 RAII 생명주기가 같은 스레드 로컬 전이를 사용하며, 재진입 중 이미
+/// 빌린 상태이면 창 이동을 포기하고 `None`을 반환합니다.
+fn consume_centered_message_box_request() -> Option<CenteredMessageBoxRequest> {
+    CENTERED_MESSAGE_BOX_REQUEST.with(|state| {
+        state
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut state| state.consume())
+    })
 }
 
 /// 지정한 기준에 맞는 모니터 작업 영역의 가운데로 창을 이동합니다.
@@ -1067,12 +1149,25 @@ unsafe fn submit_rename_label(
     };
     let value = read_profile_label(edit)?;
     let action = (&*state).controller.submit_rename(&value);
+    let mut presenter = CenteredProfileMessagePresenter;
+    handle_manager_rename_result_with_presenter(action, hwnd, language, &mut presenter)
+}
+
+/// 관리자 이름 변경 결과를 그대로 반환하거나 검증 실패를 프로필 경고 경로로 표시합니다.
+///
+/// `action`은 공용 프로필 검증을 이미 거친 결과이며, presenter 오류만 I/O 오류로 전파합니다.
+fn handle_manager_rename_result_with_presenter<P: ProfileMessagePresenter>(
+    action: Result<Option<ProfileDialogAction>, ProfileValidationError>,
+    owner: HWND,
+    language: Language,
+    presenter: &mut P,
+) -> Result<Option<ProfileDialogAction>, io::Error> {
     match action {
         Ok(action) => Ok(action),
         Err(_) => {
-            show_profile_message(
+            presenter.present(
                 ProfileMessageRoute::ValidationWarning,
-                hwnd,
+                owner,
                 localized_text(LocalizationKey::UsageProfileInvalidLabel, language),
                 localized_text(LocalizationKey::WindowTitle, language),
                 MB_OK | MB_ICONWARNING,
@@ -1141,7 +1236,24 @@ unsafe fn submit_add_dialog(hwnd: HWND, state: *mut AddDialogState) {
             return;
         }
     };
-    match add_profile_prompt_result(&value, AddProfilePromptCommand::Submit) {
+    let result = add_profile_prompt_result(&value, AddProfilePromptCommand::Submit);
+    let mut presenter = CenteredProfileMessagePresenter;
+    handle_add_profile_prompt_result_with_presenter(hwnd, state, result, &mut presenter);
+}
+
+/// 추가 이름 검증 결과를 닫기 또는 경고 상태 전이로 적용합니다.
+///
+/// # Safety
+///
+/// `state`는 처리 중 단계의 살아 있는 `AddDialogState`를 가리켜야 하며 다른 가변 참조와 별칭되면
+/// 안 됩니다. 성공 시에만 결과를 저장하고 창을 닫으며, 실패는 주입된 presenter로 표시합니다.
+unsafe fn handle_add_profile_prompt_result_with_presenter<P: ProfileMessagePresenter>(
+    hwnd: HWND,
+    state: *mut AddDialogState,
+    result: Result<Option<ProfileDialogAction>, ProfileValidationError>,
+    presenter: &mut P,
+) {
+    match result {
         Ok(Some(action)) => {
             let should_close = {
                 let state = &mut *state;
@@ -1157,19 +1269,21 @@ unsafe fn submit_add_dialog(hwnd: HWND, state: *mut AddDialogState) {
             }
         }
         Ok(None) => {
-            show_add_dialog_warning(
+            show_add_dialog_warning_with_presenter(
                 hwnd,
                 state,
                 LocalizationKey::UsageProfileOperationFailed,
                 MB_OK | MB_ICONERROR,
+                presenter,
             );
         }
         Err(_) => {
-            show_add_dialog_warning(
+            show_add_dialog_warning_with_presenter(
                 hwnd,
                 state,
                 LocalizationKey::UsageProfileInvalidLabel,
                 MB_OK | MB_ICONWARNING,
+                presenter,
             );
         }
     }
@@ -1206,7 +1320,24 @@ unsafe fn show_add_dialog_warning(
     hwnd: HWND,
     state: *mut AddDialogState,
     message_key: LocalizationKey,
-    style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+    style: MESSAGEBOX_STYLE,
+) {
+    let mut presenter = CenteredProfileMessagePresenter;
+    show_add_dialog_warning_with_presenter(hwnd, state, message_key, style, &mut presenter);
+}
+
+/// 추가 입력창의 경고 상태 전이와 메시지 경로 선택을 하나의 테스트 가능한 경계로 실행합니다.
+///
+/// # Safety
+///
+/// `state`는 호출 동안 살아 있는 `AddDialogState`를 가리켜야 하며 다른 가변 참조와 별칭되면 안
+/// 됩니다. presenter 호출 전후로만 짧은 참조를 만들고 중첩 메시지 루프에는 보관하지 않습니다.
+unsafe fn show_add_dialog_warning_with_presenter<P: ProfileMessagePresenter>(
+    hwnd: HWND,
+    state: *mut AddDialogState,
+    message_key: LocalizationKey,
+    style: MESSAGEBOX_STYLE,
+    presenter: &mut P,
 ) {
     let language = {
         let state = &mut *state;
@@ -1220,7 +1351,7 @@ unsafe fn show_add_dialog_warning(
     } else {
         ProfileMessageRoute::AddPromptSafeError
     };
-    let _ = show_profile_message(
+    let _ = presenter.present(
         route,
         hwnd,
         localized_text(message_key, language),
@@ -1267,16 +1398,28 @@ pub(super) unsafe fn confirm_profile_login_owned(
     label: &str,
     language: Language,
 ) -> io::Result<bool> {
+    let mut presenter = CenteredProfileMessagePresenter;
+    confirm_profile_login_with_presenter(owner, label, language, &mut presenter)
+}
+
+/// 로그인 확인 문구를 프로필 로그인 경로로 표시하고 기존 OK/취소 매핑을 반환합니다.
+fn confirm_profile_login_with_presenter<P: ProfileMessagePresenter>(
+    owner: HWND,
+    label: &str,
+    language: Language,
+    presenter: &mut P,
+) -> io::Result<bool> {
     let message = profile_login_confirmation(label, language);
     let title = localized_text(LocalizationKey::UsageProfileLogin, language);
-    show_profile_message(
-        ProfileMessageRoute::LoginConfirmation,
-        owner,
-        &message,
-        title,
-        MB_OKCANCEL | MB_ICONWARNING,
-    )
-    .map(|result| result == IDOK)
+    presenter
+        .present(
+            ProfileMessageRoute::LoginConfirmation,
+            owner,
+            &message,
+            title,
+            MB_OKCANCEL | MB_ICONWARNING,
+        )
+        .map(|result| result == IDOK)
 }
 
 unsafe fn confirm_profile_delete_owned(
@@ -1284,20 +1427,42 @@ unsafe fn confirm_profile_delete_owned(
     label: &str,
     language: Language,
 ) -> io::Result<bool> {
+    let mut presenter = CenteredProfileMessagePresenter;
+    confirm_profile_delete_with_presenter(owner, label, language, &mut presenter)
+}
+
+/// 삭제 확인 문구를 프로필 삭제 경로로 표시하고 기존 Yes/No 매핑을 반환합니다.
+fn confirm_profile_delete_with_presenter<P: ProfileMessagePresenter>(
+    owner: HWND,
+    label: &str,
+    language: Language,
+    presenter: &mut P,
+) -> io::Result<bool> {
     let message = profile_delete_confirmation(label, language);
     let title = localized_text(LocalizationKey::UsageProfileDelete, language);
-    show_profile_message(
-        ProfileMessageRoute::DeleteConfirmation,
-        owner,
-        &message,
-        title,
-        MB_YESNO | MB_ICONWARNING,
-    )
-    .map(|result| result == IDYES)
+    presenter
+        .present(
+            ProfileMessageRoute::DeleteConfirmation,
+            owner,
+            &message,
+            title,
+            MB_YESNO | MB_ICONWARNING,
+        )
+        .map(|result| result == IDYES)
 }
 
 unsafe fn show_safe_error(owner: HWND, language: Language) {
-    let _ = show_profile_message(
+    let mut presenter = CenteredProfileMessagePresenter;
+    show_safe_error_with_presenter(owner, language, &mut presenter);
+}
+
+/// 관리자 작업 실패를 안전한 고정 문구와 관리자 오류 경로로 표시합니다.
+fn show_safe_error_with_presenter<P: ProfileMessagePresenter>(
+    owner: HWND,
+    language: Language,
+    presenter: &mut P,
+) {
+    let _ = presenter.present(
         ProfileMessageRoute::ManagerSafeError,
         owner,
         localized_text(LocalizationKey::UsageProfileOperationFailed, language),
@@ -1316,8 +1481,7 @@ pub(super) unsafe fn show_centered_profile_message(
     let message = wide(message);
     let title = wide(title);
     let parent = (owner != HWND::default()).then_some(owner);
-    let centering_guard =
-        work_area.and_then(|work_area| CenteredMessageBoxHookGuard::install(work_area));
+    let centering_guard = work_area.and_then(CenteredMessageBoxHookGuard::install);
     let result = MessageBoxW(
         parent,
         PCWSTR(message.as_ptr()),
@@ -1339,4 +1503,349 @@ fn wide(value: &str) -> Vec<u16> {
 
 fn win_error(error: windows::core::Error) -> io::Error {
     io::Error::from_raw_os_error(error.code().0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, io, rc::Rc, thread};
+
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            IDCANCEL, IDOK, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT,
+            MESSAGEBOX_STYLE,
+        },
+    };
+
+    use crate::{Language, LocalizationKey, UsageProfileId};
+
+    use super::{
+        add_profile_prompt_result, confirm_profile_delete_with_presenter,
+        confirm_profile_login_with_presenter, consume_centered_message_box_request,
+        handle_add_profile_prompt_result_with_presenter,
+        handle_manager_rename_result_with_presenter, show_add_dialog_warning_with_presenter,
+        show_safe_error_with_presenter, AddDialogState, AddProfilePromptCommand,
+        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogWorkArea,
+        ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute, UsageProfileView,
+    };
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct PresentedProfileMessage {
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: String,
+        style: MESSAGEBOX_STYLE,
+    }
+
+    struct RecordingProfileMessagePresenter {
+        messages: Vec<PresentedProfileMessage>,
+        result: MESSAGEBOX_RESULT,
+    }
+
+    impl RecordingProfileMessagePresenter {
+        fn returning(result: MESSAGEBOX_RESULT) -> Self {
+            Self {
+                messages: Vec::new(),
+                result,
+            }
+        }
+    }
+
+    impl ProfileMessagePresenter for RecordingProfileMessagePresenter {
+        fn present(
+            &mut self,
+            route: ProfileMessageRoute,
+            owner: HWND,
+            message: &str,
+            _title: &str,
+            style: MESSAGEBOX_STYLE,
+        ) -> io::Result<MESSAGEBOX_RESULT> {
+            self.messages.push(PresentedProfileMessage {
+                route,
+                owner,
+                message: message.to_string(),
+                style,
+            });
+            Ok(self.result)
+        }
+    }
+
+    #[test]
+    fn manager_validation_path_presents_the_validation_route() {
+        let profile = UsageProfileView {
+            id: UsageProfileId::Managed(7),
+            label: "Work".to_string(),
+            summary: "Ready".to_string(),
+            selected: true,
+            login_required: false,
+            managed: true,
+        };
+        let controller = ProfileDialogController::new(&[profile], false);
+        let invalid_submission = controller.submit_rename("   ");
+        let owner = HWND(101_usize as _);
+        let mut presenter = RecordingProfileMessagePresenter::returning(IDOK);
+
+        let result = handle_manager_rename_result_with_presenter(
+            invalid_submission,
+            owner,
+            Language::English,
+            &mut presenter,
+        );
+
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(
+            presenter.messages[0].route,
+            ProfileMessageRoute::ValidationWarning
+        );
+        assert_eq!(presenter.messages[0].owner, owner);
+        assert_eq!(presenter.messages[0].style, MB_OK | MB_ICONWARNING);
+    }
+
+    #[test]
+    fn add_validation_path_presents_the_validation_route_and_restores_commands() {
+        let owner = HWND(102_usize as _);
+        let mut state = AddDialogState {
+            edit: HWND::default(),
+            language: Language::English,
+            result: None,
+            interaction: Default::default(),
+        };
+        assert!(state.interaction.begin_command());
+        let mut presenter = RecordingProfileMessagePresenter::returning(IDOK);
+        let result = add_profile_prompt_result("   ", AddProfilePromptCommand::Submit);
+
+        unsafe {
+            handle_add_profile_prompt_result_with_presenter(
+                owner,
+                &mut state,
+                result,
+                &mut presenter,
+            );
+        }
+
+        assert!(state.interaction.accepts_commands());
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(
+            presenter.messages[0].route,
+            ProfileMessageRoute::ValidationWarning
+        );
+        assert_eq!(presenter.messages[0].owner, owner);
+    }
+
+    #[test]
+    fn add_safe_error_path_presents_the_add_prompt_route() {
+        let owner = HWND(103_usize as _);
+        let mut state = AddDialogState {
+            edit: HWND::default(),
+            language: Language::English,
+            result: None,
+            interaction: Default::default(),
+        };
+        assert!(state.interaction.begin_command());
+        let mut presenter = RecordingProfileMessagePresenter::returning(IDOK);
+
+        unsafe {
+            show_add_dialog_warning_with_presenter(
+                owner,
+                &mut state,
+                LocalizationKey::UsageProfileOperationFailed,
+                MB_OK | MB_ICONERROR,
+                &mut presenter,
+            );
+        }
+
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(
+            presenter.messages[0].route,
+            ProfileMessageRoute::AddPromptSafeError
+        );
+    }
+
+    #[test]
+    fn login_confirmation_path_presents_the_login_route_and_maps_ok() {
+        let owner = HWND(104_usize as _);
+        let mut presenter = RecordingProfileMessagePresenter::returning(IDOK);
+
+        let confirmed =
+            confirm_profile_login_with_presenter(owner, "Work", Language::English, &mut presenter)
+                .unwrap();
+
+        assert!(confirmed);
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(
+            presenter.messages[0].route,
+            ProfileMessageRoute::LoginConfirmation
+        );
+        assert!(presenter.messages[0].message.contains("Work"));
+    }
+
+    #[test]
+    fn delete_confirmation_path_presents_the_delete_route_and_maps_yes() {
+        let owner = HWND(105_usize as _);
+        let mut presenter = RecordingProfileMessagePresenter::returning(IDYES);
+
+        let confirmed =
+            confirm_profile_delete_with_presenter(owner, "Work", Language::English, &mut presenter)
+                .unwrap();
+
+        assert!(confirmed);
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(
+            presenter.messages[0].route,
+            ProfileMessageRoute::DeleteConfirmation
+        );
+        assert!(presenter.messages[0].message.contains("Work"));
+    }
+
+    #[test]
+    fn manager_safe_error_path_presents_the_manager_route() {
+        let owner = HWND(106_usize as _);
+        let mut presenter = RecordingProfileMessagePresenter::returning(IDCANCEL);
+
+        show_safe_error_with_presenter(owner, Language::English, &mut presenter);
+
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(
+            presenter.messages[0].route,
+            ProfileMessageRoute::ManagerSafeError
+        );
+        assert_eq!(presenter.messages[0].style, MB_OK | MB_ICONERROR);
+    }
+
+    #[derive(Default)]
+    struct HookCalls {
+        installs: usize,
+        unhooked: Vec<usize>,
+    }
+
+    struct RecordingHookBackend {
+        calls: Rc<RefCell<HookCalls>>,
+        install_result: Option<usize>,
+    }
+
+    impl RecordingHookBackend {
+        fn succeeding(calls: Rc<RefCell<HookCalls>>, hook: usize) -> Self {
+            Self {
+                calls,
+                install_result: Some(hook),
+            }
+        }
+
+        fn failing(calls: Rc<RefCell<HookCalls>>) -> Self {
+            Self {
+                calls,
+                install_result: None,
+            }
+        }
+    }
+
+    impl CenteredMessageBoxHookBackend for RecordingHookBackend {
+        type Hook = usize;
+
+        fn install(&mut self) -> Option<Self::Hook> {
+            self.calls.borrow_mut().installs += 1;
+            self.install_result
+        }
+
+        fn unhook(&mut self, hook: Self::Hook) {
+            self.calls.borrow_mut().unhooked.push(hook);
+        }
+    }
+
+    fn on_fresh_thread(test: impl FnOnce() + Send + 'static) {
+        thread::spawn(test).join().unwrap();
+    }
+
+    #[test]
+    fn hook_guard_installs_consumes_once_and_unhooks_on_drop() {
+        on_fresh_thread(|| {
+            let calls = Rc::new(RefCell::new(HookCalls::default()));
+            let work_area = DialogWorkArea::new(-1600, 40, 0, 1040);
+            let Some(guard) = CenteredMessageBoxHookGuard::install_with_backend(
+                work_area,
+                RecordingHookBackend::succeeding(Rc::clone(&calls), 41),
+            ) else {
+                panic!("recording hook should install");
+            };
+
+            assert_eq!(calls.borrow().installs, 1);
+            assert_eq!(
+                consume_centered_message_box_request(),
+                Some(super::CenteredMessageBoxRequest::new(work_area))
+            );
+            assert_eq!(consume_centered_message_box_request(), None);
+
+            drop(guard);
+
+            assert_eq!(calls.borrow().unhooked, vec![41]);
+            assert_eq!(consume_centered_message_box_request(), None);
+        });
+    }
+
+    #[test]
+    fn hook_install_failure_restores_the_outer_thread_local_request() {
+        on_fresh_thread(|| {
+            let outer_calls = Rc::new(RefCell::new(HookCalls::default()));
+            let failed_calls = Rc::new(RefCell::new(HookCalls::default()));
+            let outer_area = DialogWorkArea::new(0, 0, 1920, 1040);
+            let inner_area = DialogWorkArea::new(1920, 0, 3520, 900);
+            let Some(outer) = CenteredMessageBoxHookGuard::install_with_backend(
+                outer_area,
+                RecordingHookBackend::succeeding(Rc::clone(&outer_calls), 51),
+            ) else {
+                panic!("outer recording hook should install");
+            };
+
+            let failed = CenteredMessageBoxHookGuard::install_with_backend(
+                inner_area,
+                RecordingHookBackend::failing(Rc::clone(&failed_calls)),
+            );
+
+            assert!(failed.is_none());
+            assert_eq!(failed_calls.borrow().installs, 1);
+            assert!(failed_calls.borrow().unhooked.is_empty());
+            assert_eq!(
+                consume_centered_message_box_request(),
+                Some(super::CenteredMessageBoxRequest::new(outer_area))
+            );
+            drop(outer);
+            assert_eq!(outer_calls.borrow().unhooked, vec![51]);
+        });
+    }
+
+    #[test]
+    fn nested_hook_guard_drop_restores_outer_request_and_unhooks_each_hook() {
+        on_fresh_thread(|| {
+            let calls = Rc::new(RefCell::new(HookCalls::default()));
+            let outer_area = DialogWorkArea::new(-1920, 0, 0, 1040);
+            let inner_area = DialogWorkArea::new(0, -900, 1600, 0);
+            let Some(outer) = CenteredMessageBoxHookGuard::install_with_backend(
+                outer_area,
+                RecordingHookBackend::succeeding(Rc::clone(&calls), 61),
+            ) else {
+                panic!("outer recording hook should install");
+            };
+            let Some(inner) = CenteredMessageBoxHookGuard::install_with_backend(
+                inner_area,
+                RecordingHookBackend::succeeding(Rc::clone(&calls), 62),
+            ) else {
+                panic!("inner recording hook should install");
+            };
+
+            assert_eq!(
+                consume_centered_message_box_request(),
+                Some(super::CenteredMessageBoxRequest::new(inner_area))
+            );
+            drop(inner);
+            assert_eq!(
+                consume_centered_message_box_request(),
+                Some(super::CenteredMessageBoxRequest::new(outer_area))
+            );
+            drop(outer);
+
+            assert_eq!(calls.borrow().unhooked, vec![62, 61]);
+            assert_eq!(consume_centered_message_box_request(), None);
+        });
+    }
 }
