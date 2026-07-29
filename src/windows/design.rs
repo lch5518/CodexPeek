@@ -15,6 +15,33 @@ mod tests {
     }
 
     #[test]
+    fn primary_button_text_meets_wcag_aa_on_the_approved_green() {
+        for theme in [DialogTheme::Light, DialogTheme::Dark] {
+            let palette = DialogPalette::for_theme(theme);
+            assert_eq!(palette.primary_text.colorref, 0x0020_2020);
+            assert!(contrast_ratio(palette.primary_text.colorref, palette.healthy.colorref) >= 4.5);
+        }
+    }
+
+    fn contrast_ratio(first: u32, second: u32) -> f64 {
+        let first = relative_luminance(first);
+        let second = relative_luminance(second);
+        (first.max(second) + 0.05) / (first.min(second) + 0.05)
+    }
+
+    fn relative_luminance(colorref: u32) -> f64 {
+        let channel = |shift: u32| {
+            let value = f64::from((colorref >> shift) & 0xff_u32) / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(0) + 0.7152 * channel(8) + 0.0722 * channel(16)
+    }
+
+    #[test]
     fn logical_dimensions_scale_at_supported_dpis() {
         for (dpi, expected_row_height) in [(96, 56), (120, 70), (144, 84), (168, 98), (192, 112)] {
             assert_eq!(scale_logical(56, dpi), expected_row_height);
@@ -177,6 +204,8 @@ pub struct DialogPalette {
     pub subtle_border: DialogColor,
     /// 기본 텍스트색입니다.
     pub text: DialogColor,
+    /// 초록색 기본 작업 버튼 위에 사용하는 고대비 텍스트색입니다.
+    pub primary_text: DialogColor,
     /// 보조 텍스트색입니다.
     pub secondary_text: DialogColor,
     /// 비활성 또는 보조 정보 텍스트색입니다.
@@ -208,6 +237,7 @@ impl DialogPalette {
                 border: DialogColor::opaque(0x00d5_d5d5),
                 subtle_border: DialogColor::translucent(0x0000_0000, 20),
                 text: DialogColor::opaque(0x0020_2020),
+                primary_text: DialogColor::opaque(0x0020_2020),
                 secondary_text: DialogColor::opaque(0x0050_5050),
                 muted_text: DialogColor::opaque(0x0073_7373),
                 progress_track: DialogColor::translucent(0x0000_0000, 36),
@@ -225,6 +255,7 @@ impl DialogPalette {
                 border: DialogColor::opaque(0x0040_4040),
                 subtle_border: DialogColor::translucent(0x00ff_ffff, 20),
                 text: DialogColor::opaque(0x00ee_eeee),
+                primary_text: DialogColor::opaque(0x0020_2020),
                 secondary_text: DialogColor::opaque(0x00c8_c8c8),
                 muted_text: DialogColor::opaque(0x0097_9797),
                 progress_track: DialogColor::translucent(0x00ff_ffff, 36),

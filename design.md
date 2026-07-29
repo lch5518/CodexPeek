@@ -42,6 +42,7 @@ healthy and available; it is not a general decoration color.
 | Border | `#404040` |
 | Subtle border | `rgba(255, 255, 255, 0.08)` |
 | Text | `#EEEEEE` |
+| Primary action text | `#202020` |
 | Secondary text | `#C8C8C8` |
 | Muted text | `#979797` |
 | Progress track | `rgba(255, 255, 255, 0.14)` |
@@ -59,6 +60,7 @@ healthy and available; it is not a general decoration color.
 | Border | `#D5D5D5` |
 | Subtle border | `rgba(0, 0, 0, 0.08)` |
 | Text | `#202020` |
+| Primary action text | `#202020` |
 | Secondary text | `#505050` |
 | Muted text | `#737373` |
 | Progress track | `rgba(0, 0, 0, 0.14)` |

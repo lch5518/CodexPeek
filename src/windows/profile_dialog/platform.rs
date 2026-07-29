@@ -15,13 +15,15 @@ use windows::{
         Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE},
         Graphics::Gdi::{
             CreateFontW, CreateSolidBrush, DeleteObject, DrawFocusRect, DrawTextW, FillRect, GetDC,
-            GetMonitorInfoW, GetStockObject, GetTextExtentPoint32W, InvalidateRect,
-            MonitorFromPoint, MonitorFromWindow, ReleaseDC, SelectObject, SetBkColor, SetBkMode,
-            SetDCBrushColor, SetTextColor, BACKGROUND_MODE, CLIP_DEFAULT_PRECIS, CLR_INVALID,
-            DC_BRUSH, DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS,
-            DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM,
-            FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-            MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS, PROOF_QUALITY, TRANSPARENT,
+            GetMonitorInfoW, GetStockObject, GetSysColor, GetSysColorBrush, GetTextExtentPoint32W,
+            InvalidateRect, MonitorFromPoint, MonitorFromWindow, ReleaseDC, SelectObject,
+            SetBkColor, SetBkMode, SetDCBrushColor, SetTextColor, BACKGROUND_MODE,
+            CLIP_DEFAULT_PRECIS, CLR_INVALID, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
+            COLOR_WINDOWTEXT, DC_BRUSH, DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH,
+            DRAW_TEXT_FORMAT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING,
+            DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HBRUSH, HDC, HFONT, HGDIOBJ,
+            MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, OUT_DEFAULT_PRECIS,
+            PROOF_QUALITY, TRANSPARENT,
         },
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
         UI::{
@@ -29,8 +31,8 @@ use windows::{
                 SetWindowTheme, CDDS_PREPAINT, CDIS_DEFAULT, CDIS_DISABLED, CDIS_FOCUS, CDIS_HOT,
                 CDIS_SELECTED, CDRF_SKIPDEFAULT, DRAWITEMSTRUCT, EM_SETLIMITTEXT, NMCUSTOMDRAW,
                 NMCUSTOMDRAW_DRAW_STATE_FLAGS, NM_CUSTOMDRAW, ODS_FOCUS, ODS_SELECTED, ODT_LISTBOX,
-                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTS_ALWAYSTIP,
-                TTS_NOPREFIX, TTTOOLINFOW,
+                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_RTLREADING, TTF_SUBCLASS, TTM_ADDTOOLW,
+                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
             },
             HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
             Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled, SetFocus},
@@ -172,6 +174,15 @@ struct DialogResourceSet {
     owns_surface_brush: bool,
 }
 
+impl DialogResourceSet {
+    fn has_complete_brush_set(&self) -> bool {
+        self.owns_background_brush
+            && self.owns_surface_brush
+            && !self.background_brush.0.is_null()
+            && !self.surface_brush.0.is_null()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct DialogVisualSnapshot {
     body_font: HFONT,
@@ -272,6 +283,10 @@ impl DialogVisualResources {
             return None;
         }
         let resources = Self::allocate(&mut *self.backend, dpi, palette);
+        if !resources.has_complete_brush_set() {
+            release_dialog_resource_set(&mut *self.backend, resources);
+            return None;
+        }
         Some(StagedDialogVisualResources {
             dpi,
             palette,
@@ -359,24 +374,35 @@ impl DialogVisualResources {
     }
 
     fn release_set(&mut self, resources: DialogResourceSet) {
-        for (object, owned) in [
-            (HGDIOBJ(resources.body_font.0), resources.owns_body_font),
-            (
-                HGDIOBJ(resources.heading_font.0),
-                resources.owns_heading_font,
-            ),
-            (
-                HGDIOBJ(resources.background_brush.0),
-                resources.owns_background_brush,
-            ),
-            (
-                HGDIOBJ(resources.surface_brush.0),
-                resources.owns_surface_brush,
-            ),
-        ] {
-            if owned && !object.0.is_null() {
-                self.backend.delete_object(object);
-            }
+        release_dialog_resource_set(&mut *self.backend, resources);
+    }
+}
+
+/// 소유한 대화상자 GDI 객체만 정확히 한 번 해제합니다.
+///
+/// null 핸들과 빌린 stock 객체는 건너뛰며, 부분적으로 생성된 staged 집합을 폐기할 때도
+/// 생성에 성공한 객체만 정리합니다.
+fn release_dialog_resource_set(
+    backend: &mut dyn DialogResourceBackend,
+    resources: DialogResourceSet,
+) {
+    for (object, owned) in [
+        (HGDIOBJ(resources.body_font.0), resources.owns_body_font),
+        (
+            HGDIOBJ(resources.heading_font.0),
+            resources.owns_heading_font,
+        ),
+        (
+            HGDIOBJ(resources.background_brush.0),
+            resources.owns_background_brush,
+        ),
+        (
+            HGDIOBJ(resources.surface_brush.0),
+            resources.owns_surface_brush,
+        ),
+    ] {
+        if owned && !object.0.is_null() {
+            backend.delete_object(object);
         }
     }
 }
@@ -994,16 +1020,30 @@ unsafe fn erase_dialog_background(
     dialog: HWND,
     resources: &DialogVisualResources,
     wparam: WPARAM,
-) -> LRESULT {
+) -> bool {
     let mut client = RECT::default();
-    if GetClientRect(dialog, &mut client).is_ok() {
-        let _ = FillRect(
-            HDC(wparam.0 as *mut c_void),
-            &client,
-            resources.background_brush,
-        );
+    if GetClientRect(dialog, &mut client).is_err() {
+        return false;
     }
-    LRESULT(1)
+    erase_dialog_background_with(resources, |brush| {
+        if FillRect(HDC(wparam.0 as *mut c_void), &client, brush) == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    })
+}
+
+/// 배경 brush가 유효하고 실제 채우기가 성공한 경우에만 erase 메시지를 처리한 것으로 봅니다.
+///
+/// 초기 brush 할당 실패 또는 `FillRect` 실패에서는 `false`를 반환하여 호출자가 Windows 기본
+/// 처리로 넘길 수 있게 합니다. `fill`에는 소유권을 이전하지 않은 활성 brush만 전달합니다.
+fn erase_dialog_background_with<F>(resources: &DialogVisualResources, fill: F) -> bool
+where
+    F: FnOnce(HBRUSH) -> io::Result<()>,
+{
+    let brush = resources.background_brush;
+    !brush.0.is_null() && fill(brush).is_ok()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1301,7 +1341,7 @@ fn paint_primary_button<B: PrimaryButtonPaintBackend>(
         backend.fill_rect(PrimaryButtonPaintStage::Surface, &inner, surface)?;
         previous_font = Some(backend.select_font(font)?);
         previous_background = Some(backend.set_transparent_background()?);
-        previous_text = Some(backend.set_text_color(COLORREF(0x00ff_ffff))?);
+        previous_text = Some(backend.set_text_color(COLORREF(palette.primary_text.colorref))?);
         backend.draw_text(label, &mut inner, rtl)?;
         if matches!(
             state.cue,
@@ -1483,66 +1523,372 @@ fn profile_row_content_padding(dpi: u32) -> i32 {
     scale_logical(crate::windows::design::OUTER_PADDING, dpi)
 }
 
-/// owner-draw 프로필 행을 현재 DPI와 팔레트에 맞춰 그립니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProfileRowFirstLineLayout {
+    name: LogicalRect,
+    markers: Option<LogicalRect>,
+}
+
+/// 첫 줄에서 역할 표식의 실제 폭을 먼저 확보하고 남은 영역만 이름에 배정합니다.
 ///
-/// `item`은 현재 `WM_DRAWITEM` 메시지가 제공한 살아 있는 listbox 항목이어야 합니다.
-/// `profile`과 `copy`는 표시 전용 소유 복사본이며 `visuals`는 대화 상자 자원에서 미리 복사한
-/// 스냅샷입니다. 함수는 문자열을 파싱하지 않고 typed usage 쌍이 있을 때만 진행 표시를 그립니다.
+/// `line`과 `marker_width`는 현재 DPI의 물리 픽셀입니다. LTR에서는 표식을 오른쪽에,
+/// RTL에서는 왼쪽에 두며 이름과 표식 사이에 DPI 배율 간격을 둡니다. 폭이 극단적으로 좁으면
+/// 표식을 우선하고 이름 영역을 0까지 줄여 역할 의미가 이름 말줄임에 함께 사라지지 않게 합니다.
+fn profile_row_first_line_layout(
+    line: LogicalRect,
+    marker_width: i32,
+    dpi: u32,
+    rtl: bool,
+) -> ProfileRowFirstLineLayout {
+    let width = line.width().max(0);
+    let marker_width = marker_width.clamp(0, width);
+    if marker_width == 0 {
+        return ProfileRowFirstLineLayout {
+            name: line,
+            markers: None,
+        };
+    }
+    let gap = scale_logical(crate::windows::design::GAP_8, dpi).min(width - marker_width);
+    if rtl {
+        let markers = LogicalRect::new(line.left, line.top, line.left + marker_width, line.bottom);
+        ProfileRowFirstLineLayout {
+            name: LogicalRect::new(markers.right + gap, line.top, line.right, line.bottom),
+            markers: Some(markers),
+        }
+    } else {
+        let markers =
+            LogicalRect::new(line.right - marker_width, line.top, line.right, line.bottom);
+        ProfileRowFirstLineLayout {
+            name: LogicalRect::new(line.left, line.top, markers.left - gap, line.bottom),
+            markers: Some(markers),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileRowFillStage {
+    Surface,
+    SelectionEdge,
+    ProgressTrack,
+    ProgressFill,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProfileRowTextStage {
+    Name,
+    Markers,
+    Summary,
+    Fallback,
+}
+
+/// owner-draw 행의 GDI 상태 변경과 stock fallback을 관찰 가능한 경계로 분리합니다.
 ///
-/// # Safety
-///
-/// `item.hDC`와 `item.rcItem`은 Windows가 현재 그리기 콜백에 허용한 범위여야 합니다. 호출자는
-/// 동기 GDI 호출 전에 대화 상자 상태와 자원 객체의 모든 Rust borrow를 끝내야 합니다.
-unsafe fn draw_profile_row(
-    item: &DRAWITEMSTRUCT,
+/// 구현은 DC brush 색 적용·복원, 텍스트 상태 적용·역순 복원, 시스템 색 brush 및 빌린
+/// `DEFAULT_GUI_FONT` 사용을 보장해야 합니다. 테스트 구현은 실제 HDC 없이 각 실패 지점을
+/// 결정적으로 주입합니다.
+trait ProfileRowPaintBackend {
+    fn apply_fill_color(&mut self, color: COLORREF) -> io::Result<COLORREF>;
+    fn fill_custom_rect(&mut self, stage: ProfileRowFillStage, rect: &RECT) -> io::Result<()>;
+    fn restore_fill_color(&mut self, color: COLORREF) -> io::Result<()>;
+    fn fill_system_rect(&mut self, rect: &RECT, selected: bool) -> io::Result<COLORREF>;
+    fn default_gui_font(&mut self) -> io::Result<HFONT>;
+    fn select_font(&mut self, font: HFONT) -> io::Result<HGDIOBJ>;
+    fn set_transparent_background(&mut self) -> io::Result<BACKGROUND_MODE>;
+    fn set_text_color(&mut self, color: COLORREF) -> io::Result<COLORREF>;
+    fn measure_text_width(&mut self, text: &str) -> io::Result<i32>;
+    fn draw_text(
+        &mut self,
+        stage: ProfileRowTextStage,
+        text: &str,
+        rect: &mut RECT,
+        format: DRAW_TEXT_FORMAT,
+    ) -> io::Result<()>;
+    fn draw_focus(&mut self, rect: &RECT) -> io::Result<()>;
+    fn restore_font(&mut self, font: HGDIOBJ) -> io::Result<()>;
+    fn restore_background(&mut self, mode: BACKGROUND_MODE) -> io::Result<()>;
+    fn restore_text_color(&mut self, color: COLORREF) -> io::Result<()>;
+}
+
+struct WindowsProfileRowPaintBackend {
+    dc: HDC,
+    dc_brush: HBRUSH,
+}
+
+impl WindowsProfileRowPaintBackend {
+    /// 현재 `WM_DRAWITEM` HDC를 빌리고 stock DC brush 핸들을 보관합니다.
+    ///
+    /// stock 객체의 소유권을 취하지 않으며 null stock brush는 custom fill 실패로 전달되어
+    /// 시스템 색 brush fallback이 계속 시도됩니다.
+    unsafe fn new(dc: HDC) -> Self {
+        Self {
+            dc,
+            dc_brush: HBRUSH(GetStockObject(DC_BRUSH).0),
+        }
+    }
+}
+
+impl ProfileRowPaintBackend for WindowsProfileRowPaintBackend {
+    fn apply_fill_color(&mut self, color: COLORREF) -> io::Result<COLORREF> {
+        let previous = unsafe { SetDCBrushColor(self.dc, color) };
+        if previous.0 == CLR_INVALID {
+            Err(io::Error::other(
+                "profile row brush color could not be applied",
+            ))
+        } else {
+            Ok(previous)
+        }
+    }
+
+    fn fill_custom_rect(&mut self, _stage: ProfileRowFillStage, rect: &RECT) -> io::Result<()> {
+        if self.dc_brush.0.is_null() {
+            return Err(io::Error::other(
+                "profile row stock DC brush is unavailable",
+            ));
+        }
+        if unsafe { FillRect(self.dc, rect, self.dc_brush) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn restore_fill_color(&mut self, color: COLORREF) -> io::Result<()> {
+        if unsafe { SetDCBrushColor(self.dc, color) }.0 == CLR_INVALID {
+            Err(io::Error::other(
+                "profile row brush color could not be restored",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn fill_system_rect(&mut self, rect: &RECT, selected: bool) -> io::Result<COLORREF> {
+        let (background, text) = if selected {
+            (COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT)
+        } else {
+            (COLOR_WINDOW, COLOR_WINDOWTEXT)
+        };
+        let brush = unsafe { GetSysColorBrush(background) };
+        if brush.0.is_null() || unsafe { FillRect(self.dc, rect, brush) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(COLORREF(unsafe { GetSysColor(text) }))
+        }
+    }
+
+    fn default_gui_font(&mut self) -> io::Result<HFONT> {
+        let font = unsafe { HFONT(GetStockObject(DEFAULT_GUI_FONT).0) };
+        if font.0.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(font)
+        }
+    }
+
+    fn select_font(&mut self, font: HFONT) -> io::Result<HGDIOBJ> {
+        let previous = unsafe { SelectObject(self.dc, HGDIOBJ(font.0)) };
+        if previous.0.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(previous)
+        }
+    }
+
+    fn set_transparent_background(&mut self) -> io::Result<BACKGROUND_MODE> {
+        let previous = unsafe { SetBkMode(self.dc, TRANSPARENT) };
+        if previous == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(BACKGROUND_MODE(previous as u32))
+        }
+    }
+
+    fn set_text_color(&mut self, color: COLORREF) -> io::Result<COLORREF> {
+        let previous = unsafe { SetTextColor(self.dc, color) };
+        if previous.0 == CLR_INVALID {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(previous)
+        }
+    }
+
+    fn measure_text_width(&mut self, text: &str) -> io::Result<i32> {
+        if text.is_empty() {
+            return Ok(0);
+        }
+        let text = text.encode_utf16().collect::<Vec<_>>();
+        let mut size = SIZE::default();
+        if unsafe { GetTextExtentPoint32W(self.dc, &text, &mut size) }.as_bool() {
+            Ok(size.cx.max(0))
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn draw_text(
+        &mut self,
+        _stage: ProfileRowTextStage,
+        text: &str,
+        rect: &mut RECT,
+        format: DRAW_TEXT_FORMAT,
+    ) -> io::Result<()> {
+        if text.is_empty() || rect.right <= rect.left || rect.bottom <= rect.top {
+            return Ok(());
+        }
+        let mut text = text.encode_utf16().collect::<Vec<_>>();
+        if unsafe { DrawTextW(self.dc, &mut text, rect, format) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn draw_focus(&mut self, rect: &RECT) -> io::Result<()> {
+        if unsafe { DrawFocusRect(self.dc, rect) }.as_bool() {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    fn restore_font(&mut self, font: HGDIOBJ) -> io::Result<()> {
+        if unsafe { SelectObject(self.dc, font) }.0.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn restore_background(&mut self, mode: BACKGROUND_MODE) -> io::Result<()> {
+        if unsafe { SetBkMode(self.dc, mode) } == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn restore_text_color(&mut self, color: COLORREF) -> io::Result<()> {
+        if unsafe { SetTextColor(self.dc, color) }.0 == CLR_INVALID {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn paint_profile_row_custom_fill<B: ProfileRowPaintBackend>(
+    backend: &mut B,
+    stage: ProfileRowFillStage,
+    rect: &RECT,
+    color: u32,
+) -> io::Result<()> {
+    if rect.right <= rect.left || rect.bottom <= rect.top {
+        return Ok(());
+    }
+    let previous = backend.apply_fill_color(COLORREF(color))?;
+    let fill_result = backend.fill_custom_rect(stage, rect);
+    let restore_result = backend.restore_fill_color(previous);
+    match (fill_result, restore_result) {
+        (Err(error), _) | (Ok(()), Err(error)) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
+fn restore_profile_row_text_state<B: ProfileRowPaintBackend>(
+    backend: &mut B,
+    previous_font: Option<HGDIOBJ>,
+    previous_background: Option<BACKGROUND_MODE>,
+    previous_text: Option<COLORREF>,
+) -> io::Result<()> {
+    let mut first_error = None;
+    if let Some(color) = previous_text {
+        if let Err(error) = backend.restore_text_color(color) {
+            first_error = Some(error);
+        }
+    }
+    if let Some(mode) = previous_background {
+        if let Err(error) = backend.restore_background(mode) {
+            first_error.get_or_insert(error);
+        }
+    }
+    if let Some(font) = previous_font {
+        if let Err(error) = backend.restore_font(font) {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+fn directional_profile_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
+    let mut format = DT_SINGLELINE | DT_NOPREFIX;
+    if rtl {
+        format |= DT_RTLREADING | DT_RIGHT;
+    }
+    format
+}
+
+fn rect_from_logical(rect: LogicalRect) -> RECT {
+    RECT {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_profile_row_custom<B: ProfileRowPaintBackend>(
+    backend: &mut B,
+    rect: RECT,
     profile: &UsageProfileView,
     copy: &ProfileManagerRowText,
     visuals: ProfileRowPaintResources,
     rtl: bool,
+    selected: bool,
+    focused: bool,
 ) -> io::Result<()> {
-    if item.hDC.0.is_null()
-        || item.rcItem.right <= item.rcItem.left
-        || item.rcItem.bottom <= item.rcItem.top
-    {
+    if rect.right <= rect.left || rect.bottom <= rect.top || visuals.body_font.0.is_null() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid profile row drawing target",
         ));
     }
-
-    let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
-    let focused = item.itemState.0 & ODS_FOCUS.0 != 0;
     let visual = profile_row_visual_state(profile, selected, focused);
     let surface_color = profile_row_surface_color(visuals.palette, visual.surface);
-    fill_profile_row_rect(item.hDC, &item.rcItem, surface_color)?;
+    paint_profile_row_custom_fill(backend, ProfileRowFillStage::Surface, &rect, surface_color)?;
 
     let edge_width = scale_logical(crate::windows::design::SELECTION_EDGE, visuals.dpi).max(1);
     if selected {
         let edge = if rtl {
             RECT {
-                left: item.rcItem.right - edge_width,
-                right: item.rcItem.right,
-                ..item.rcItem
+                left: rect.right - edge_width,
+                right: rect.right,
+                ..rect
             }
         } else {
             RECT {
-                left: item.rcItem.left,
-                right: item.rcItem.left + edge_width,
-                ..item.rcItem
+                left: rect.left,
+                right: rect.left + edge_width,
+                ..rect
             }
         };
-        fill_profile_row_rect(item.hDC, &edge, visuals.palette.focus.colorref)?;
+        paint_profile_row_custom_fill(
+            backend,
+            ProfileRowFillStage::SelectionEdge,
+            &edge,
+            visuals.palette.focus.colorref,
+        )?;
     }
 
     let horizontal_padding = profile_row_content_padding(visuals.dpi);
     let leading_inset = horizontal_padding + edge_width;
-    let content_left = item.rcItem.left
+    let content_left = rect.left
         + if rtl {
             horizontal_padding
         } else {
             leading_inset
         };
-    let content_right = item.rcItem.right
+    let content_right = rect.right
         - if rtl {
             leading_inset
         } else {
@@ -1555,7 +1901,7 @@ unsafe fn draw_profile_row(
     if let Some((percent, status)) = visual.progress {
         let progress_height =
             scale_logical(crate::windows::design::PROGRESS_HEIGHT, visuals.dpi).max(1);
-        let progress_bottom = item.rcItem.bottom - scale_logical(5, visuals.dpi);
+        let progress_bottom = rect.bottom - scale_logical(5, visuals.dpi);
         let progress_track = RECT {
             left: content_left,
             top: progress_bottom - progress_height,
@@ -1566,8 +1912,12 @@ unsafe fn draw_profile_row(
             visuals.palette.progress_track,
             DialogColor::opaque(surface_color),
         );
-        fill_profile_row_rect(item.hDC, &progress_track, track_color)?;
-
+        paint_profile_row_custom_fill(
+            backend,
+            ProfileRowFillStage::ProgressTrack,
+            &progress_track,
+            track_color,
+        )?;
         let track_width = (content_right - content_left).max(0);
         let fill_width = (i64::from(track_width) * i64::from(percent.min(100)) / 100) as i32;
         if fill_width > 0 {
@@ -1584,105 +1934,191 @@ unsafe fn draw_profile_row(
                     ..progress_track
                 }
             };
-            fill_profile_row_rect(item.hDC, &progress_fill, visuals.palette.status(status))?;
+            paint_profile_row_custom_fill(
+                backend,
+                ProfileRowFillStage::ProgressFill,
+                &progress_fill,
+                visuals.palette.status(status),
+            )?;
         }
     }
 
-    let previous_font = SelectObject(item.hDC, HGDIOBJ(visuals.body_font.0));
-    if previous_font.0.is_null() {
-        return Err(io::Error::last_os_error());
-    }
-    let previous_background_mode = SetBkMode(item.hDC, TRANSPARENT);
-    let previous_text_color = SetTextColor(item.hDC, COLORREF(visuals.palette.text.colorref));
+    let mut previous_font = None;
+    let mut previous_background = None;
+    let mut previous_text = None;
+    let painted = (|| -> io::Result<()> {
+        previous_font = Some(backend.select_font(visuals.body_font)?);
+        previous_background = Some(backend.set_transparent_background()?);
+        previous_text = Some(backend.set_text_color(COLORREF(visuals.palette.text.colorref))?);
 
-    let role_text = if (visual.system_marker || visual.current_marker) && !copy.markers.is_empty() {
-        format!("{}  ·  {}", copy.name, copy.markers.join("  ·  "))
-    } else {
-        copy.name.clone()
-    };
-    let mut text_format = DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX;
-    if rtl {
-        text_format = text_format | DT_RTLREADING | DT_RIGHT;
-    }
-    let mut name_rect = RECT {
-        left: content_left,
-        top: item.rcItem.top + scale_logical(5, visuals.dpi),
-        right: content_right,
-        bottom: item.rcItem.top + scale_logical(24, visuals.dpi),
-    };
-    draw_profile_row_text(item.hDC, &role_text, &mut name_rect, text_format);
+        let base_format = directional_profile_text_format(rtl);
+        let marker_text = copy.markers.join(" · ");
+        let first_line = LogicalRect::new(
+            content_left,
+            rect.top + scale_logical(5, visuals.dpi),
+            content_right,
+            rect.top + scale_logical(24, visuals.dpi),
+        );
+        let marker_width = backend.measure_text_width(&marker_text)?;
+        let first_line = profile_row_first_line_layout(first_line, marker_width, visuals.dpi, rtl);
+        let mut name_rect = rect_from_logical(first_line.name);
+        backend.draw_text(
+            ProfileRowTextStage::Name,
+            &copy.name,
+            &mut name_rect,
+            base_format | DT_END_ELLIPSIS,
+        )?;
 
-    let _ = SetTextColor(item.hDC, COLORREF(visuals.palette.secondary_text.colorref));
-    let mut summary_rect = RECT {
-        left: content_left,
-        top: item.rcItem.top + scale_logical(26, visuals.dpi),
-        right: content_right,
-        bottom: item.rcItem.top + scale_logical(45, visuals.dpi),
-    };
-    draw_profile_row_text(item.hDC, &copy.summary, &mut summary_rect, text_format);
-
-    if previous_text_color.0 != CLR_INVALID {
-        let _ = SetTextColor(item.hDC, previous_text_color);
-    }
-    if previous_background_mode != 0 {
-        let _ = SetBkMode(item.hDC, BACKGROUND_MODE(previous_background_mode as u32));
-    }
-    let _ = SelectObject(item.hDC, previous_font);
-
-    if visual.focused {
-        let focus = RECT {
-            left: item.rcItem.left + 1,
-            top: item.rcItem.top + 1,
-            right: item.rcItem.right - 1,
-            bottom: item.rcItem.bottom - 1,
+        backend.set_text_color(COLORREF(visuals.palette.secondary_text.colorref))?;
+        if let Some(marker_rect) = first_line.markers {
+            let mut marker_rect = rect_from_logical(marker_rect);
+            backend.draw_text(
+                ProfileRowTextStage::Markers,
+                &marker_text,
+                &mut marker_rect,
+                base_format,
+            )?;
+        }
+        let mut summary_rect = RECT {
+            left: content_left,
+            top: rect.top + scale_logical(26, visuals.dpi),
+            right: content_right,
+            bottom: rect.top + scale_logical(45, visuals.dpi),
         };
-        let _ = DrawFocusRect(item.hDC, &focus);
-    }
-    Ok(())
-}
-
-/// stock DC brush로 사각형을 채우고 HDC의 이전 brush 색을 복원합니다.
-///
-/// # Safety
-///
-/// `hdc`와 `rect`는 현재 paint 콜백에서 유효해야 하며 stock brush는 삭제하지 않습니다.
-unsafe fn fill_profile_row_rect(hdc: HDC, rect: &RECT, color: u32) -> io::Result<()> {
-    if rect.right <= rect.left || rect.bottom <= rect.top {
-        return Ok(());
-    }
-    let brush = HBRUSH(GetStockObject(DC_BRUSH).0);
-    if brush.0.is_null() {
-        return Err(io::Error::last_os_error());
-    }
-    let previous = SetDCBrushColor(hdc, COLORREF(color));
-    let filled = FillRect(hdc, rect, brush);
-    if previous.0 != CLR_INVALID {
-        let _ = SetDCBrushColor(hdc, previous);
-    }
-    if filled == 0 {
-        Err(io::Error::last_os_error())
-    } else {
+        backend.draw_text(
+            ProfileRowTextStage::Summary,
+            &copy.summary,
+            &mut summary_rect,
+            base_format | DT_END_ELLIPSIS,
+        )?;
+        if visual.focused {
+            backend.draw_focus(&RECT {
+                left: rect.left + 1,
+                top: rect.top + 1,
+                right: rect.right - 1,
+                bottom: rect.bottom - 1,
+            })?;
+        }
         Ok(())
-    }
+    })();
+    let restored =
+        restore_profile_row_text_state(backend, previous_font, previous_background, previous_text);
+    painted.and(restored)
 }
 
-/// 지정 사각형 안에 한 줄 owner-draw 텍스트를 그립니다.
+fn paint_profile_row_fallback<B: ProfileRowPaintBackend>(
+    backend: &mut B,
+    rect: RECT,
+    accessible_text: &str,
+    rtl: bool,
+    selected: bool,
+    focused: bool,
+) -> io::Result<()> {
+    let text_color = backend.fill_system_rect(&rect, selected)?;
+    let font = backend.default_gui_font()?;
+    let mut previous_font = None;
+    let mut previous_background = None;
+    let mut previous_text = None;
+    let painted = (|| -> io::Result<()> {
+        previous_font = Some(backend.select_font(font)?);
+        previous_background = Some(backend.set_transparent_background()?);
+        previous_text = Some(backend.set_text_color(text_color)?);
+        let mut text_rect = RECT {
+            left: rect.left + 2,
+            top: rect.top,
+            right: rect.right - 2,
+            bottom: rect.bottom,
+        };
+        backend.draw_text(
+            ProfileRowTextStage::Fallback,
+            accessible_text,
+            &mut text_rect,
+            directional_profile_text_format(rtl) | DT_END_ELLIPSIS | DT_VCENTER,
+        )?;
+        if focused {
+            backend.draw_focus(&RECT {
+                left: rect.left + 1,
+                top: rect.top + 1,
+                right: rect.right - 1,
+                bottom: rect.bottom - 1,
+            })?;
+        }
+        Ok(())
+    })();
+    let restored =
+        restore_profile_row_text_state(backend, previous_font, previous_background, previous_text);
+    painted.and(restored)
+}
+
+/// 사용자 지정 행 렌더링이 실패하면 시스템 색과 stock 글꼴의 최소 렌더링으로 복구합니다.
+///
+/// custom 경로의 brush 적용, 채우기, 텍스트, focus 또는 상태 복원 오류는 fallback으로 전달됩니다.
+/// 두 경로 중 하나가 모든 그리기와 복원을 끝낸 경우에만 `true`를 반환하므로 `WM_DRAWITEM`
+/// 호출자는 실패한 owner-draw 행을 처리했다고 잘못 보고하지 않습니다.
+#[allow(clippy::too_many_arguments)]
+fn paint_profile_row_with_fallback<B: ProfileRowPaintBackend>(
+    backend: &mut B,
+    rect: RECT,
+    profile: &UsageProfileView,
+    copy: &ProfileManagerRowText,
+    accessible_text: &str,
+    visuals: ProfileRowPaintResources,
+    rtl: bool,
+    selected: bool,
+    focused: bool,
+) -> bool {
+    paint_profile_row_custom(
+        backend, rect, profile, copy, visuals, rtl, selected, focused,
+    )
+    .or_else(|_| paint_profile_row_fallback(backend, rect, accessible_text, rtl, selected, focused))
+    .is_ok()
+}
+
+/// owner-draw 프로필 행을 현재 DPI와 팔레트에 맞춰 그리고 실패 시 stock GDI로 복구합니다.
+///
+/// `item`은 현재 `WM_DRAWITEM` 메시지가 제공한 살아 있는 listbox 항목이어야 합니다.
+/// `profile`, `copy`, `accessible_text`는 표시 전용 소유 복사본이며 `visuals`는 대화 상자
+/// 자원에서 미리 복사한 스냅샷입니다. 함수는 문자열을 파싱하지 않고 typed usage 쌍이 있을
+/// 때만 진행 표시를 그리며, custom 경로 실패 시 전체 접근성 문자열로 최소 행을 다시 그립니다.
 ///
 /// # Safety
 ///
-/// `hdc`와 `rect`는 현재 paint 콜백에서 유효해야 합니다. UTF-16 버퍼는 호출 동안 유지되며
-/// GDI가 반환된 뒤 즉시 폐기됩니다.
-unsafe fn draw_profile_row_text(
-    hdc: HDC,
-    text: &str,
-    rect: &mut RECT,
-    format: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
-) {
-    if text.is_empty() {
-        return;
+/// `item.hDC`와 `item.rcItem`은 Windows가 현재 그리기 콜백에 허용한 범위여야 합니다. 호출자는
+/// 동기 GDI 호출 전에 대화 상자 상태와 자원 객체의 모든 Rust borrow를 끝내야 합니다.
+unsafe fn draw_profile_row(
+    item: &DRAWITEMSTRUCT,
+    profile: &UsageProfileView,
+    copy: &ProfileManagerRowText,
+    accessible_text: &str,
+    visuals: ProfileRowPaintResources,
+    rtl: bool,
+) -> io::Result<()> {
+    if item.hDC.0.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid profile row drawing target",
+        ));
     }
-    let mut text = text.encode_utf16().collect::<Vec<_>>();
-    let _ = DrawTextW(hdc, &mut text, rect, format);
+    let mut backend = WindowsProfileRowPaintBackend::new(item.hDC);
+    let selected = item.itemState.0 & ODS_SELECTED.0 != 0;
+    let focused = item.itemState.0 & ODS_FOCUS.0 != 0;
+    if paint_profile_row_with_fallback(
+        &mut backend,
+        item.rcItem,
+        profile,
+        copy,
+        accessible_text,
+        visuals,
+        rtl,
+        selected,
+        focused,
+    ) {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "profile row custom and fallback painting both failed",
+        ))
+    }
 }
 
 /// 프로필 흐름이 선택한 메시지 경로를 실제 표시 경계로 전달합니다.
@@ -2488,7 +2924,7 @@ unsafe fn create_add_control_tooltip(
     state.add_tooltip_text = wide(description);
     let tool = TTTOOLINFOW {
         cbSize: std::mem::size_of::<TTTOOLINFOW>() as u32,
-        uFlags: TTF_IDISHWND | TTF_SUBCLASS,
+        uFlags: add_control_tooltip_flags(state.language),
         hwnd: dialog,
         uId: control.0 as usize,
         hinst: instance,
@@ -2508,6 +2944,19 @@ unsafe fn create_add_control_tooltip(
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// 추가 컨트롤 tooltip이 사용할 방향 및 연결 플래그를 선택합니다.
+///
+/// 아랍어는 Windows tooltip 자체가 오른쪽에서 왼쪽으로 읽도록 `TTF_RTLREADING`을 더하고,
+/// 다른 언어는 기존 HWND 식별자 및 자동 서브클래싱 플래그만 유지합니다.
+fn add_control_tooltip_flags(language: Language) -> windows::Win32::UI::Controls::TOOLTIP_FLAGS {
+    let flags = TTF_IDISHWND | TTF_SUBCLASS;
+    if language == Language::Arabic {
+        flags | TTF_RTLREADING
+    } else {
+        flags
+    }
 }
 
 /// 추가 입력창의 이름 필드와 명시적인 추가·취소 버튼을 생성합니다.
@@ -2662,7 +3111,13 @@ unsafe extern "system" fn dialog_proc(
             let _ = relayout_manager_dialog(hwnd, state, requested_width, work_area);
             LRESULT(0)
         }
-        WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
+        WM_ERASEBKGND => {
+            if erase_dialog_background(hwnd, &(*state).resources, wparam) {
+                LRESULT(1)
+            } else {
+                DefWindowProcW(hwnd, message, wparam, lparam)
+            }
+        }
         WM_DRAWITEM => handle_profile_row_draw(state, lparam),
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
             dialog_control_color(&(*state).resources, message, wparam)
@@ -2716,13 +3171,15 @@ unsafe fn handle_profile_row_draw(state: *mut DialogState, lparam: LPARAM) -> LR
         return LRESULT(0);
     }
 
-    let Some((profile, copy, visuals, rtl, list)) = (|| {
+    let Some((profile, copy, accessible_text, visuals, rtl, list)) = (|| {
         let state = &*state;
         let profile = state.controller.profile_at(item.itemID as usize)?.clone();
         let copy = profile_manager_row_text(&profile, state.language);
+        let accessible_text = profile_manager_accessible_row_text(&profile, state.language);
         Some((
             profile,
             copy,
+            accessible_text,
             state.resources.profile_row_snapshot(),
             state.language == Language::Arabic,
             state.list,
@@ -2734,8 +3191,11 @@ unsafe fn handle_profile_row_draw(state: *mut DialogState, lparam: LPARAM) -> LR
         return LRESULT(0);
     }
 
-    let _ = draw_profile_row(&item, &profile, &copy, visuals, rtl);
-    LRESULT(1)
+    if draw_profile_row(&item, &profile, &copy, &accessible_text, visuals, rtl).is_ok() {
+        LRESULT(1)
+    } else {
+        LRESULT(0)
+    }
 }
 
 /// 현재 관리자 HWND와 순수 중첩 상태가 사용자 명령을 모두 허용하는지 확인합니다.
@@ -2810,7 +3270,13 @@ unsafe extern "system" fn add_dialog_proc(
             let _ = relayout_add_dialog(hwnd, state, requested_width, work_area);
             LRESULT(0)
         }
-        WM_ERASEBKGND => erase_dialog_background(hwnd, &(*state).resources, wparam),
+        WM_ERASEBKGND => {
+            if erase_dialog_background(hwnd, &(*state).resources, wparam) {
+                LRESULT(1)
+            } else {
+                DefWindowProcW(hwnd, message, wparam, lparam)
+            }
+        }
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
             dialog_control_color(&(*state).resources, message, wparam)
         }
@@ -3321,8 +3787,11 @@ mod tests {
 
     use windows::Win32::{
         Foundation::{COLORREF, HWND, RECT},
-        Graphics::Gdi::{BACKGROUND_MODE, CLR_INVALID, HBRUSH, HFONT, HGDIOBJ},
-        UI::Controls::{CDIS_DEFAULT, CDIS_FOCUS},
+        Graphics::Gdi::{
+            BACKGROUND_MODE, CLR_INVALID, DRAW_TEXT_FORMAT, DT_END_ELLIPSIS, DT_RIGHT,
+            DT_RTLREADING, HBRUSH, HFONT, HGDIOBJ,
+        },
+        UI::Controls::{CDIS_DEFAULT, CDIS_FOCUS, TTF_IDISHWND, TTF_RTLREADING, TTF_SUBCLASS},
         UI::WindowsAndMessaging::{
             IDCANCEL, IDOK, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT,
             MESSAGEBOX_STYLE,
@@ -3338,19 +3807,22 @@ mod tests {
     };
 
     use super::{
-        add_profile_prompt_result, bound_dialog_outer_rect, composite_dialog_color,
-        confirm_profile_delete_with_presenter, confirm_profile_login_with_presenter,
-        consume_centered_message_box_request, dialog_child_setpos_rect, fill_primary_button_rect,
+        add_control_tooltip_flags, add_profile_prompt_result, bound_dialog_outer_rect,
+        composite_dialog_color, confirm_profile_delete_with_presenter,
+        confirm_profile_login_with_presenter, consume_centered_message_box_request,
+        dialog_child_setpos_rect, erase_dialog_background_with, fill_primary_button_rect,
         fit_manager_layout_to_client_height, handle_add_profile_prompt_result_with_presenter,
         handle_manager_rename_result_with_presenter, paint_primary_button,
-        primary_button_paint_state, profile_row_content_padding, profile_row_surface_color,
-        profile_row_visual_state, show_add_dialog_warning_with_presenter,
-        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
-        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
-        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
-        DialogWindowSize, DialogWorkArea, PrimaryButtonBrushBackend, PrimaryButtonCue,
-        PrimaryButtonPaintBackend, PrimaryButtonPaintStage, ProfileDialogController,
-        ProfileMessagePresenter, ProfileMessageRoute, ProfileRowSurfaceRole, UsageProfileView,
+        paint_profile_row_with_fallback, primary_button_paint_state, profile_row_content_padding,
+        profile_row_first_line_layout, profile_row_surface_color, profile_row_visual_state,
+        show_add_dialog_warning_with_presenter, show_safe_error_with_presenter,
+        update_dialog_visual_resources, AddDialogState, AddProfilePromptCommand,
+        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
+        DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome, DialogWindowSize,
+        DialogWorkArea, PrimaryButtonBrushBackend, PrimaryButtonCue, PrimaryButtonPaintBackend,
+        PrimaryButtonPaintStage, ProfileDialogController, ProfileMessagePresenter,
+        ProfileMessageRoute, ProfileRowFillStage, ProfileRowPaintBackend, ProfileRowPaintResources,
+        ProfileRowSurfaceRole, ProfileRowTextStage, UsageProfileView,
     };
 
     fn mirrored_parent_physical_rect(
@@ -3462,6 +3934,18 @@ mod tests {
         assert_ne!(focused.cue, defaulted.cue);
     }
 
+    #[test]
+    fn add_control_tooltip_uses_rtl_reading_only_for_arabic() {
+        assert_eq!(
+            add_control_tooltip_flags(Language::English),
+            TTF_IDISHWND | TTF_SUBCLASS
+        );
+        assert_eq!(
+            add_control_tooltip_flags(Language::Arabic),
+            TTF_IDISHWND | TTF_SUBCLASS | TTF_RTLREADING
+        );
+    }
+
     struct RecordingPrimaryButtonBrushBackend {
         color_results: VecDeque<COLORREF>,
         set_colors: Vec<COLORREF>,
@@ -3542,6 +4026,7 @@ mod tests {
         failure: Option<InjectedPrimaryPaintFailure>,
         acquired: usize,
         restore_attempts: usize,
+        text_colors: Vec<COLORREF>,
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3589,6 +4074,7 @@ mod tests {
 
         fn set_text_color(&mut self, _color: COLORREF) -> io::Result<COLORREF> {
             self.complete(InjectedPrimaryPaintFailure::SetTextColor)?;
+            self.text_colors.push(_color);
             self.acquired += 1;
             Ok(COLORREF(0x0011_2233))
         }
@@ -3668,12 +4154,401 @@ mod tests {
     }
 
     #[test]
+    fn primary_button_paint_uses_the_semantic_contrasting_text_token() {
+        let palette = DialogPalette::for_theme(DialogTheme::Light);
+        let state = primary_button_paint_state(Default::default(), true).unwrap();
+        let mut backend = FailingPrimaryPaintBackend::default();
+
+        assert!(paint_primary_button(
+            &mut backend,
+            RECT {
+                left: 0,
+                top: 0,
+                right: 120,
+                bottom: 40,
+            },
+            "Login",
+            font_handle(1),
+            palette,
+            false,
+            state,
+        ));
+        assert_eq!(
+            backend.text_colors,
+            [COLORREF(palette.primary_text.colorref)]
+        );
+    }
+
+    #[test]
     fn profile_row_content_padding_matches_shared_outer_padding() {
         for dpi in [96, 120, 144, 168, 192] {
             assert_eq!(
                 profile_row_content_padding(dpi),
                 crate::windows::design::scale_logical(crate::windows::design::OUTER_PADDING, dpi,)
             );
+        }
+    }
+
+    #[test]
+    fn long_profile_names_reserve_a_non_overlapping_trailing_marker_region_at_every_dpi() {
+        for dpi in [96, 120, 144, 168, 192] {
+            let width = crate::windows::design::scale_logical(190, dpi);
+            let marker_width = crate::windows::design::scale_logical(112, dpi);
+            let line = crate::windows::design::LogicalRect::new(
+                0,
+                0,
+                width,
+                crate::windows::design::scale_logical(19, dpi),
+            );
+
+            for rtl in [false, true] {
+                let layout = profile_row_first_line_layout(line, marker_width, dpi, rtl);
+                let markers = layout
+                    .markers
+                    .expect("role markers must have a reserved region");
+                assert_eq!(markers.width(), marker_width);
+                assert!(!layout.name.intersects(markers));
+                if rtl {
+                    assert_eq!(markers.left, line.left);
+                    assert_eq!(layout.name.right, line.right);
+                } else {
+                    assert_eq!(markers.right, line.right);
+                    assert_eq!(layout.name.left, line.left);
+                }
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum InjectedProfileRowPaintFailure {
+        Apply,
+        Fill,
+        Text,
+        Focus,
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    enum ProfileRowPaintEvent {
+        Apply,
+        Fill(ProfileRowFillStage),
+        RestoreFill,
+        FallbackFill,
+        DefaultFont,
+        SelectFont(usize),
+        SetBackground,
+        SetText(COLORREF),
+        Measure(String),
+        Draw(ProfileRowTextStage, String, RECT, u32),
+        Focus,
+        RestoreText,
+        RestoreBackground,
+        RestoreFont,
+    }
+
+    struct RecordingProfileRowPaintBackend {
+        failure: Option<InjectedProfileRowPaintFailure>,
+        fail_fallback: bool,
+        marker_width: i32,
+        fallback_started: bool,
+        events: Vec<ProfileRowPaintEvent>,
+    }
+
+    impl RecordingProfileRowPaintBackend {
+        fn new(failure: Option<InjectedProfileRowPaintFailure>, marker_width: i32) -> Self {
+            Self {
+                failure,
+                fail_fallback: false,
+                marker_width,
+                fallback_started: false,
+                events: Vec::new(),
+            }
+        }
+
+        fn custom_fails(&self, failure: InjectedProfileRowPaintFailure) -> bool {
+            !self.fallback_started && self.failure == Some(failure)
+        }
+    }
+
+    impl ProfileRowPaintBackend for RecordingProfileRowPaintBackend {
+        fn apply_fill_color(&mut self, _color: COLORREF) -> io::Result<COLORREF> {
+            self.events.push(ProfileRowPaintEvent::Apply);
+            if self.custom_fails(InjectedProfileRowPaintFailure::Apply) {
+                Err(io::Error::other("injected row brush apply failure"))
+            } else {
+                Ok(COLORREF(0x0011_2233))
+            }
+        }
+
+        fn fill_custom_rect(&mut self, stage: ProfileRowFillStage, _rect: &RECT) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::Fill(stage));
+            if self.custom_fails(InjectedProfileRowPaintFailure::Fill) {
+                Err(io::Error::other("injected row FillRect failure"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn restore_fill_color(&mut self, _color: COLORREF) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::RestoreFill);
+            Ok(())
+        }
+
+        fn fill_system_rect(&mut self, _rect: &RECT, _selected: bool) -> io::Result<COLORREF> {
+            self.fallback_started = true;
+            self.events.push(ProfileRowPaintEvent::FallbackFill);
+            if self.fail_fallback {
+                Err(io::Error::other("injected system brush failure"))
+            } else {
+                Ok(COLORREF(0x00aa_bbcc))
+            }
+        }
+
+        fn default_gui_font(&mut self) -> io::Result<HFONT> {
+            self.events.push(ProfileRowPaintEvent::DefaultFont);
+            Ok(font_handle(99))
+        }
+
+        fn select_font(&mut self, font: HFONT) -> io::Result<HGDIOBJ> {
+            self.events
+                .push(ProfileRowPaintEvent::SelectFont(font.0 as usize));
+            Ok(HGDIOBJ(77_usize as _))
+        }
+
+        fn set_transparent_background(&mut self) -> io::Result<BACKGROUND_MODE> {
+            self.events.push(ProfileRowPaintEvent::SetBackground);
+            Ok(BACKGROUND_MODE(1))
+        }
+
+        fn set_text_color(&mut self, color: COLORREF) -> io::Result<COLORREF> {
+            self.events.push(ProfileRowPaintEvent::SetText(color));
+            Ok(COLORREF(0x0033_2211))
+        }
+
+        fn measure_text_width(&mut self, text: &str) -> io::Result<i32> {
+            self.events
+                .push(ProfileRowPaintEvent::Measure(text.to_string()));
+            Ok(self.marker_width)
+        }
+
+        fn draw_text(
+            &mut self,
+            stage: ProfileRowTextStage,
+            text: &str,
+            rect: &mut RECT,
+            format: DRAW_TEXT_FORMAT,
+        ) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::Draw(
+                stage,
+                text.to_string(),
+                *rect,
+                format.0,
+            ));
+            if stage == ProfileRowTextStage::Name
+                && self.custom_fails(InjectedProfileRowPaintFailure::Text)
+            {
+                Err(io::Error::other("injected row DrawText failure"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn draw_focus(&mut self, _rect: &RECT) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::Focus);
+            if self.custom_fails(InjectedProfileRowPaintFailure::Focus) {
+                Err(io::Error::other("injected row focus failure"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn restore_font(&mut self, _font: HGDIOBJ) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::RestoreFont);
+            Ok(())
+        }
+
+        fn restore_background(&mut self, _mode: BACKGROUND_MODE) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::RestoreBackground);
+            Ok(())
+        }
+
+        fn restore_text_color(&mut self, _color: COLORREF) -> io::Result<()> {
+            self.events.push(ProfileRowPaintEvent::RestoreText);
+            Ok(())
+        }
+    }
+
+    fn row_paint_fixture() -> (UsageProfileView, super::ProfileManagerRowText, String) {
+        let profile = UsageProfileView {
+            id: UsageProfileId::System,
+            label: "W".repeat(super::PROFILE_LABEL_MAX_UTF16_UNITS),
+            summary: "72% remaining".to_string(),
+            selected: true,
+            login_required: false,
+            used_percent: Some(28),
+            usage_status: Some(ProfileUsageStatus::Healthy),
+            managed: false,
+        };
+        let copy = super::profile_manager_row_text(&profile, Language::English);
+        let accessible = super::profile_manager_accessible_row_text(&profile, Language::English);
+        (profile, copy, accessible)
+    }
+
+    #[test]
+    fn profile_row_custom_apply_fill_text_and_focus_failures_restore_before_stock_fallback() {
+        let (profile, copy, accessible) = row_paint_fixture();
+        for failure in [
+            InjectedProfileRowPaintFailure::Apply,
+            InjectedProfileRowPaintFailure::Fill,
+            InjectedProfileRowPaintFailure::Text,
+            InjectedProfileRowPaintFailure::Focus,
+        ] {
+            let mut backend = RecordingProfileRowPaintBackend::new(Some(failure), 84);
+
+            assert!(paint_profile_row_with_fallback(
+                &mut backend,
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 220,
+                    bottom: 56,
+                },
+                &profile,
+                &copy,
+                &accessible,
+                ProfileRowPaintResources {
+                    dpi: 96,
+                    palette: DialogPalette::for_theme(DialogTheme::Light),
+                    body_font: font_handle(1),
+                },
+                false,
+                true,
+                true,
+            ));
+
+            let fallback = backend
+                .events
+                .iter()
+                .position(|event| *event == ProfileRowPaintEvent::FallbackFill)
+                .expect("custom failure must enter stock fallback");
+            let before_fallback = &backend.events[..fallback];
+            assert_eq!(
+                backend.events.get(fallback + 1),
+                Some(&ProfileRowPaintEvent::DefaultFont)
+            );
+            assert_eq!(
+                backend.events.get(fallback + 2),
+                Some(&ProfileRowPaintEvent::SelectFont(99))
+            );
+            if matches!(
+                failure,
+                InjectedProfileRowPaintFailure::Text | InjectedProfileRowPaintFailure::Focus
+            ) {
+                assert!(before_fallback.ends_with(&[
+                    ProfileRowPaintEvent::RestoreText,
+                    ProfileRowPaintEvent::RestoreBackground,
+                    ProfileRowPaintEvent::RestoreFont,
+                ]));
+            }
+            if failure == InjectedProfileRowPaintFailure::Fill {
+                assert!(before_fallback.ends_with(&[ProfileRowPaintEvent::RestoreFill]));
+            }
+            assert!(backend.events.iter().any(|event| matches!(
+                event,
+                ProfileRowPaintEvent::Draw(ProfileRowTextStage::Fallback, text, _, _)
+                    if text == &accessible
+            )));
+        }
+    }
+
+    #[test]
+    fn profile_row_is_not_handled_when_custom_and_stock_fallback_both_fail() {
+        let (profile, copy, accessible) = row_paint_fixture();
+        let mut backend =
+            RecordingProfileRowPaintBackend::new(Some(InjectedProfileRowPaintFailure::Apply), 84);
+        backend.fail_fallback = true;
+
+        assert!(!paint_profile_row_with_fallback(
+            &mut backend,
+            RECT {
+                left: 0,
+                top: 0,
+                right: 220,
+                bottom: 56,
+            },
+            &profile,
+            &copy,
+            &accessible,
+            ProfileRowPaintResources {
+                dpi: 96,
+                palette: DialogPalette::for_theme(DialogTheme::Light),
+                body_font: font_handle(1),
+            },
+            false,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn max_length_ltr_and_arabic_rows_draw_markers_separately_without_ellipsis() {
+        let (profile, copy, accessible) = row_paint_fixture();
+        for dpi in [96, 120, 144, 168, 192] {
+            for rtl in [false, true] {
+                let marker_width = crate::windows::design::scale_logical(92, dpi);
+                let mut backend = RecordingProfileRowPaintBackend::new(None, marker_width);
+                let row_width = crate::windows::design::scale_logical(190, dpi);
+                assert!(paint_profile_row_with_fallback(
+                    &mut backend,
+                    RECT {
+                        left: 0,
+                        top: 0,
+                        right: row_width,
+                        bottom: crate::windows::design::scale_logical(56, dpi),
+                    },
+                    &profile,
+                    &copy,
+                    &accessible,
+                    ProfileRowPaintResources {
+                        dpi,
+                        palette: DialogPalette::for_theme(DialogTheme::Light),
+                        body_font: font_handle(1),
+                    },
+                    rtl,
+                    false,
+                    false,
+                ));
+
+                let draws = backend
+                    .events
+                    .iter()
+                    .filter_map(|event| match event {
+                        ProfileRowPaintEvent::Draw(stage, _, rect, format) => {
+                            Some((*stage, *rect, *format))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let (_, name, name_format) = draws
+                    .iter()
+                    .find(|(stage, _, _)| *stage == ProfileRowTextStage::Name)
+                    .copied()
+                    .unwrap();
+                let (_, markers, marker_format) = draws
+                    .iter()
+                    .find(|(stage, _, _)| *stage == ProfileRowTextStage::Markers)
+                    .copied()
+                    .unwrap();
+                assert!(name.right <= markers.left || markers.right <= name.left);
+                assert_ne!(name_format & DT_END_ELLIPSIS.0, 0);
+                assert_eq!(marker_format & DT_END_ELLIPSIS.0, 0);
+                if rtl {
+                    assert_eq!(markers.left, crate::windows::design::scale_logical(16, dpi));
+                    assert_ne!(marker_format & (DT_RTLREADING | DT_RIGHT).0, 0);
+                } else {
+                    assert!(markers.right > name.right);
+                    assert_eq!(marker_format & (DT_RTLREADING | DT_RIGHT).0, 0);
+                }
+            }
         }
     }
 
@@ -3888,6 +4763,105 @@ mod tests {
             ]
         );
         assert!(!calls.borrow().deleted.contains(&99));
+    }
+
+    #[test]
+    fn initial_null_brushes_are_unowned_and_leave_background_erase_to_windows() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls: Rc::clone(&calls),
+            fonts: VecDeque::from([11, 12]),
+            brushes: VecDeque::from([0, 0]),
+            stock_font: 99,
+        };
+        let resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+
+        assert!(resources.background_brush.0.is_null());
+        assert!(resources.surface_brush.0.is_null());
+        assert!(!resources.owns_background_brush);
+        assert!(!resources.owns_surface_brush);
+        assert!(!erase_dialog_background_with(&resources, |_| {
+            panic!("a null brush must not reach FillRect")
+        }));
+
+        drop(resources);
+        assert_eq!(calls.borrow().deleted, [11, 12]);
+        assert!(!calls.borrow().deleted.contains(&0));
+    }
+
+    #[test]
+    fn incomplete_rebuild_brushes_are_released_without_discarding_valid_active_resources() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls: Rc::clone(&calls),
+            fonts: VecDeque::from([11, 12, 31, 32]),
+            brushes: VecDeque::from([21, 22, 41, 0]),
+            stock_font: 99,
+        };
+        let mut resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+        calls.borrow_mut().events.clear();
+
+        unsafe {
+            update_dialog_visual_resources(
+                std::ptr::addr_of_mut!(resources),
+                144,
+                DialogTheme::Light,
+                |visual| {
+                    calls.borrow_mut().events.push(ResourceEvent::Applied {
+                        body_font: visual.body_font.0 as usize,
+                        heading_font: visual.heading_font.0 as usize,
+                    });
+                },
+            );
+        }
+
+        assert_eq!(resources.dpi, 96);
+        assert_eq!(resources.body_font.0 as usize, 11);
+        assert_eq!(resources.heading_font.0 as usize, 12);
+        assert_eq!(resources.background_brush.0 as usize, 21);
+        assert_eq!(resources.surface_brush.0 as usize, 22);
+        assert_eq!(
+            calls.borrow().events,
+            [
+                ResourceEvent::Created(31),
+                ResourceEvent::Created(32),
+                ResourceEvent::Created(41),
+                ResourceEvent::Created(0),
+                ResourceEvent::Deleted(31),
+                ResourceEvent::Deleted(32),
+                ResourceEvent::Deleted(41),
+                ResourceEvent::Applied {
+                    body_font: 11,
+                    heading_font: 12,
+                },
+            ]
+        );
+        assert!(!calls.borrow().deleted.contains(&0));
+
+        drop(resources);
+        let mut deleted = calls.borrow().deleted.clone();
+        deleted.sort_unstable();
+        assert_eq!(deleted, [11, 12, 21, 22, 31, 32, 41]);
+    }
+
+    #[test]
+    fn background_erase_is_handled_only_when_fill_succeeds() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls,
+            fonts: VecDeque::from([11, 12]),
+            brushes: VecDeque::from([21, 22]),
+            stock_font: 99,
+        };
+        let resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+
+        assert!(!erase_dialog_background_with(&resources, |_| {
+            Err(io::Error::other("injected FillRect failure"))
+        }));
+        assert!(erase_dialog_background_with(&resources, |_| Ok(())));
     }
 
     #[test]
