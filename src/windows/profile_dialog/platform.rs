@@ -16,8 +16,8 @@ use windows::{
         Graphics::Gdi::{
             CreateFontW, CreateSolidBrush, DeleteObject, DrawFocusRect, DrawTextW, FillRect, GetDC,
             GetMonitorInfoW, GetStockObject, GetSysColor, GetSysColorBrush, GetTextExtentPoint32W,
-            InvalidateRect, MonitorFromPoint, MonitorFromWindow, ReleaseDC, SelectObject,
-            SetBkColor, SetBkMode, SetDCBrushColor, SetTextColor, BACKGROUND_MODE,
+            InvalidateRect, MonitorFromPoint, MonitorFromWindow, ReleaseDC, RestoreDC, SaveDC,
+            SelectObject, SetBkColor, SetBkMode, SetDCBrushColor, SetTextColor, BACKGROUND_MODE,
             CLIP_DEFAULT_PRECIS, CLR_INVALID, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
             COLOR_WINDOWTEXT, DC_BRUSH, DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_PITCH,
             DRAW_TEXT_FORMAT, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING,
@@ -1583,10 +1583,13 @@ enum ProfileRowTextStage {
 
 /// owner-draw 행의 GDI 상태 변경과 stock fallback을 관찰 가능한 경계로 분리합니다.
 ///
-/// 구현은 DC brush 색 적용·복원, 텍스트 상태 적용·역순 복원, 시스템 색 brush 및 빌린
-/// `DEFAULT_GUI_FONT` 사용을 보장해야 합니다. 테스트 구현은 실제 HDC 없이 각 실패 지점을
-/// 결정적으로 주입합니다.
+/// 구현은 각 그리기 시도마다 전체 DC 상태를 저장·복원하고, DC brush 색 적용·복원, 텍스트 상태
+/// 적용·역순 복원, 시스템 색 brush 및 빌린 `DEFAULT_GUI_FONT` 사용을 보장해야 합니다. 세부 복원은
+/// 결정적 정리를 위한 최선의 시도이며, 후속 그리기의 안전 여부는 전체 체크포인트 복원 결과로만
+/// 판단합니다. 테스트 구현은 실제 HDC 없이 각 실패 지점을 결정적으로 주입합니다.
 trait ProfileRowPaintBackend {
+    fn save_dc_checkpoint(&mut self) -> io::Result<i32>;
+    fn restore_dc_checkpoint(&mut self, checkpoint: i32) -> io::Result<()>;
     fn apply_fill_color(&mut self, color: COLORREF) -> io::Result<COLORREF>;
     fn fill_custom_rect(&mut self, stage: ProfileRowFillStage, rect: &RECT) -> io::Result<()>;
     fn restore_fill_color(&mut self, color: COLORREF) -> io::Result<()>;
@@ -1628,6 +1631,27 @@ impl WindowsProfileRowPaintBackend {
 }
 
 impl ProfileRowPaintBackend for WindowsProfileRowPaintBackend {
+    fn save_dc_checkpoint(&mut self) -> io::Result<i32> {
+        let checkpoint = unsafe { SaveDC(self.dc) };
+        if checkpoint == 0 {
+            Err(io::Error::other(
+                "profile row DC checkpoint could not be saved",
+            ))
+        } else {
+            Ok(checkpoint)
+        }
+    }
+
+    fn restore_dc_checkpoint(&mut self, checkpoint: i32) -> io::Result<()> {
+        if unsafe { RestoreDC(self.dc, checkpoint) }.as_bool() {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "profile row DC checkpoint could not be restored",
+            ))
+        }
+    }
+
     fn apply_fill_color(&mut self, color: COLORREF) -> io::Result<COLORREF> {
         let previous = unsafe { SetDCBrushColor(self.dc, color) };
         if previous.0 == CLR_INVALID {
@@ -2050,11 +2074,30 @@ fn paint_profile_row_fallback<B: ProfileRowPaintBackend>(
     painted.and(restored)
 }
 
+/// 한 번의 행 그리기를 전체 HDC 체크포인트 안에서 실행하고 DC 안전 여부를 판정합니다.
+///
+/// `paint`가 실패해도 내부의 세부 복원 절차가 먼저 실행된 뒤 체크포인트를 복원합니다.
+/// `Ok(true)`는 그리기와 체크포인트 복원이 모두 성공했음을, `Ok(false)`는 그리기는 실패했지만
+/// 체크포인트 복원이 성공해 다른 경로를 안전하게 시도할 수 있음을 뜻합니다. `SaveDC` 또는
+/// `RestoreDC`에 해당하는 경계 호출이 실패하면 HDC 상태를 신뢰할 수 없으므로 오류를 반환합니다.
+fn paint_profile_row_checkpointed<B, F>(backend: &mut B, paint: F) -> io::Result<bool>
+where
+    B: ProfileRowPaintBackend,
+    F: FnOnce(&mut B) -> io::Result<()>,
+{
+    let checkpoint = backend.save_dc_checkpoint()?;
+    let painted = paint(backend);
+    backend.restore_dc_checkpoint(checkpoint)?;
+    Ok(painted.is_ok())
+}
+
 /// 사용자 지정 행 렌더링이 실패하면 시스템 색과 stock 글꼴의 최소 렌더링으로 복구합니다.
 ///
-/// custom 경로의 brush 적용, 채우기, 텍스트, focus 또는 상태 복원 오류는 fallback으로 전달됩니다.
-/// 두 경로 중 하나가 모든 그리기와 복원을 끝낸 경우에만 `true`를 반환하므로 `WM_DRAWITEM`
-/// 호출자는 실패한 owner-draw 행을 처리했다고 잘못 보고하지 않습니다.
+/// custom 경로의 brush 적용, 채우기, 텍스트, focus 또는 세부 상태 복원 오류는 전체 DC 체크포인트가
+/// 복원된 경우에만 fallback으로 전달됩니다. 각 경로는 독립된 체크포인트를 사용하며, 두 경로 중
+/// 하나가 모든 그리기와 체크포인트 복원을 끝낸 경우에만 `true`를 반환합니다. 체크포인트 저장 또는
+/// 복원이 실패하면 HDC 상태를 신뢰하지 않고 즉시 `false`를 반환하므로 `WM_DRAWITEM` 호출자는
+/// 안전하지 않은 owner-draw 행을 처리했다고 잘못 보고하지 않습니다.
 #[allow(clippy::too_many_arguments)]
 fn paint_profile_row_with_fallback<B: ProfileRowPaintBackend>(
     backend: &mut B,
@@ -2067,11 +2110,18 @@ fn paint_profile_row_with_fallback<B: ProfileRowPaintBackend>(
     selected: bool,
     focused: bool,
 ) -> bool {
-    paint_profile_row_custom(
-        backend, rect, profile, copy, visuals, rtl, selected, focused,
-    )
-    .or_else(|_| paint_profile_row_fallback(backend, rect, accessible_text, rtl, selected, focused))
-    .is_ok()
+    match paint_profile_row_checkpointed(backend, |backend| {
+        paint_profile_row_custom(
+            backend, rect, profile, copy, visuals, rtl, selected, focused,
+        )
+    }) {
+        Ok(true) => true,
+        Ok(false) => paint_profile_row_checkpointed(backend, |backend| {
+            paint_profile_row_fallback(backend, rect, accessible_text, rtl, selected, focused)
+        })
+        .is_ok_and(|painted| painted),
+        Err(_) => false,
+    }
 }
 
 /// owner-draw 프로필 행을 현재 DPI와 팔레트에 맞춰 그리고 실패 시 stock GDI로 복구합니다.
@@ -2084,7 +2134,9 @@ fn paint_profile_row_with_fallback<B: ProfileRowPaintBackend>(
 /// # Safety
 ///
 /// `item.hDC`와 `item.rcItem`은 Windows가 현재 그리기 콜백에 허용한 범위여야 합니다. 호출자는
-/// 동기 GDI 호출 전에 대화 상자 상태와 자원 객체의 모든 Rust borrow를 끝내야 합니다.
+/// 동기 GDI 호출 전에 대화 상자 상태와 자원 객체의 모든 Rust borrow를 끝내야 합니다. 각 custom 및
+/// fallback 시도는 별도의 `SaveDC`/`RestoreDC` 경계 안에서 실행되며, 경계 복원 실패 뒤에는 해당
+/// HDC로 추가 그리기를 시도하지 않습니다.
 unsafe fn draw_profile_row(
     item: &DRAWITEMSTRUCT,
     profile: &UsageProfileView,
@@ -4229,6 +4281,8 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq)]
     enum ProfileRowPaintEvent {
+        SaveCheckpoint(i32),
+        RestoreCheckpoint(i32),
         Apply,
         Fill(ProfileRowFillStage),
         RestoreFill,
@@ -4248,6 +4302,9 @@ mod tests {
     struct RecordingProfileRowPaintBackend {
         failure: Option<InjectedProfileRowPaintFailure>,
         fail_fallback: bool,
+        fail_save_checkpoint: Option<i32>,
+        fail_restore_checkpoint: Option<i32>,
+        next_checkpoint: i32,
         marker_width: i32,
         fallback_started: bool,
         events: Vec<ProfileRowPaintEvent>,
@@ -4258,6 +4315,9 @@ mod tests {
             Self {
                 failure,
                 fail_fallback: false,
+                fail_save_checkpoint: None,
+                fail_restore_checkpoint: None,
+                next_checkpoint: 1,
                 marker_width,
                 fallback_started: false,
                 events: Vec::new(),
@@ -4270,6 +4330,28 @@ mod tests {
     }
 
     impl ProfileRowPaintBackend for RecordingProfileRowPaintBackend {
+        fn save_dc_checkpoint(&mut self) -> io::Result<i32> {
+            let checkpoint = self.next_checkpoint;
+            self.events
+                .push(ProfileRowPaintEvent::SaveCheckpoint(checkpoint));
+            if self.fail_save_checkpoint == Some(checkpoint) {
+                Err(io::Error::other("injected SaveDC failure"))
+            } else {
+                self.next_checkpoint += 1;
+                Ok(checkpoint)
+            }
+        }
+
+        fn restore_dc_checkpoint(&mut self, checkpoint: i32) -> io::Result<()> {
+            self.events
+                .push(ProfileRowPaintEvent::RestoreCheckpoint(checkpoint));
+            if self.fail_restore_checkpoint == Some(checkpoint) {
+                Err(io::Error::other("injected RestoreDC failure"))
+            } else {
+                Ok(())
+            }
+        }
+
         fn apply_fill_color(&mut self, _color: COLORREF) -> io::Result<COLORREF> {
             self.events.push(ProfileRowPaintEvent::Apply);
             if self.custom_fails(InjectedProfileRowPaintFailure::Apply) {
@@ -4393,6 +4475,145 @@ mod tests {
         (profile, copy, accessible)
     }
 
+    fn paint_profile_row_fixture(backend: &mut RecordingProfileRowPaintBackend) -> bool {
+        let (profile, copy, accessible) = row_paint_fixture();
+        paint_profile_row_with_fallback(
+            backend,
+            RECT {
+                left: 0,
+                top: 0,
+                right: 220,
+                bottom: 56,
+            },
+            &profile,
+            &copy,
+            &accessible,
+            ProfileRowPaintResources {
+                dpi: 96,
+                palette: DialogPalette::for_theme(DialogTheme::Light),
+                body_font: font_handle(1),
+            },
+            false,
+            false,
+            false,
+        )
+    }
+
+    fn profile_row_checkpoint_events(
+        backend: &RecordingProfileRowPaintBackend,
+    ) -> Vec<ProfileRowPaintEvent> {
+        backend
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    ProfileRowPaintEvent::SaveCheckpoint(_)
+                        | ProfileRowPaintEvent::RestoreCheckpoint(_)
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn profile_row_dc_checkpoint_custom_failure_restores_before_fallback_success() {
+        let mut backend =
+            RecordingProfileRowPaintBackend::new(Some(InjectedProfileRowPaintFailure::Apply), 84);
+
+        assert!(paint_profile_row_fixture(&mut backend));
+        assert_eq!(
+            profile_row_checkpoint_events(&backend),
+            [
+                ProfileRowPaintEvent::SaveCheckpoint(1),
+                ProfileRowPaintEvent::RestoreCheckpoint(1),
+                ProfileRowPaintEvent::SaveCheckpoint(2),
+                ProfileRowPaintEvent::RestoreCheckpoint(2),
+            ]
+        );
+        let custom_restore = backend
+            .events
+            .iter()
+            .position(|event| *event == ProfileRowPaintEvent::RestoreCheckpoint(1))
+            .unwrap();
+        let fallback_start = backend
+            .events
+            .iter()
+            .position(|event| *event == ProfileRowPaintEvent::SaveCheckpoint(2))
+            .unwrap();
+        assert!(custom_restore < fallback_start);
+    }
+
+    #[test]
+    fn profile_row_dc_checkpoint_custom_restore_failure_prevents_fallback() {
+        let mut backend =
+            RecordingProfileRowPaintBackend::new(Some(InjectedProfileRowPaintFailure::Apply), 84);
+        backend.fail_restore_checkpoint = Some(1);
+
+        assert!(!paint_profile_row_fixture(&mut backend));
+        assert_eq!(
+            profile_row_checkpoint_events(&backend),
+            [
+                ProfileRowPaintEvent::SaveCheckpoint(1),
+                ProfileRowPaintEvent::RestoreCheckpoint(1),
+            ]
+        );
+        assert!(!backend.events.contains(&ProfileRowPaintEvent::FallbackFill));
+    }
+
+    #[test]
+    fn profile_row_dc_checkpoint_fallback_restore_failure_is_not_handled() {
+        let mut backend =
+            RecordingProfileRowPaintBackend::new(Some(InjectedProfileRowPaintFailure::Apply), 84);
+        backend.fail_restore_checkpoint = Some(2);
+
+        assert!(!paint_profile_row_fixture(&mut backend));
+        assert_eq!(
+            profile_row_checkpoint_events(&backend),
+            [
+                ProfileRowPaintEvent::SaveCheckpoint(1),
+                ProfileRowPaintEvent::RestoreCheckpoint(1),
+                ProfileRowPaintEvent::SaveCheckpoint(2),
+                ProfileRowPaintEvent::RestoreCheckpoint(2),
+            ]
+        );
+        assert!(backend.events.iter().any(|event| matches!(
+            event,
+            ProfileRowPaintEvent::Draw(ProfileRowTextStage::Fallback, _, _, _)
+        )));
+    }
+
+    #[test]
+    fn profile_row_dc_checkpoint_save_failure_is_not_handled() {
+        let mut backend = RecordingProfileRowPaintBackend::new(None, 84);
+        backend.fail_save_checkpoint = Some(1);
+
+        assert!(!paint_profile_row_fixture(&mut backend));
+        assert_eq!(
+            profile_row_checkpoint_events(&backend),
+            [ProfileRowPaintEvent::SaveCheckpoint(1)]
+        );
+        assert!(!backend.events.iter().any(|event| matches!(
+            event,
+            ProfileRowPaintEvent::Apply | ProfileRowPaintEvent::FallbackFill
+        )));
+    }
+
+    #[test]
+    fn profile_row_dc_checkpoint_success_restores_once_without_fallback() {
+        let mut backend = RecordingProfileRowPaintBackend::new(None, 84);
+
+        assert!(paint_profile_row_fixture(&mut backend));
+        assert_eq!(
+            profile_row_checkpoint_events(&backend),
+            [
+                ProfileRowPaintEvent::SaveCheckpoint(1),
+                ProfileRowPaintEvent::RestoreCheckpoint(1),
+            ]
+        );
+        assert!(!backend.events.contains(&ProfileRowPaintEvent::FallbackFill));
+    }
+
     #[test]
     fn profile_row_custom_apply_fill_text_and_focus_failures_restore_before_stock_fallback() {
         let (profile, copy, accessible) = row_paint_fixture();
@@ -4447,10 +4668,16 @@ mod tests {
                     ProfileRowPaintEvent::RestoreText,
                     ProfileRowPaintEvent::RestoreBackground,
                     ProfileRowPaintEvent::RestoreFont,
+                    ProfileRowPaintEvent::RestoreCheckpoint(1),
+                    ProfileRowPaintEvent::SaveCheckpoint(2),
                 ]));
             }
             if failure == InjectedProfileRowPaintFailure::Fill {
-                assert!(before_fallback.ends_with(&[ProfileRowPaintEvent::RestoreFill]));
+                assert!(before_fallback.ends_with(&[
+                    ProfileRowPaintEvent::RestoreFill,
+                    ProfileRowPaintEvent::RestoreCheckpoint(1),
+                    ProfileRowPaintEvent::SaveCheckpoint(2),
+                ]));
             }
             assert!(backend.events.iter().any(|event| matches!(
                 event,
