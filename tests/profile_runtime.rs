@@ -1620,6 +1620,39 @@ fn profile_labels_are_trimmed_bounded_and_case_insensitively_unique() {
 }
 
 #[test]
+fn system_profile_name_is_optional_and_can_be_renamed_without_changing_identity() {
+    let mut catalog = UsageProfileCatalog::default();
+    assert_eq!(catalog.system_label(), None);
+
+    catalog
+        .rename(UsageProfileId::System, "  Main account  ")
+        .unwrap();
+
+    assert_eq!(catalog.system_label(), Some("Main account"));
+    assert_eq!(catalog.selected(), UsageProfileId::System);
+    assert_eq!(
+        catalog.remove(UsageProfileId::System),
+        Err(ProfileValidationError::SystemProfileImmutable)
+    );
+}
+
+#[test]
+fn custom_system_name_and_managed_names_are_unique_case_insensitively() {
+    let mut catalog = UsageProfileCatalog::default();
+    catalog.rename(UsageProfileId::System, "Main").unwrap();
+    assert_eq!(
+        catalog.add("main"),
+        Err(ProfileValidationError::DuplicateLabel)
+    );
+
+    catalog.add("Work").unwrap();
+    assert_eq!(
+        catalog.rename(UsageProfileId::System, "WORK"),
+        Err(ProfileValidationError::DuplicateLabel)
+    );
+}
+
+#[test]
 fn profile_labels_allow_embedded_periods_but_reject_dot_components() {
     assert_eq!(normalize_profile_label("Work 2.0").unwrap(), "Work 2.0");
     assert_eq!(
@@ -1657,7 +1690,7 @@ fn catalog_rejects_an_eighth_managed_profile() {
 }
 
 #[test]
-fn catalog_maintains_selection_and_rejects_system_mutations() {
+fn catalog_maintains_selection_and_rejects_system_deletion() {
     let mut catalog = UsageProfileCatalog::default();
     let profile_id = catalog.add("Work").unwrap().id();
 
@@ -1667,10 +1700,6 @@ fn catalog_maintains_selection_and_rejects_system_mutations() {
 
     catalog.remove(profile_id).unwrap();
     assert_eq!(catalog.selected(), UsageProfileId::System);
-    assert_eq!(
-        catalog.rename(UsageProfileId::System, "Changed"),
-        Err(ProfileValidationError::SystemProfileImmutable)
-    );
     assert_eq!(
         catalog.remove(UsageProfileId::System),
         Err(ProfileValidationError::SystemProfileImmutable)
@@ -1709,5 +1738,26 @@ fn catalog_validation_rejects_noncanonical_labels_and_wrapped_sequences() {
     assert_eq!(
         wrapped_sequence.validate(),
         Err(ProfileValidationError::InvalidId)
+    );
+}
+
+#[test]
+fn catalog_validation_rejects_invalid_or_duplicate_system_labels() {
+    let noncanonical: UsageProfileCatalog = serde_json::from_str(
+        r#"{"system_label":" Work ","managed":[],"selected":"system","next_sequence":1}"#,
+    )
+    .unwrap();
+    let duplicate: UsageProfileCatalog = serde_json::from_str(
+        r#"{"system_label":"WORK","managed":[{"sequence":1,"label":"Work"}],"selected":"system","next_sequence":2}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        noncanonical.validate(),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+    assert_eq!(
+        duplicate.validate(),
+        Err(ProfileValidationError::DuplicateLabel)
     );
 }

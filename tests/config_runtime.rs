@@ -55,6 +55,49 @@ fn schema_v1_migrates_to_system_profile_and_is_persisted_as_v2() {
 }
 
 #[test]
+fn system_profile_label_defaults_for_v2_and_round_trips() {
+    let root = test_root("system-profile-label");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("settings.json"),
+        br#"{
+  "schema_version": 2,
+  "refresh_interval_minutes": 5,
+  "widget_visible": true,
+  "taskbar_offset": 0,
+  "taskbar_display_mode": "all",
+  "start_with_windows": false,
+  "startup_view": "widget",
+  "auto_auth_refresh": true,
+  "language": "auto",
+  "last_update_check_unix": null,
+  "show_remaining_percent": false,
+  "usage_profiles": {
+    "managed": [],
+    "selected": "system",
+    "next_sequence": 1
+  }
+}"#,
+    )
+    .unwrap();
+    let store = SettingsStore::for_root(&root);
+    let mut settings = store.load().unwrap();
+
+    assert_eq!(settings.usage_profiles.system_label(), None);
+    settings
+        .usage_profiles
+        .rename(UsageProfileId::System, "Main")
+        .unwrap();
+    store.save(&settings).unwrap();
+
+    assert_eq!(
+        store.load().unwrap().usage_profiles.system_label(),
+        Some("Main")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn invalid_usage_profile_catalogs_are_backed_up_and_reset() {
     let cases = [
         (

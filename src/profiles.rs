@@ -42,6 +42,8 @@ impl ManagedUsageProfile {
 /// 시스템 프로필과 관리 프로필의 목록 및 현재 선택 상태입니다.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct UsageProfileCatalog {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    system_label: Option<String>,
     managed: Vec<ManagedUsageProfile>,
     selected: UsageProfileId,
     next_sequence: u32,
@@ -50,6 +52,7 @@ pub struct UsageProfileCatalog {
 impl Default for UsageProfileCatalog {
     fn default() -> Self {
         Self {
+            system_label: None,
             managed: Vec::new(),
             selected: UsageProfileId::System,
             next_sequence: 1,
@@ -69,6 +72,12 @@ impl UsageProfileCatalog {
             return Err(ProfileValidationError::TooManyProfiles);
         }
 
+        if let Some(system_label) = &self.system_label {
+            if normalize_profile_label(system_label)? != *system_label {
+                return Err(ProfileValidationError::InvalidLabel);
+            }
+        }
+
         for (index, profile) in self.managed.iter().enumerate() {
             if profile.sequence == 0 || profile.sequence >= self.next_sequence {
                 return Err(ProfileValidationError::InvalidId);
@@ -79,6 +88,8 @@ impl UsageProfileCatalog {
             if self.managed[..index].iter().any(|other| {
                 other.label.to_lowercase() == profile.label.to_lowercase()
                     || other.sequence == profile.sequence
+            }) || self.system_label.as_deref().is_some_and(|system_label| {
+                system_label.to_lowercase() == profile.label.to_lowercase()
             }) {
                 return Err(ProfileValidationError::DuplicateLabel);
             }
@@ -115,22 +126,26 @@ impl UsageProfileCatalog {
         Ok(profile)
     }
 
-    /// 지정한 관리 프로필의 표시 이름을 변경합니다.
+    /// 지정한 사용량 프로필의 표시 이름을 변경합니다.
     ///
-    /// 시스템 프로필은 변경할 수 없고, 대소문자를 구분하지 않는 중복 이름은 거부합니다.
+    /// 시스템 프로필의 이름은 선택 상태나 실행 환경을 바꾸지 않고 저장합니다. 대소문자를 구분하지
+    /// 않는 중복 이름과 유효하지 않은 이름은 거부합니다.
     pub fn rename(
         &mut self,
         id: UsageProfileId,
         label: &str,
     ) -> Result<(), ProfileValidationError> {
-        let UsageProfileId::Managed(sequence) = id else {
-            return Err(ProfileValidationError::SystemProfileImmutable);
-        };
-        let index = self
-            .index_of(sequence)
-            .ok_or(ProfileValidationError::InvalidId)?;
-        let label = self.validate_new_label(label, Some(sequence))?;
-        self.managed[index].label = label;
+        match id {
+            UsageProfileId::System => {
+                self.system_label = Some(self.validate_new_label(label, Some(id))?);
+            }
+            UsageProfileId::Managed(sequence) => {
+                let index = self
+                    .index_of(sequence)
+                    .ok_or(ProfileValidationError::InvalidId)?;
+                self.managed[index].label = self.validate_new_label(label, Some(id))?;
+            }
+        }
         Ok(())
     }
 
@@ -167,6 +182,14 @@ impl UsageProfileCatalog {
         &self.managed
     }
 
+    /// 사용자가 지정한 시스템 프로필 표시 이름을 반환합니다.
+    ///
+    /// 이름이 없는 기존 설정과 기본 카탈로그에서는 `None`을 반환합니다. 이 경우 호출자는
+    /// 지역화된 기본 이름을 표시해야 합니다.
+    pub fn system_label(&self) -> Option<&str> {
+        self.system_label.as_deref()
+    }
+
     /// 현재 사용량 표시 대상으로 선택된 프로필을 반환합니다.
     pub fn selected(&self) -> UsageProfileId {
         self.selected
@@ -195,13 +218,19 @@ impl UsageProfileCatalog {
     fn validate_new_label(
         &self,
         label: &str,
-        current_sequence: Option<u32>,
+        current: Option<UsageProfileId>,
     ) -> Result<String, ProfileValidationError> {
         let normalized = normalize_profile_label(label)?;
-        if self.managed.iter().any(|profile| {
-            Some(profile.sequence) != current_sequence
-                && profile.label.to_lowercase() == normalized.to_lowercase()
-        }) {
+        let normalized_key = normalized.to_lowercase();
+        let conflicts_with_system = current != Some(UsageProfileId::System)
+            && self
+                .system_label
+                .as_deref()
+                .is_some_and(|system_label| system_label.to_lowercase() == normalized_key);
+        let conflicts_with_managed = self.managed.iter().any(|profile| {
+            current != Some(profile.id()) && profile.label.to_lowercase() == normalized_key
+        });
+        if conflicts_with_system || conflicts_with_managed {
             return Err(ProfileValidationError::DuplicateLabel);
         }
         Ok(normalized)
@@ -219,7 +248,7 @@ pub enum ProfileValidationError {
     TooManyProfiles,
     /// 존재하지 않거나 안전하지 않은 관리 프로필 식별자입니다.
     InvalidId,
-    /// 변경할 수 없는 시스템 프로필을 수정 또는 삭제하려 했습니다.
+    /// 삭제할 수 없는 시스템 프로필을 삭제하려 했습니다.
     SystemProfileImmutable,
 }
 
