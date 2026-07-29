@@ -41,6 +41,35 @@ mod tests {
     }
 
     #[test]
+    fn manager_layout_keeps_an_ordinary_requested_client_width() {
+        let layout =
+            profile_manager_layout(DialogLayoutInput::new(620, 96, false, [74, 70, 82, 62]));
+
+        assert_eq!(layout.client.width(), 620);
+        assert_eq!(layout.content.width(), 588);
+    }
+
+    #[test]
+    fn add_layout_keeps_an_ordinary_requested_client_width() {
+        let layout = add_profile_layout(DialogLayoutInput::new(620, 96, false, [74, 70, 82, 62]));
+
+        assert_eq!(layout.client.width(), 620);
+        assert_eq!(layout.content.width(), 588);
+    }
+
+    #[test]
+    fn manager_layout_greedily_packs_trailing_buttons_before_expanding() {
+        let layout =
+            profile_manager_layout(DialogLayoutInput::new(420, 96, false, [350, 100, 100, 100]));
+
+        assert_eq!(layout.client.width(), 420);
+        assert_eq!(layout.action_rows, 2);
+        assert_eq!(layout.action_buttons[1].top, layout.action_buttons[2].top);
+        assert_eq!(layout.action_buttons[2].top, layout.action_buttons[3].top);
+        assert_ne!(layout.action_buttons[0].top, layout.action_buttons[1].top);
+    }
+
+    #[test]
     fn arabic_layout_mirrors_selection_edge_and_action_alignment() {
         let ltr = profile_manager_layout(DialogLayoutInput::new(620, 96, false, [74, 70, 82, 62]));
         let rtl = profile_manager_layout(DialogLayoutInput::new(620, 96, true, [74, 70, 82, 62]));
@@ -318,12 +347,12 @@ impl LogicalRect {
 
 /// 순수 대화 상자 레이아웃 계산에 필요한 입력값입니다.
 ///
-/// `client_width`는 96 DPI 기준 논리 폭이고, `action_text_widths`는 현재 DPI와 글꼴로
-/// 측정한 네 관리자 버튼의 문자열 폭입니다. `rtl`은 아랍어처럼 오른쪽에서 왼쪽으로
-/// 배치해야 하는 로캘을 호출자가 명시하는 값입니다.
+/// `client_width`는 외곽 여백을 포함한 96 DPI 기준 전체 논리 클라이언트 폭이고,
+/// `action_text_widths`는 현재 DPI와 글꼴로 측정한 네 관리자 버튼의 문자열 폭입니다.
+/// `rtl`은 아랍어처럼 오른쪽에서 왼쪽으로 배치해야 하는 로캘을 호출자가 명시하는 값입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DialogLayoutInput {
-    /// 요청한 대화 상자 클라이언트 논리 폭입니다.
+    /// 외곽 여백을 포함한 요청 대화 상자 클라이언트 논리 폭입니다.
     pub client_width: i32,
     /// 현재 창 DPI입니다.
     pub dpi: u32,
@@ -337,7 +366,7 @@ impl DialogLayoutInput {
     /// 측정된 관리자 버튼 폭과 방향을 포함한 레이아웃 입력을 만듭니다.
     ///
     /// 음수 폭은 허용하지 않으므로 0으로 보정합니다. 반환 레이아웃은 최소 버튼 폭과 최대
-    /// 두 액션 행을 보장하기 위해 요청 폭보다 넓어질 수 있습니다.
+    /// 두 액션 행을 보장하기 위해 필요한 경우에만 요청 폭보다 넓어질 수 있습니다.
     pub const fn new(client_width: i32, dpi: u32, rtl: bool, action_text_widths: [i32; 4]) -> Self {
         Self {
             client_width: non_negative(client_width),
@@ -432,9 +461,8 @@ pub fn profile_manager_layout(input: DialogLayoutInput) -> ProfileManagerLayout 
         .action_text_widths
         .map(|width| button_width(width, input.dpi));
     let single_row_width = widths.iter().sum::<i32>() + gap_8 * 3;
-    let two_row_width = (widths[0] + gap_8 + widths[1]).max(widths[2] + gap_8 + widths[3]);
-    let requested_content_width = scale(input.client_width);
-    let content_width = requested_content_width.max(two_row_width);
+    let requested_content_width = (scale(input.client_width) - padding * 2).max(0);
+    let content_width = requested_content_width.max(minimum_two_row_width(widths, gap_8));
     let action_rows = if single_row_width <= content_width {
         1
     } else {
@@ -528,7 +556,8 @@ pub fn add_profile_layout(input: DialogLayoutInput) -> AddProfileLayout {
         button_width(input.action_text_widths[0], input.dpi),
         button_width(input.action_text_widths[1], input.dpi),
     ];
-    let content_width = scale(input.client_width).max(widths[0].max(widths[1]));
+    let requested_content_width = (scale(input.client_width) - padding * 2).max(0);
+    let content_width = requested_content_width.max(widths[0].max(widths[1]));
     let action_rows = if widths[0] + gap_8 + widths[1] <= content_width {
         1
     } else {
@@ -587,20 +616,71 @@ fn manager_action_buttons(
     rows: u8,
     rtl: bool,
 ) -> [LogicalRect; 4] {
-    if rows == 1 {
-        place_row(content, top, height, gap, widths, rtl)
+    let mut buttons = [LogicalRect::default(); 4];
+    let mut row = i32::from(rows) - 1;
+    let mut cursor = trailing_edge(content, rtl);
+    let mut buttons_in_row = 0;
+
+    for offset in 0..widths.len() {
+        let index = if rtl {
+            offset
+        } else {
+            widths.len() - 1 - offset
+        };
+        let width = widths[index];
+        if buttons_in_row > 0 && available_width(cursor, content, rtl) < gap + width {
+            row -= 1;
+            cursor = trailing_edge(content, rtl);
+            buttons_in_row = 0;
+        }
+
+        if buttons_in_row > 0 {
+            cursor = if rtl { cursor + gap } else { cursor - gap };
+        }
+        let button_top = top + row * (height + gap);
+        buttons[index] = if rtl {
+            LogicalRect::new(cursor, button_top, cursor + width, button_top + height)
+        } else {
+            LogicalRect::new(cursor - width, button_top, cursor, button_top + height)
+        };
+        cursor = if rtl {
+            buttons[index].right
+        } else {
+            buttons[index].left
+        };
+        buttons_in_row += 1;
+    }
+
+    buttons
+}
+
+fn minimum_two_row_width(widths: [i32; 4], gap: i32) -> i32 {
+    let mut minimum = i32::MAX;
+    for split in 1..widths.len() {
+        let first = row_width(&widths[..split], gap);
+        let second = row_width(&widths[split..], gap);
+        minimum = minimum.min(first.max(second));
+    }
+    minimum
+}
+
+fn row_width(widths: &[i32], gap: i32) -> i32 {
+    widths.iter().sum::<i32>() + gap * (widths.len() as i32 - 1)
+}
+
+fn trailing_edge(content: LogicalRect, rtl: bool) -> i32 {
+    if rtl {
+        content.left
     } else {
-        let first = place_pair(content, top, height, gap, widths[0], widths[1], rtl);
-        let second = place_pair(
-            content,
-            top + height + gap,
-            height,
-            gap,
-            widths[2],
-            widths[3],
-            rtl,
-        );
-        [first[0], first[1], second[0], second[1]]
+        content.right
+    }
+}
+
+fn available_width(cursor: i32, content: LogicalRect, rtl: bool) -> i32 {
+    if rtl {
+        content.right - cursor
+    } else {
+        cursor - content.left
     }
 }
 
@@ -634,39 +714,6 @@ fn add_action_buttons(
                 content.right,
                 top + height * 2 + gap,
             ),
-        ]
-    }
-}
-
-fn place_row(
-    content: LogicalRect,
-    top: i32,
-    height: i32,
-    gap: i32,
-    widths: [i32; 4],
-    rtl: bool,
-) -> [LogicalRect; 4] {
-    if rtl {
-        let first = content.left;
-        let second = first + widths[0] + gap;
-        let third = second + widths[1] + gap;
-        let fourth = third + widths[2] + gap;
-        [
-            LogicalRect::new(first, top, first + widths[0], top + height),
-            LogicalRect::new(second, top, second + widths[1], top + height),
-            LogicalRect::new(third, top, third + widths[2], top + height),
-            LogicalRect::new(fourth, top, fourth + widths[3], top + height),
-        ]
-    } else {
-        let fourth = content.right - widths[3];
-        let third = fourth - gap - widths[2];
-        let second = third - gap - widths[1];
-        let first = second - gap - widths[0];
-        [
-            LogicalRect::new(first, top, first + widths[0], top + height),
-            LogicalRect::new(second, top, second + widths[1], top + height),
-            LogicalRect::new(third, top, third + widths[2], top + height),
-            LogicalRect::new(fourth, top, fourth + widths[3], top + height),
         ]
     }
 }
