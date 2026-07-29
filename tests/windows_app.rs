@@ -14,9 +14,10 @@ use codex_usage_monitor::{
         },
         profile_dialog::{
             available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
-            profile_login_confirmation, validated_label, ModalCleanupAction, ModalDialogLifecycle,
-            ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
-            ProfileDialogKeyboardResult, PROFILE_LABEL_MAX_UTF16_UNITS,
+            profile_login_confirmation, profile_manager_row_label, validated_label,
+            ModalCleanupAction, ModalDialogLifecycle, ProfileDialogCommand,
+            ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
+            PROFILE_LABEL_MAX_UTF16_UNITS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -492,7 +493,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
     );
     assert_eq!(
         submenu_command_ids(submenus[0]),
-        [1000, MENU_ADD_USAGE_PROFILE, MENU_MANAGE_USAGE_PROFILES]
+        [1000, MENU_MANAGE_USAGE_PROFILES]
     );
     assert_eq!(
         submenu_command_ids(submenus[1]),
@@ -542,11 +543,6 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
         commands,
         vec![
             (1000, "Default Codex account    Displayed".to_string(), true),
-            (
-                MENU_ADD_USAGE_PROFILE,
-                "Add usage profile".to_string(),
-                false
-            ),
             (
                 MENU_MANAGE_USAGE_PROFILES,
                 "Manage usage profiles".to_string(),
@@ -697,13 +693,46 @@ fn popup_profile_action_keeps_the_profile_identity() {
         model.action(1001),
         Some(UiAction::SelectUsageProfile(UsageProfileId::Managed(1)))
     );
-    assert_eq!(
-        model.action(MENU_ADD_USAGE_PROFILE),
-        Some(UiAction::OpenAddUsageProfile)
-    );
+    assert_eq!(model.action(MENU_ADD_USAGE_PROFILE), None);
     assert_eq!(
         model.action(MENU_MANAGE_USAGE_PROFILES),
         Some(UiAction::OpenManageUsageProfiles)
+    );
+}
+
+#[test]
+fn usage_profile_submenu_offers_manage_but_not_duplicate_add() {
+    let model = tray_menu_model(&tray_settings_with_profiles());
+    let submenu = usage_profile_submenu(&model);
+    let ids = submenu_command_ids(submenu);
+
+    assert!(ids.contains(&MENU_MANAGE_USAGE_PROFILES));
+    assert!(!ids.contains(&MENU_ADD_USAGE_PROFILE));
+    assert_eq!(model.action(MENU_ADD_USAGE_PROFILE), None);
+}
+
+#[test]
+fn manager_marks_only_the_custom_system_profile_as_default() {
+    let system = UsageProfileView {
+        id: UsageProfileId::System,
+        label: "Main".to_owned(),
+        summary: String::new(),
+        selected: true,
+        login_required: false,
+        managed: false,
+    };
+    assert_eq!(
+        profile_manager_row_label(&system, Language::English),
+        "Main (Default Codex account)"
+    );
+
+    let managed = UsageProfileView {
+        id: UsageProfileId::Managed(1),
+        ..system.clone()
+    };
+    assert_eq!(
+        profile_manager_row_label(&managed, Language::English),
+        "Main"
     );
 }
 
@@ -801,6 +830,19 @@ fn submenu_command_ids(submenu: &codex_usage_monitor::windows::tray::TraySubmenu
             _ => panic!("settings submenus must contain commands only"),
         })
         .collect()
+}
+
+fn usage_profile_submenu(
+    model: &codex_usage_monitor::windows::tray::TrayMenuModel,
+) -> &codex_usage_monitor::windows::tray::TraySubmenu {
+    model
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            TrayMenuEntry::Submenu(submenu) if submenu.label == "Usage profiles" => Some(submenu),
+            _ => None,
+        })
+        .expect("usage profile submenu is present")
 }
 
 #[test]

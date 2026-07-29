@@ -291,6 +291,22 @@ pub fn available_profile_actions(profile: &UsageProfileView) -> Vec<ProfileDialo
     actions
 }
 
+/// 프로필 관리자 목록에 표시할 프로필 이름과 시스템 기본 계정 표식을 만듭니다.
+///
+/// 시스템 프로필에만 현재 언어의 기본 계정 표식을 덧붙이며, 사용자 지정 이름이 기본 이름과 같으면
+/// 중복 표기를 피합니다. 입력 프로필을 변경하거나 I/O를 수행하지 않습니다.
+pub fn profile_manager_row_label(profile: &UsageProfileView, language: Language) -> String {
+    if profile.id != UsageProfileId::System {
+        return profile.label.clone();
+    }
+    let marker = localized_text(LocalizationKey::UsageProfileSystem, language);
+    if profile.label == marker {
+        profile.label.clone()
+    } else {
+        format!("{} ({marker})", profile.label)
+    }
+}
+
 /// 대화상자 입력을 공용 프로필 이름 규칙으로 정규화하고 검증합니다.
 ///
 /// `value`의 앞뒤 공백은 제거되며, 비어 있거나 제한을 넘거나 경로 문자를 포함하면

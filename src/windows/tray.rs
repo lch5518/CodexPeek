@@ -9,9 +9,9 @@ pub(crate) use platform::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK};
 use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode};
 
 use super::{
-    menu_action, UiAction, UiSettings, MENU_ADD_USAGE_PROFILE, MENU_AUTH_REFRESH, MENU_AUTOSTART,
-    MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
-    MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
+    menu_action, UiAction, UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH,
+    MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15,
+    MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
     MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
     MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
     MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
@@ -102,12 +102,6 @@ pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
         );
         actions.push((id, UiAction::SelectUsageProfile(profile.id)));
     }
-    push_command(
-        &mut profile_entries,
-        MENU_ADD_USAGE_PROFILE,
-        crate::localized_text(crate::LocalizationKey::MenuAddUsageProfile, language),
-        false,
-    );
     push_command(
         &mut profile_entries,
         MENU_MANAGE_USAGE_PROFILES,

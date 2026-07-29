@@ -1133,7 +1133,7 @@ fn usage_profile_views(
     };
     let mut profiles = vec![UsageProfileView {
         id: UsageProfileId::System,
-        label: localized_text(LocalizationKey::UsageProfileSystem, language).to_string(),
+        label: system_profile_display_label(settings, language),
         summary: summary(UsageProfileId::System),
         selected: selected == UsageProfileId::System,
         login_required: profile_state.login_required(UsageProfileId::System)
@@ -1169,19 +1169,27 @@ fn usage_profile_views(
 
 fn selected_usage_profile_label(settings: &Settings, language: Language) -> String {
     match settings.usage_profiles.selected() {
-        UsageProfileId::System => {
-            localized_text(LocalizationKey::UsageProfileSystem, language).to_string()
-        }
+        UsageProfileId::System => system_profile_display_label(settings, language),
         selected => settings
             .usage_profiles
             .managed()
             .iter()
             .find(|profile| profile.id() == selected)
             .map(|profile| profile.label().to_string())
-            .unwrap_or_else(|| {
-                localized_text(LocalizationKey::UsageProfileSystem, language).to_string()
-            }),
+            .unwrap_or_else(|| system_profile_display_label(settings, language)),
     }
+}
+
+/// 시스템 프로필의 사용자 지정 이름 또는 현재 언어의 기본 표시 이름을 반환합니다.
+///
+/// `settings`의 선택 상태나 프로필 실행 문맥은 변경하지 않으며, 사용자 지정 이름이 없을 때만
+/// 지역화된 기본 이름을 사용합니다.
+fn system_profile_display_label(settings: &Settings, language: Language) -> String {
+    settings
+        .usage_profiles
+        .system_label()
+        .map(str::to_owned)
+        .unwrap_or_else(|| localized_text(LocalizationKey::UsageProfileSystem, language).to_owned())
 }
 
 fn update_status_key(status: UpdatePresentationStatus) -> Option<LocalizationKey> {
@@ -2062,8 +2070,8 @@ fn safe_path_text(path: &std::path::Path) -> String {
 mod tests {
     use super::{
         data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail, proxy_presence,
-        row_view, row_view_with_reset_time, status_with_update, taskbar_copy, taskbar_risk_text,
-        DiagnosticSummary,
+        row_view, row_view_with_reset_time, selected_usage_profile_label, status_with_update,
+        taskbar_copy, taskbar_risk_text, DiagnosticSummary,
     };
     use crate::windows::WidgetDataState;
     use crate::{
@@ -2120,6 +2128,20 @@ mod tests {
             data_state_for_snapshot(&PollSnapshot::default(), false),
             WidgetDataState::Loading
         );
+    }
+
+    #[test]
+    fn custom_system_profile_name_is_used_outside_manager() {
+        let mut settings = Settings::default();
+        settings
+            .usage_profiles
+            .rename(UsageProfileId::System, "Main")
+            .unwrap();
+
+        let floating_label = selected_usage_profile_label(&settings, Language::English);
+
+        assert_eq!(floating_label, "Main");
+        assert!(!floating_label.contains("Default Codex account"));
     }
 
     #[test]
