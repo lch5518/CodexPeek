@@ -47,6 +47,17 @@ filho `app-server` do perfil gerenciado recebe seu `CODEX_HOME` e a configuraç�
 armazenamento de credenciais em arquivo. Os diagnósticos incluem apenas contagens
 agregadas, sem rótulos, caminhos ou dados de conta.
 
+### Gerenciador de perfis
+
+Você pode renomear o perfil do sistema, mas não pode sair dele nem excluí-lo. Um nome
+personalizado do perfil do sistema altera apenas o que o CodexPeek exibe; não é uma identidade
+da conta. Somente o gerenciador de perfis o marca como a conta padrão.
+
+O submenu da bandeja **Perfis de uso** permite selecionar um perfil e abrir **Gerenciar perfis
+de uso**; ele não tem comando para adicionar. Adicione perfis somente com `+`, abaixo da lista
+do gerenciador. Não há botão inferior Fechar ou Adicionar: use o `X` da janela ou Esc para
+fechar o gerenciador.
+
 ## Requisitos
 
 - Windows 10 ou Windows 11, x64.

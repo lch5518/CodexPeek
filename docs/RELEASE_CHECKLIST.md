@@ -122,6 +122,18 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 
 ### Usage-profile dialog and sign-in matrix
 
+- [ ] Verify the tray profile submenu contains profile selection and exactly one Manage command,
+      with no add command
+- [ ] Verify `+` is below the manager list, is disabled at eight profiles and while a mutation is
+      pending, and has localized tooltip and accessibility text
+- [ ] Verify the add prompt: Enter/Add submits, Cancel/Escape/window `X` cancel, and invalid
+      names remain rejected with a localized error
+- [ ] Verify the manager has no bottom Close button and its window `X` and Escape close it
+- [ ] Rename the system profile, restart, and verify the tray and widget show only the custom
+      name while only the manager shows the default-account marker
+- [ ] Verify system-profile logout and deletion remain unavailable
+- [ ] Verify keyboard tab order, all 12 languages with long text, RTL layout, and 100/125/150/200%
+      DPI scaling
 - [ ] Open every profile dialog from the tray and complete all actions using keyboard only;
       verify focus order, Enter/Escape behavior, access keys, and focus restoration
 - [ ] Verify English and an RTL language (Arabic), including mirrored layout, label clipping,

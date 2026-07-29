@@ -47,6 +47,17 @@ Hanya proses anak `app-server` untuk profil terkelola yang menerima `CODEX_HOME`
 pengaturan penyimpanan kredensial file miliknya. Diagnostik hanya mencatat jumlah agregat,
 tanpa label, jalur, atau data akun.
 
+### Pengelola profil
+
+Anda dapat mengganti nama profil sistem, tetapi tidak dapat keluar atau menghapusnya. Nama
+khusus profil sistem hanya mengubah tampilan CodexPeek; nama tersebut bukan identitas akun.
+Hanya pengelola profil yang menandainya sebagai akun default.
+
+Submenu baki **Profil penggunaan** memungkinkan Anda memilih profil dan membuka **Kelola
+profil penggunaan**; tidak ada perintah tambah di sana. Tambahkan profil hanya dengan `+` di
+bawah daftar pengelola. Tidak ada tombol Tutup atau Tambah di bagian bawah: gunakan `X` jendela
+atau Esc untuk menutup pengelola.
+
 ## Persyaratan
 
 - Windows 10 atau Windows 11, x64.

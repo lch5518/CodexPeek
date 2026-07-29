@@ -47,6 +47,17 @@ yönetilen profilin `app-server` alt süreci o profile ait `CODEX_HOME` ve dosya
 deposu ayarını alır. Tanılama etiket, yol veya hesap verisi yerine yalnızca toplu sayıları
 kaydeder.
 
+### Profil yöneticisi
+
+Sistem profilini yeniden adlandırabilirsiniz, ancak oturumunu kapatamaz veya silemezsiniz.
+Sistem profiline verilen özel ad yalnızca CodexPeek'in gösterdiği adı değiştirir; bir hesap
+kimliği değildir. Bu profili varsayılan hesap olarak yalnızca profil yöneticisi işaretler.
+
+Tepsideki **Kullanım profilleri** alt menüsü profil seçmenizi ve **Kullanım profillerini
+yönet** seçeneğini açmanızı sağlar; ekleme komutu içermez. Profilleri yalnızca yönetici
+listesinin altındaki `+` ile ekleyin. Altta Kapat veya Ekle düğmesi yoktur: yöneticiyi
+kapatmak için pencerenin `X` düğmesini veya Esc'yi kullanın.
+
 ## Gereksinimler
 
 - Windows 10 veya Windows 11, x64.

@@ -45,6 +45,16 @@ nào. Chỉ tiến trình con `app-server` của hồ sơ được quản lý nh
 kho thông tin xác thực dạng tệp của hồ sơ đó. Chẩn đoán chỉ ghi số lượng tổng hợp, không
 ghi nhãn, đường dẫn hay dữ liệu tài khoản.
 
+### Trình quản lý hồ sơ
+
+Bạn có thể đổi tên hồ sơ hệ thống, nhưng không thể đăng xuất hoặc xóa hồ sơ đó. Tên tùy chỉnh
+của hồ sơ hệ thống chỉ thay đổi nội dung CodexPeek hiển thị; đó không phải là danh tính tài
+khoản. Chỉ trình quản lý hồ sơ đánh dấu hồ sơ này là tài khoản mặc định.
+
+Trình đơn con **Hồ sơ sử dụng** trong khay cho phép chọn hồ sơ và mở **Quản lý hồ sơ sử dụng**;
+không có lệnh thêm ở đó. Chỉ thêm hồ sơ bằng `+` bên dưới danh sách trong trình quản lý. Không
+có nút Đóng hoặc Thêm ở cuối cửa sổ: dùng `X` của cửa sổ hoặc Esc để đóng trình quản lý.
+
 ## Yêu cầu
 
 - Windows 10 hoặc Windows 11, x64.

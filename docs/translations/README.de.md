@@ -47,6 +47,17 @@ zugehörige `app-server`-Child eines verwalteten Profils erhält dessen `CODEX_H
 Datei-Credential-Store-Einstellung. Diagnosen enthalten nur aggregierte Anzahlen, keine
 Labels, Pfade oder Kontodaten.
 
+### Profilverwaltung
+
+Du kannst das Systemprofil umbenennen, es aber nicht abmelden oder löschen. Ein eigener Name
+für das Systemprofil ändert nur die Anzeige in CodexPeek und ist keine Kontoidentität. Nur die
+Profilverwaltung kennzeichnet es als Standardkonto.
+
+Im Tray-Untermenü **Nutzungsprofile** kannst du ein Profil auswählen und **Nutzungsprofile
+verwalten** öffnen; einen Befehl zum Hinzufügen gibt es dort nicht. Profile fügst du nur mit
+`+` unter der Liste in der Profilverwaltung hinzu. Es gibt unten keinen Schließen- oder
+Hinzufügen-Knopf: Schließe die Profilverwaltung über das Fenster-`X` oder Esc.
+
 ## Voraussetzungen
 
 - Windows 10 oder Windows 11, x64.

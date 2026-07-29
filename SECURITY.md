@@ -42,7 +42,9 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
   startup, or the Codex CLI default when `CODEX_HOME` is absent. Managed profiles use
   application-owned Codex homes below `%APPDATA%\CodexPeek\profiles`; arbitrary
   external paths are not accepted. At most eight profiles, including the system profile,
-  are allowed.
+  are allowed. Its user-provided display label may be renamed, but it cannot be logged out
+  or deleted; the label is not an account identity and does not alter `CODEX_HOME` or
+  authentication files.
 - Only the `codex app-server` child launched for a managed profile receives that profile's
   `CODEX_HOME` and the `cli_auth_credentials_store="file"` configuration override. The
   system profile does not receive the override. CodexPeek does not change its own process
@@ -72,7 +74,9 @@ The complete storage layout, migration policy, and at-rest limitations are docum
 - 삭제할 수 없는 시스템 프로필은 CodexPeek 시작 시 상속한 Codex 홈을 유지하며,
   `CODEX_HOME`이 없으면 Codex CLI 기본값을 사용합니다. 관리 프로필은
   `%APPDATA%\CodexPeek\profiles` 아래의 앱 전용 Codex 홈만 사용하고 임의의 외부 경로는
-  받지 않습니다. 시스템 프로필을 포함한 전체 한도는 8개입니다.
+  받지 않습니다. 시스템 프로필을 포함한 전체 한도는 8개입니다. 사용자가 지정한 표시명은 바꿀 수
+  있지만 로그아웃하거나 삭제할 수 없으며, 계정 식별자가 아니고 `CODEX_HOME`이나 인증 파일을
+  바꾸지 않습니다.
 - 관리 프로필의 자식 `codex app-server`에만 해당 `CODEX_HOME`과
   `cli_auth_credentials_store="file"` 설정 오버라이드를 적용합니다. 시스템 프로필에는 적용하지
   않습니다. CodexPeek 프로세스와 Windows 사용자·시스템 환경, `PATH`, 기본 Codex 홈, 터미널·IDE

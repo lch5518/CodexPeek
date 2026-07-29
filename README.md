@@ -46,6 +46,16 @@ credentials stored there; check the confirmation carefully.
 See [Account and credential storage](docs/ACCOUNT_STORAGE.md) for the exact on-disk layout,
 legacy-path migration rules, deletion behavior, and security limitations.
 
+### Profile manager
+
+You may rename the system profile, but you cannot log it out or delete it. A custom
+system-profile label changes only what CodexPeek displays; it is not an account identity.
+Only the profile manager marks that profile as the default account.
+
+The **Usage profiles** tray submenu lets you select a profile and open **Manage usage
+profiles**; it has no add command. Add profiles only with the `+` below the manager list.
+There is no bottom Close or Add button: use the window `X` or Escape to close the manager.
+
 ## Requirements
 
 - Windows 10 or Windows 11, x64.

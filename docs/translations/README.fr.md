@@ -48,6 +48,17 @@ processus enfant `app-server` du profil géré reçoit son `CODEX_HOME` et le r�
 stockage des identifiants dans un fichier. Les diagnostics ne contiennent que des nombres
 agrégés, sans libellé, chemin ni donnée de compte.
 
+### Gestionnaire de profils
+
+Vous pouvez renommer le profil système, mais pas vous en déconnecter ni le supprimer. Un nom
+personnalisé du profil système ne change que l'affichage de CodexPeek ; ce n'est pas une
+identité de compte. Seul le gestionnaire de profils l'indique comme compte par défaut.
+
+Le sous-menu de la zone de notification **Profils d'utilisation** permet de sélectionner un
+profil et d'ouvrir **Gérer les profils d'utilisation** ; il ne contient aucune commande d'ajout.
+Ajoutez des profils uniquement avec `+`, sous la liste du gestionnaire. Il n'y a pas de bouton
+Fermer ou Ajouter en bas : utilisez le `X` de la fenêtre ou Échap pour fermer le gestionnaire.
+
 ## Prérequis
 
 - Windows 10 ou Windows 11, x64.

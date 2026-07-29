@@ -26,6 +26,7 @@ Installer와 Portable 배포판 모두 같은 사용자 데이터 루트를 사�
 `%APPDATA%\CodexPeek\settings.json`에는 UI 설정과 다음 프로필 카탈로그 정보만 저장합니다.
 
 - 사용자가 직접 입력한 프로필 표시명
+- 선택 사항인 시스템 프로필 표시명(`system_label`)
 - 내부 숫자 순번
 - 현재 CodexPeek에 표시할 프로필
 - 다음 프로필을 만들 때 사용할 순번
@@ -35,12 +36,12 @@ Installer와 Portable 배포판 모두 같은 사용자 데이터 루트를 사�
 ```json
 {
   "usage_profiles": {
+    "system_label": "Main",
     "managed": [
-      { "sequence": 1, "label": "Work" },
-      { "sequence": 2, "label": "Personal" }
+      { "sequence": 1, "label": "Work" }
     ],
-    "selected": { "managed": 1 },
-    "next_sequence": 3
+    "selected": "system",
+    "next_sequence": 2
   }
 }
 ```
@@ -48,6 +49,9 @@ Installer와 Portable 배포판 모두 같은 사용자 데이터 루트를 사�
 CodexPeek는 계정 이메일, OpenAI 계정 ID, 액세스 토큰, 갱신 토큰 또는 원본 RPC 응답을
 `settings.json`에 저장하지 않습니다. 표시명은 계정에서 읽어 온 값이 아니라 사용자가 정한 별칭입니다.
 따라서 서로 다른 표시명의 프로필에 같은 브라우저 계정으로 로그인했는지 자동으로 판별하지 않습니다.
+`system_label`은 선택 사항인 사용자 제공 표시 메타데이터이며, 없으면 기존 기본 시스템 이름을
+사용하므로 이전 `settings.json` 파일과 호환됩니다. 이 값은 계정 식별자가 아니며 `CODEX_HOME` 또는
+인증 파일을 변경하지 않습니다.
 
 ## Codex CLI가 저장하는 인증 정보
 
@@ -71,8 +75,10 @@ CodexPeek는 이 파일에 별도 암호화를 추가하지 않습니다. 따라
 ## 시스템 프로필
 
 삭제할 수 없는 시스템 프로필은 CodexPeek가 시작할 때 상속한 `CODEX_HOME`을 사용합니다. 해당 환경
-변수가 없으면 설치된 Codex CLI의 기본 홈을 사용합니다. 시스템 프로필에는 별도의 `CODEX_HOME`이나
-파일 인증 저장소 옵션을 주입하지 않으며 기존 인증 파일을 새 CodexPeek 디렉터리로 복사하지 않습니다.
+변수가 없으면 설치된 Codex CLI의 기본 홈을 사용합니다. 이름은 바꿀 수 있지만 로그아웃하거나 삭제할
+수는 없습니다. 사용자 지정 이름은 CodexPeek 표시용 메타데이터일 뿐이며 계정 식별자가 아닙니다.
+시스템 프로필에는 별도의 `CODEX_HOME`이나 파일 인증 저장소 옵션을 주입하지 않으며 기존 인증 파일을
+새 CodexPeek 디렉터리로 복사하지 않습니다.
 
 ## 터미널과 IDE에 영향이 없는 이유
 

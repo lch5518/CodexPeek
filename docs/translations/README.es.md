@@ -48,6 +48,17 @@ CodexPeek nunca lee, analiza ni copia el `auth.json` de ningún perfil. Solo el 
 de credenciales en archivo. Los diagnósticos incluyen únicamente recuentos agregados, sin
 etiquetas, rutas ni datos de cuenta.
 
+### Administrador de perfiles
+
+Puedes cambiar el nombre del perfil del sistema, pero no cerrar su sesión ni eliminarlo. Un
+nombre personalizado del perfil del sistema solo cambia lo que muestra CodexPeek; no es una
+identidad de cuenta. Solo el administrador de perfiles lo marca como la cuenta predeterminada.
+
+El submenú de bandeja **Perfiles de uso** permite seleccionar un perfil y abrir **Administrar
+perfiles de uso**; no tiene un comando para agregar. Agrega perfiles solo con `+`, debajo de la
+lista del administrador. No hay botón inferior de Cerrar ni Agregar: usa la `X` de la ventana o
+Escape para cerrar el administrador.
+
 ## Requisitos
 
 - Windows 10 o Windows 11, x64.
