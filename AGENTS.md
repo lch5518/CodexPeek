@@ -9,7 +9,7 @@
 - 대상 플랫폼: Windows 10/11 x64
 - 도구 체인: Rust 1.85 이상, MSVC, Windows SDK
 - 패키지/실행 파일: `codex-peek`
-- 설정: `%APPDATA%\\CodexUsageMonitor\\settings.json`
+- 설정: `%APPDATA%\\CodexPeek\\settings.json`
 - 안전 진단 로그: `%TEMP%\\codex-peek.log`
 
 UI를 열지 않고 설치 상태와 연결을 점검하려면 다음을 사용합니다.

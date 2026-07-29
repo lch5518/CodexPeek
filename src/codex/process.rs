@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
@@ -7,21 +8,61 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{codex::locator::CliCandidate, UsageError};
+use crate::{codex::locator::CliCandidate, ProfileExecutionContext, UsageError};
 
 use super::locator::CandidateKind;
 
 const MAX_VERSION_OUTPUT_BYTES: usize = 8 * 1024;
 const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct LaunchPlan {
     pub(crate) program: PathBuf,
     pub(crate) arguments: Vec<String>,
+    pub(crate) environment: Vec<(OsString, OsString)>,
 }
 
-pub(crate) fn launch_plan(kind: CandidateKind, path: PathBuf) -> LaunchPlan {
-    fixed_plan(kind, path, &["app-server", "--stdio"])
+impl std::fmt::Debug for LaunchPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LaunchPlan")
+            .field("program", &self.program)
+            .field("arguments", &self.arguments)
+            .field(
+                "environment_keys",
+                &self
+                    .environment
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+pub(crate) fn launch_plan(
+    kind: CandidateKind,
+    path: PathBuf,
+    profile: &ProfileExecutionContext,
+) -> LaunchPlan {
+    let suffix = if profile.force_file_credentials() {
+        &[
+            "app-server",
+            "--stdio",
+            "-c",
+            "cli_auth_credentials_store=file",
+        ][..]
+    } else {
+        &["app-server", "--stdio"][..]
+    };
+    let mut plan = fixed_plan(kind, path, suffix);
+    if let Some(codex_home) = profile.codex_home() {
+        plan.environment.push((
+            OsString::from("CODEX_HOME"),
+            codex_home.as_os_str().to_owned(),
+        ));
+    }
+    plan
 }
 
 pub(crate) fn version_plan(kind: CandidateKind, path: PathBuf) -> LaunchPlan {
@@ -36,6 +77,7 @@ fn fixed_plan(kind: CandidateKind, path: PathBuf, suffix: &[&str]) -> LaunchPlan
                 .iter()
                 .map(|argument| (*argument).to_owned())
                 .collect(),
+            environment: Vec::new(),
         },
         CandidateKind::Command => LaunchPlan {
             program: PathBuf::from("cmd.exe"),
@@ -46,6 +88,7 @@ fn fixed_plan(kind: CandidateKind, path: PathBuf, suffix: &[&str]) -> LaunchPlan
                 "/C".into(),
                 format!("\"\"{}\" {}\"", path.to_string_lossy(), suffix.join(" ")),
             ],
+            environment: Vec::new(),
         },
         CandidateKind::PowerShell => {
             let mut arguments = vec![
@@ -60,6 +103,7 @@ fn fixed_plan(kind: CandidateKind, path: PathBuf, suffix: &[&str]) -> LaunchPlan
             LaunchPlan {
                 program: PathBuf::from("powershell.exe"),
                 arguments,
+                environment: Vec::new(),
             }
         }
     }
@@ -75,8 +119,12 @@ pub(crate) struct ProcessGuard {
 }
 
 impl ProcessGuard {
-    pub(crate) fn start(candidate: CliCandidate, deadline: Instant) -> Result<Self, UsageError> {
-        let plan = launch_plan(candidate.kind, candidate.path);
+    pub(crate) fn start(
+        candidate: CliCandidate,
+        deadline: Instant,
+        profile: &ProfileExecutionContext,
+    ) -> Result<Self, UsageError> {
+        let plan = launch_plan(candidate.kind, candidate.path, profile);
         Self::start_plan(plan, deadline)
     }
 
@@ -94,6 +142,7 @@ impl ProcessGuard {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        command.envs(plan.environment);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -416,18 +465,65 @@ impl Drop for WindowsJob {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsString,
         path::PathBuf,
         time::{Duration, Instant},
     };
 
     use super::{deadline_allows_resume, launch_plan, version_plan, LaunchPlan, ProcessGuard};
     use crate::codex::locator::CandidateKind;
+    use crate::{ProfileExecutionContext, UsageProfileId, UsageProfileRoot};
+
+    fn system_context() -> ProfileExecutionContext {
+        ProfileExecutionContext::system()
+    }
+
+    #[test]
+    fn managed_profile_applies_child_only_codex_home_and_file_credentials() {
+        let root = UsageProfileRoot::new(PathBuf::from(r"C:\app"));
+        let context = ProfileExecutionContext::managed(&root, UsageProfileId::Managed(2)).unwrap();
+
+        let plan = launch_plan(
+            CandidateKind::NativeExe,
+            PathBuf::from("codex.exe"),
+            &context,
+        );
+
+        assert_eq!(
+            plan.arguments,
+            [
+                "app-server",
+                "--stdio",
+                "-c",
+                "cli_auth_credentials_store=file"
+            ]
+        );
+        assert_eq!(plan.environment[0].0, OsString::from("CODEX_HOME"));
+        assert_eq!(
+            plan.environment[0].1,
+            OsString::from(r"C:\app\profiles\profile-0002\codex-home")
+        );
+        assert!(!format!("{plan:?}").contains(r"C:\app"));
+    }
+
+    #[test]
+    fn system_profile_preserves_legacy_arguments_without_environment_override() {
+        let plan = launch_plan(
+            CandidateKind::NativeExe,
+            PathBuf::from("codex.exe"),
+            &ProfileExecutionContext::system(),
+        );
+
+        assert_eq!(plan.arguments, ["app-server", "--stdio"]);
+        assert!(plan.environment.is_empty());
+    }
 
     #[test]
     fn command_wrapper_uses_a_fixed_cmd_launch_plan() {
         let plan = launch_plan(
             CandidateKind::Command,
             PathBuf::from("C:/Program Files/Codex/codex.cmd"),
+            &system_context(),
         );
 
         assert_eq!(
@@ -441,6 +537,7 @@ mod tests {
                     "/C".into(),
                     r#"""C:/Program Files/Codex/codex.cmd" app-server --stdio""#.into(),
                 ],
+                environment: Vec::new(),
             }
         );
     }
@@ -450,6 +547,7 @@ mod tests {
         let plan = launch_plan(
             CandidateKind::Command,
             PathBuf::from("C:/Program Files/Codex/codex.cmd"),
+            &system_context(),
         );
 
         assert_eq!(
@@ -466,7 +564,11 @@ mod tests {
 
     #[test]
     fn powershell_wrapper_uses_a_fixed_noninteractive_launch_plan() {
-        let plan = launch_plan(CandidateKind::PowerShell, PathBuf::from("C:/bin/codex.ps1"));
+        let plan = launch_plan(
+            CandidateKind::PowerShell,
+            PathBuf::from("C:/bin/codex.ps1"),
+            &system_context(),
+        );
 
         assert_eq!(plan.program, PathBuf::from("powershell.exe"));
         assert_eq!(

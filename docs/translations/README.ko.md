@@ -1,4 +1,4 @@
-# Codex 사용량 모니터
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows �
 
 - Codex 기본·보조 사용량 기간과 초기화 시각을 표시합니다.
 - 인증 파일을 직접 파싱하지 않고, 설치된 Codex CLI의 `app-server` 인터페이스를 사용합니다.
+- 최대 8개의 격리된 사용량 프로필 중 하나를 수동으로 선택할 수 있습니다.
 - 다중 모니터 Windows 환경에서 모든 작업 표시줄 또는 주 모니터에만 위젯을 표시할 수 있습니다.
 - 작업 표시줄에 안전하게 붙일 수 없을 때는 플로팅 위젯과 트레이 아이콘으로 동작합니다.
 - 수동·자동 갱신, Windows 시작 시 실행, 진단, 지역화된 UI를 지원합니다.
@@ -22,6 +23,36 @@ Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows �
 
 모니터는 로그인 상태와 화면 표시에 필요한 사용량 기간만 요청합니다.
 Codex 작업을 시작하거나 `codex exec`를 호출하지 않습니다.
+
+## 사용량 프로필
+
+삭제할 수 없는 **기본 Codex 계정** 프로필은 CodexPeek 시작 시 상속한 Codex 홈을 사용하며,
+`CODEX_HOME`이 없으면 CLI 기본값을 사용합니다. 관리 프로필을 추가하면 각각
+`%APPDATA%\CodexPeek\profiles` 아래의 분리된 Codex 홈을 사용합니다. 시스템 프로필을
+포함해 전체 8개까지 만들 수 있습니다.
+
+프로필 표시명은 사용자가 직접 지정합니다. CodexPeek은 계정 이메일이나 ID를 확인하지 않으므로
+계정을 추가하거나 다시 로그인할 때 브라우저에서 사용할 ChatGPT 계정을 직접 확인하세요. 프로필
+선택은 CodexPeek이 조회하고 표시하는 사용량만 바꿉니다. 터미널, IDE, Codex 앱, WSL,
+Remote SSH, Dev Containers의 로그인은 바뀌지 않습니다.
+
+선택은 항상 수동입니다. CodexPeek은 남은 한도에 따라 프로필을 자동 선택·순환하거나 Codex 작업을
+특정 프로필로 라우팅하지 않습니다. 관리 프로필을 삭제하면 그 안에 별도로 저장된 CLI 인증 정보를
+포함한 로컬 프로필 데이터를 복구할 수 없으므로 확인 안내를 주의 깊게 읽으세요.
+
+CodexPeek은 어떤 프로필의 `auth.json`도 읽거나 파싱하거나 복사하지 않습니다. 관리 프로필의
+자식 `app-server`에만 해당 `CODEX_HOME`과 파일 인증 저장소 설정을 적용하며, 진단에는 프로필
+표시명·경로·계정 정보 없이 집계된 개수만 기록합니다.
+
+### 프로필 관리자
+
+시스템 프로필은 이름을 바꿀 수 있지만 로그아웃하거나 삭제할 수는 없습니다. 사용자 지정 시스템
+프로필 이름은 CodexPeek에 표시되는 내용만 바꾸며 계정 식별자가 아닙니다. 기본 계정 표시는
+프로필 관리자에서만 보입니다.
+
+트레이의 **사용량 프로필** 하위 메뉴에서는 프로필을 선택하거나 **사용량 프로필 관리**를 열 수
+있으며, 추가 명령은 없습니다. 새 프로필은 관리자 목록 아래의 `+`에서만 추가합니다. 창 아래에는
+닫기 또는 추가 단추가 없으므로 창의 `X` 또는 Esc로 관리자를 닫습니다.
 
 ## 요구 사항
 
@@ -100,7 +131,7 @@ Release 파일이 없을 때만 소스 빌드로 전환합니다.
    실패하면 민감 정보를 노출하지 말고 안전하게 중단한 뒤 정확한 원인을 설명해줘.
 ```
 
-Installer와 Portable은 `%APPDATA%\CodexUsageMonitor\settings.json`을 사용하므로 전환해도
+Installer와 Portable은 `%APPDATA%\CodexPeek\settings.json`을 사용하므로 전환해도
 설정을 공유합니다. Installer는 시작 메뉴 바로 가기를 만들지만 Windows 자동 시작은
 기본으로 활성화하지 않습니다.
 
@@ -134,7 +165,7 @@ Explorer 재시작이나 작업 표시줄 배치 변경으로 위젯을 붙이�
 원시 RPC 응답은 로그인 유형과 화면에 표시할 사용량 필드를 추출하는 동안에만 처리합니다.
 토큰, 계정 ID, 이메일, 인증 파일 내용, 프록시 값은 저장하거나 로그에 기록하지 않습니다.
 
-설정은 `%APPDATA%\CodexUsageMonitor\settings.json`에 저장합니다.
+설정은 `%APPDATA%\CodexPeek\settings.json`에 저장합니다.
 크기가 제한된 진단 로그는 `%TEMP%\codex-peek.log`에 저장합니다.
 
 데이터 처리와 취약점 보고 안내는 [SECURITY.md](../../SECURITY.md)를 참고하세요.

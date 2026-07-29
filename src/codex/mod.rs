@@ -2,7 +2,10 @@ mod app_server;
 pub(crate) mod locator;
 mod process;
 
-pub use app_server::{AppServerUsageProvider, UsageProvider};
+pub use app_server::{
+    AppServerUsageProvider, LoginPageOpener, OperationCancellation, ProfileAccountProvider,
+    UsageProvider,
+};
 
 use std::{
     path::PathBuf,

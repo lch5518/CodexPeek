@@ -1,4 +1,4 @@
-# Moniteur d'utilisation Codex
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Il affiche les fenêtres de limite de débit principale et secondaire dans la ba
 
 - Affiche les fenêtres d'utilisation Codex principale et secondaire, y compris les heures de réinitialisation.
 - Utilise l'interface `app-server` du Codex CLI installé au lieu d'analyser les fichiers d'authentification.
+- Permet de choisir manuellement parmi huit profils d'utilisation isolés au maximum.
 - Permet d'afficher le widget sur toutes les barres des tâches ou uniquement sur le moniteur principal.
 - Bascule de façon sûre vers un widget flottant et une icône de zone de notification lorsque l'attachement à la barre des tâches n'est pas disponible.
 - Prend en charge l'actualisation manuelle, les intervalles d'actualisation automatique, le démarrage avec Windows, les diagnostics et l'interface localisée.
@@ -22,6 +23,41 @@ Le Codex CLI installé gère sa propre authentification et peut contacter OpenAI
 
 Le moniteur demande uniquement l'état de connexion et les fenêtres d'utilisation nécessaires à l'affichage.
 Il ne démarre aucune tâche Codex et n'appelle pas `codex exec`.
+
+## Profils d'utilisation
+
+Le profil système **Compte Codex par défaut**, non supprimable, utilise le répertoire Codex hérité au
+démarrage de CodexPeek, ou la valeur CLI par défaut si `CODEX_HOME` n'est pas défini.
+Chaque profil géré possède un répertoire Codex distinct sous
+`%APPDATA%\CodexPeek\profiles`. Huit profils au total sont autorisés, profil
+système compris.
+
+Vous fournissez vous-même les libellés. CodexPeek n'inspecte ni l'adresse e-mail ni l'ID
+du compte : lors d'un ajout ou d'une reconnexion, vérifiez donc dans le navigateur le
+compte ChatGPT à utiliser. La sélection change uniquement l'utilisation interrogée et
+affichée par CodexPeek. Les connexions du terminal, de l'IDE, de l'application Codex, de
+WSL, de Remote SSH et des Dev Containers restent inchangées.
+
+La sélection est toujours manuelle. CodexPeek ne sélectionne ni ne fait tourner les
+profils automatiquement selon la limite restante et n'achemine aucune tâche Codex par un
+profil. Supprimer un profil géré efface définitivement ses données locales, y compris les
+identifiants CLI stockés séparément ; vérifiez attentivement la confirmation.
+
+CodexPeek ne lit, n'analyse et ne copie jamais le fichier `auth.json` d'un profil. Seul le
+processus enfant `app-server` du profil géré reçoit son `CODEX_HOME` et le réglage de
+stockage des identifiants dans un fichier. Les diagnostics ne contiennent que des nombres
+agrégés, sans libellé, chemin ni donnée de compte.
+
+### Gestionnaire de profils
+
+Vous pouvez renommer le profil système, mais pas vous en déconnecter ni le supprimer. Un nom
+personnalisé du profil système ne change que l'affichage de CodexPeek ; ce n'est pas une
+identité de compte. Seul le gestionnaire de profils l'indique comme compte par défaut.
+
+Le sous-menu de la zone de notification **Profils d'utilisation** permet de sélectionner un
+profil et d'ouvrir **Gérer les profils d'utilisation** ; il ne contient aucune commande d'ajout.
+Ajoutez des profils uniquement avec `+`, sous la liste du gestionnaire. Il n'y a pas de bouton
+Fermer ou Ajouter en bas : utilisez le `X` de la fenêtre ou Échap pour fermer le gestionnaire.
 
 ## Prérequis
 
@@ -102,7 +138,7 @@ Installe CodexPeek sur cet ordinateur Windows x64 et termine la vérification po
    en toute sécurité et explique le blocage exact sans exposer d'information sensible.
 ```
 
-Les éditions Installer et Portable utilisent `%APPDATA%\CodexUsageMonitor\settings.json`, les
+Les éditions Installer et Portable utilisent `%APPDATA%\CodexPeek\settings.json`, les
 paramètres sont donc partagés si vous passez de l'une à l'autre. Le programme d'installation ajoute un raccourci au menu Démarrer
 mais n'active pas le démarrage avec Windows par défaut.
 
@@ -134,7 +170,7 @@ Les diagnostics vérifient uniquement si ce chemin existe.
 Les réponses RPC brutes sont traitées seulement le temps d'extraire le type de connexion et les champs de limite de débit affichés.
 Les jetons, identifiants de compte, adresses e-mail, contenus des fichiers d'authentification et valeurs de proxy ne sont ni stockés ni écrits dans les journaux.
 
-Les paramètres sont stockés dans `%APPDATA%\CodexUsageMonitor\settings.json`.
+Les paramètres sont stockés dans `%APPDATA%\CodexPeek\settings.json`.
 Un journal de diagnostic borné est stocké dans `%TEMP%\codex-peek.log`.
 
 Pour les consignes complètes sur le traitement des données et le signalement des vulnérabilités, consultez [SECURITY.md](../../SECURITY.md).

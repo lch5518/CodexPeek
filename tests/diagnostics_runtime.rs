@@ -1,12 +1,158 @@
 use std::{
-    fs,
-    sync::{Arc, Barrier},
+    collections::VecDeque,
+    fs, io,
+    path::{Path, PathBuf},
+    sync::{Arc, Barrier, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use codex_usage_monitor::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
 use codex_usage_monitor::{
-    inspect_settings_for_diagnostics, DiagnosticLogger, SafeDiagnostic, SettingsStore,
+    aggregate_profile_diagnostics, diagnose_profile_contexts, inspect_settings_for_diagnostics,
+    AsyncDiagnosticWriter, CodexUsage, DiagnosticLogger, PollSnapshot, ProfileDiagnosticSnapshot,
+    ProfileExecutionContext, ProfileFileSystem, ProfileSettingsService, SafeDiagnostic, Settings,
+    SettingsStore, UsageError, UsageProfileCatalog, UsageProfileId, UsageProfileRoot,
 };
+
+#[derive(Default)]
+struct DiagnosticProvider {
+    results: Mutex<VecDeque<Result<CodexUsage, UsageError>>>,
+    calls: Arc<Mutex<Vec<UsageProfileId>>>,
+    operations: Option<Arc<Mutex<Vec<&'static str>>>>,
+}
+
+impl DiagnosticProvider {
+    fn with_results(results: impl IntoIterator<Item = Result<CodexUsage, UsageError>>) -> Self {
+        Self {
+            results: Mutex::new(results.into_iter().collect()),
+            ..Self::default()
+        }
+    }
+}
+
+impl ProfileAccountProvider for DiagnosticProvider {
+    fn fetch_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        _allow_auth_refresh: bool,
+        _cancellation: OperationCancellation,
+    ) -> Result<CodexUsage, UsageError> {
+        self.calls.lock().unwrap().push(profile.id());
+        if let Some(operations) = &self.operations {
+            operations.lock().unwrap().push(match profile.id() {
+                UsageProfileId::System => "fetch_system",
+                UsageProfileId::Managed(1) => "fetch_managed_1",
+                UsageProfileId::Managed(_) => "fetch_managed_other",
+            });
+        }
+        self.results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("unexpected diagnostic fetch")
+    }
+
+    fn login_profile(
+        &self,
+        _profile: &ProfileExecutionContext,
+        _open: LoginPageOpener,
+        _cancellation: OperationCancellation,
+    ) -> Result<bool, UsageError> {
+        unreachable!()
+    }
+
+    fn logout_profile(
+        &self,
+        _profile: &ProfileExecutionContext,
+        _cancellation: OperationCancellation,
+    ) -> Result<(), UsageError> {
+        unreachable!()
+    }
+}
+
+#[derive(Clone)]
+struct DiagnosticStartupFileSystem {
+    operations: Arc<Mutex<Vec<&'static str>>>,
+    invalid: UsageProfileId,
+}
+
+impl ProfileFileSystem for DiagnosticStartupFileSystem {
+    fn create_managed_home(&self, _root: &UsageProfileRoot, _id: UsageProfileId) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn remove_empty_home(&self, _root: &UsageProfileRoot, _id: UsageProfileId) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn stage_delete(&self, _root: &UsageProfileRoot, _id: UsageProfileId) -> io::Result<PathBuf> {
+        unreachable!()
+    }
+
+    fn restore_staged(&self, _staged: &Path, _destination: &Path) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn remove_staged(&self, _staged: &Path) -> io::Result<()> {
+        unreachable!()
+    }
+
+    fn cleanup_staged(
+        &self,
+        _root: &UsageProfileRoot,
+        _catalog: &UsageProfileCatalog,
+    ) -> io::Result<()> {
+        self.operations.lock().unwrap().push("recover_tombstones");
+        Ok(())
+    }
+
+    fn cleanup_orphaned_homes(
+        &self,
+        _root: &UsageProfileRoot,
+        _catalog: &UsageProfileCatalog,
+    ) -> io::Result<()> {
+        self.operations.lock().unwrap().push("recover_orphans");
+        Ok(())
+    }
+
+    fn validate_managed_home(
+        &self,
+        _root: &UsageProfileRoot,
+        id: UsageProfileId,
+    ) -> io::Result<()> {
+        self.operations.lock().unwrap().push(match id {
+            UsageProfileId::Managed(1) => "validate_managed_1",
+            UsageProfileId::Managed(_) => "validate_managed_other",
+            UsageProfileId::System => unreachable!(),
+        });
+        if id == self.invalid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SENTINEL_PRIVATE_INVALID_CONTEXT_PATH",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn diagnostic_usage() -> CodexUsage {
+    use std::time::SystemTime;
+
+    CodexUsage {
+        primary: None,
+        secondary: None,
+        reset_credits: None,
+        fetched_at: SystemTime::now(),
+    }
+}
+
+fn diagnostic_context(sequence: u32) -> ProfileExecutionContext {
+    ProfileExecutionContext::managed(
+        &UsageProfileRoot::new(PathBuf::from("diagnostic-context-root")),
+        UsageProfileId::Managed(sequence),
+    )
+    .unwrap()
+}
 
 fn temp_log() -> std::path::PathBuf {
     std::env::temp_dir().join(format!(
@@ -27,6 +173,186 @@ fn diagnostics_mask_secrets_and_keep_one_line_records() {
         .unwrap();
     let line = fs::read_to_string(&path).unwrap();
     assert_eq!(line.lines().count(), 1);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn sequential_profile_diagnostics_classify_mixed_results_and_reconcile_counts() {
+    let contexts = [
+        ProfileExecutionContext::system(),
+        diagnostic_context(1),
+        diagnostic_context(2),
+    ];
+    let provider = DiagnosticProvider::with_results([
+        Ok(diagnostic_usage()),
+        Err(UsageError::NotLoggedIn),
+        Err(UsageError::RpcTimeout),
+    ]);
+
+    let run = diagnose_profile_contexts(&provider, 3, &contexts);
+
+    assert_eq!(
+        *provider.calls.lock().unwrap(),
+        [
+            UsageProfileId::System,
+            UsageProfileId::Managed(1),
+            UsageProfileId::Managed(2),
+        ]
+    );
+    assert_eq!(run.configured, 3);
+    assert_eq!(run.ok, 1);
+    assert_eq!(run.login_required, 1);
+    assert_eq!(run.request_failed, 1);
+    assert_eq!(run.ok + run.login_required + run.request_failed, 3);
+    assert_eq!(run.system_result, Ok(()));
+    assert_eq!(
+        run.safe_diagnostic(true),
+        SafeDiagnostic::Profiles {
+            settings_valid: true,
+            configured: 3,
+            ok: 1,
+            login_required: 1,
+            request_failed: 1,
+        }
+    );
+}
+
+#[test]
+fn startup_validation_precedes_diagnostics_and_invalid_context_is_safe_request_failure() {
+    let root = std::env::temp_dir().join(format!(
+        "SENTINEL_PRIVATE_DIAGNOSTIC_ROOT-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let store = SettingsStore::for_root(&root);
+    let mut settings = Settings::default();
+    settings
+        .usage_profiles
+        .add("SENTINEL_PRIVATE_PROFILE_LABEL")
+        .unwrap();
+    let invalid = settings.usage_profiles.add("Invalid").unwrap().id();
+    store.save(&settings).unwrap();
+    let operations = Arc::new(Mutex::new(Vec::new()));
+    let backend = DiagnosticStartupFileSystem {
+        operations: Arc::clone(&operations),
+        invalid,
+    };
+
+    let (service, startup) = ProfileSettingsService::start_with_recovery(store, settings, backend);
+    let provider = DiagnosticProvider {
+        results: Mutex::new(
+            [
+                Ok(diagnostic_usage()),
+                Err(UsageError::AuthenticationExpired),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        operations: Some(Arc::clone(&operations)),
+        ..DiagnosticProvider::default()
+    };
+    let run = diagnose_profile_contexts(
+        &provider,
+        startup.report().configured,
+        startup.execution_contexts(),
+    );
+
+    assert_eq!(
+        *operations.lock().unwrap(),
+        [
+            "recover_tombstones",
+            "recover_orphans",
+            "validate_managed_1",
+            "validate_managed_other",
+            "fetch_system",
+            "fetch_managed_1",
+        ]
+    );
+    assert_eq!(run.configured, 3);
+    assert_eq!(run.ok, 1);
+    assert_eq!(run.login_required, 1);
+    assert_eq!(run.request_failed, 1);
+    assert_eq!(run.ok + run.login_required + run.request_failed, 3);
+    let startup_failure = service.wait_for_correlated_event().unwrap();
+    let safe_text = format!("{run:?}\n{startup_failure:?}");
+    assert!(!safe_text.contains("SENTINEL_PRIVATE_PROFILE_LABEL"));
+    assert!(!safe_text.contains("SENTINEL_PRIVATE_DIAGNOSTIC_ROOT"));
+    assert!(!safe_text.contains("SENTINEL_PRIVATE_INVALID_CONTEXT_PATH"));
+
+    let log_path = temp_log();
+    DiagnosticLogger::for_path(&log_path)
+        .record_safe(run.safe_diagnostic(true))
+        .unwrap();
+    let serialized = fs::read_to_string(&log_path).unwrap();
+    assert!(serialized.contains("configured=3 ok=1 login_required=1 request_failed=1"));
+    assert!(!serialized.contains("SENTINEL_PRIVATE"));
+    service.stop().unwrap();
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn profile_diagnostics_are_aggregate_only_and_clamped_to_supported_count() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+
+    logger
+        .record_safe(SafeDiagnostic::Profiles {
+            settings_valid: true,
+            configured: u8::MAX,
+            ok: 17,
+            login_required: 9,
+            request_failed: 11,
+        })
+        .unwrap();
+
+    let line = fs::read_to_string(&path).unwrap();
+    assert!(line.contains("settings_valid=true"));
+    assert!(line.contains("configured=8"));
+    assert!(line.contains("ok=8"));
+    assert!(line.contains("login_required=8"));
+    assert!(line.contains("request_failed=8"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn profile_diagnostics_never_serialize_labels_or_managed_paths() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+    let fixture_label = "SENTINEL_PRIVATE_PROFILE_LABEL";
+    let root_path = std::env::temp_dir().join("SENTINEL_PRIVATE_MANAGED_PATH");
+    let root = UsageProfileRoot::new(root_path.clone());
+    let mut settings = Settings::default();
+    let managed_id = settings.usage_profiles.add(fixture_label).unwrap().id();
+    let managed_snapshot = PollSnapshot {
+        last_error: Some(UsageError::NotLoggedIn),
+        ..PollSnapshot::default()
+    };
+    let inputs = [
+        ProfileDiagnosticSnapshot {
+            id: UsageProfileId::System,
+            snapshot: Some(PollSnapshot::default()),
+            login_required: false,
+        },
+        ProfileDiagnosticSnapshot {
+            id: managed_id,
+            snapshot: Some(managed_snapshot),
+            login_required: false,
+        },
+    ];
+    let event = aggregate_profile_diagnostics(true, &settings, &root, &inputs);
+    let writer = AsyncDiagnosticWriter::start(logger, 4);
+    assert!(writer.enqueue(event));
+    writer.stop().unwrap();
+
+    let serialized = fs::read_to_string(&path).unwrap();
+    assert!(serialized.contains("configured=2"));
+    assert!(serialized.contains("login_required=1"));
+    assert!(!serialized.contains(fixture_label));
+    assert!(!serialized.contains(root_path.to_string_lossy().as_ref()));
+    assert!(!serialized.to_ascii_lowercase().contains("profile-0001"));
     let _ = fs::remove_file(path);
 }
 

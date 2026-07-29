@@ -9,15 +9,19 @@ pub(crate) use platform::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK};
 use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode};
 
 use super::{
-    UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS,
-    MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30,
-    MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH,
-    MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN,
-    MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL,
-    MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN,
-    MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
+    menu_action, UiAction, UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH,
+    MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15,
+    MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
+    MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
+    MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
+    MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
+    MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH,
+    MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
     MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
 };
+
+const PROFILE_COMMAND_START: u16 = 1000;
+const PROFILE_COMMAND_END: u16 = 1007;
 
 /// 트레이 메뉴에 표시할 순수 항목 모델입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,10 +54,65 @@ pub struct TrayMenuCommand {
     pub checked: bool,
 }
 
+/// 한 번 열린 트레이 팝업의 메뉴 트리와 고정된 형식화 동작 매핑입니다.
+///
+/// 모델을 만든 뒤에는 팝업이 닫힐 때까지 같은 값을 유지해야 하며, 변경 가능한 런타임
+/// 설정에서 다시 만들면 안 됩니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrayMenuModel {
+    /// Win32 팝업 메뉴에 추가할 순수 메뉴 트리입니다.
+    pub entries: Vec<TrayMenuEntry>,
+    actions: Vec<(u16, UiAction)>,
+}
+
+impl TrayMenuModel {
+    /// 팝업이 반환한 명령 식별자를 모델 생성 시 고정한 동작으로 변환합니다.
+    ///
+    /// 알 수 없는 식별자는 `None`을 반환합니다. 프로필 목록이 이후 변경되어도 이 모델의
+    /// 프로필 식별자 매핑은 바뀌지 않습니다.
+    pub fn action(&self, id: u16) -> Option<UiAction> {
+        self.actions
+            .iter()
+            .find_map(|(candidate, action)| (*candidate == id).then(|| action.clone()))
+    }
+}
+
 /// 현재 설정에 맞는 트레이 메뉴 항목을 순서대로 반환합니다.
 pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
+    tray_menu_model(settings).entries
+}
+
+/// 현재 설정으로 한 팝업의 메뉴 트리와 명령 매핑을 함께 만듭니다.
+///
+/// 프로필 선택 명령은 최대 여덟 개의 예약 ID `1000..=1007`에 목록 순서대로 연결됩니다.
+/// 반환 모델은 `TrackPopupMenu`가 끝날 때까지 보관해야 합니다.
+pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
     let language = settings.resolved_language;
     let mut entries = Vec::new();
+    let mut actions = Vec::new();
+    let mut profile_entries = Vec::new();
+    for (offset, profile) in settings.usage_profiles.iter().take(8).enumerate() {
+        let id = PROFILE_COMMAND_START + u16::try_from(offset).expect("profile offset is bounded");
+        debug_assert!(id <= PROFILE_COMMAND_END);
+        push_command(
+            &mut profile_entries,
+            id,
+            profile_menu_label(&profile.label, &profile.summary),
+            profile.selected,
+        );
+        actions.push((id, UiAction::SelectUsageProfile(profile.id)));
+    }
+    push_command(
+        &mut profile_entries,
+        MENU_MANAGE_USAGE_PROFILES,
+        crate::localized_text(crate::LocalizationKey::MenuManageUsageProfiles, language),
+        false,
+    );
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuUsageProfiles, language),
+        profile_entries,
+    );
     if settings.login_required {
         push_command(
             &mut entries,
@@ -205,7 +264,30 @@ pub fn tray_menu_entries(settings: &UiSettings) -> Vec<TrayMenuEntry> {
         crate::localized_text(crate::LocalizationKey::MenuExit, language),
         false,
     );
-    entries
+    collect_static_actions(&entries, &mut actions);
+    TrayMenuModel { entries, actions }
+}
+
+fn profile_menu_label(label: &str, summary: &str) -> String {
+    if summary.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label}    {summary}")
+    }
+}
+
+fn collect_static_actions(entries: &[TrayMenuEntry], actions: &mut Vec<(u16, UiAction)>) {
+    for entry in entries {
+        match entry {
+            TrayMenuEntry::Command(command) => {
+                if let Some(action) = menu_action(command.id) {
+                    actions.push((command.id, action));
+                }
+            }
+            TrayMenuEntry::Submenu(submenu) => collect_static_actions(&submenu.entries, actions),
+            TrayMenuEntry::Separator => {}
+        }
+    }
 }
 
 fn push_command(
@@ -370,13 +452,15 @@ mod tests {
         LANGUAGE_MENU_OPTIONS,
     };
     use crate::windows::{
-        UiSettings, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH,
-        MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN,
-        MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL,
-        MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE,
+        UiSettings, UsageProfileView, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
+        MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
+        MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
+        MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
+        MENU_LANGUAGE_VIETNAMESE,
     };
     use crate::{
         Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
+        UsageProfileId,
     };
 
     #[test]
@@ -518,6 +602,23 @@ mod tests {
             update_status: UpdatePresentationStatus::Idle,
             show_remaining_percent: false,
             login_required: false,
+            usage_profiles: vec![UsageProfileView {
+                id: UsageProfileId::System,
+                label: crate::localized_text(
+                    crate::LocalizationKey::UsageProfileSystem,
+                    resolved_language,
+                )
+                .to_string(),
+                summary: crate::localized_text(
+                    crate::LocalizationKey::UsageProfileDisplayed,
+                    resolved_language,
+                )
+                .to_string(),
+                selected: true,
+                login_required: false,
+                managed: false,
+            }],
+            usage_profile_mutation_pending: false,
         }
     }
 

@@ -4,18 +4,47 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    sync::mpsc,
     sync::{Arc, Mutex, OnceLock, Weak},
-    thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 
-const SCHEMA_VERSION: u32 = 1;
+use crate::profiles::UsageProfileCatalog;
+
+const SCHEMA_VERSION: u32 = 2;
 const MAX_LOGICAL_COORDINATE: i32 = 2_000_000;
+const SETTINGS_DIRECTORY: &str = "CodexPeek";
+const LEGACY_SETTINGS_DIRECTORY: &str = "CodexUsageMonitor";
 static FILE_NONCE: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+/// 운영체제 설정 디렉터리 아래에서 CodexPeek 데이터 루트를 결정하고 레거시 루트를 이전합니다.
+///
+/// `config_dir`은 운영체제가 제공한 사용자별 설정 디렉터리입니다. 새 루트가 없고 레거시
+/// `CodexUsageMonitor` 디렉터리만 있으면 디렉터리 자체를 같은 부모 안에서 원자적으로 이동합니다.
+/// 새 루트가 이미 있으면 덮어쓰거나 병합하지 않으며, 이동 실패 시 기존 데이터 보존을 위해 레거시
+/// 루트를 반환합니다. 인증 파일의 내용은 열거나 복사하지 않습니다.
+fn resolve_settings_root(config_dir: &Path) -> PathBuf {
+    let current = config_dir.join(SETTINGS_DIRECTORY);
+    if fs::symlink_metadata(&current).is_ok() {
+        return current;
+    }
+
+    let legacy = config_dir.join(LEGACY_SETTINGS_DIRECTORY);
+    let legacy_is_directory = fs::symlink_metadata(&legacy)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false);
+    if !legacy_is_directory {
+        return current;
+    }
+
+    match fs::rename(&legacy, &current) {
+        Ok(()) => current,
+        Err(_) if fs::symlink_metadata(&current).is_ok() => current,
+        Err(_) => legacy,
+    }
+}
 
 /// 시작할 때 표시할 기본 화면을 나타냅니다.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -100,6 +129,50 @@ pub struct Settings {
     /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
     #[serde(default)]
     pub show_remaining_percent: bool,
+    /// 사용량을 조회할 프로필 목록과 현재 선택 상태입니다.
+    pub usage_profiles: UsageProfileCatalog,
+}
+
+#[derive(Deserialize)]
+struct SettingsEnvelope {
+    schema_version: u32,
+}
+
+#[derive(Deserialize)]
+struct LegacySettingsV1 {
+    schema_version: u32,
+    refresh_interval_minutes: u32,
+    widget_visible: bool,
+    taskbar_offset: i32,
+    #[serde(default)]
+    taskbar_display_mode: TaskbarDisplayMode,
+    start_with_windows: bool,
+    startup_view: StartupView,
+    auto_auth_refresh: bool,
+    #[serde(default = "default_language_preference")]
+    language: LanguagePreference,
+    last_update_check_unix: Option<u64>,
+    #[serde(default)]
+    show_remaining_percent: bool,
+}
+
+impl LegacySettingsV1 {
+    fn into_current(self) -> Option<Settings> {
+        (self.schema_version == 1).then_some(Settings {
+            schema_version: SCHEMA_VERSION,
+            refresh_interval_minutes: self.refresh_interval_minutes,
+            widget_visible: self.widget_visible,
+            taskbar_offset: self.taskbar_offset,
+            taskbar_display_mode: self.taskbar_display_mode,
+            start_with_windows: self.start_with_windows,
+            startup_view: self.startup_view,
+            auto_auth_refresh: self.auto_auth_refresh,
+            language: self.language,
+            last_update_check_unix: self.last_update_check_unix,
+            show_remaining_percent: self.show_remaining_percent,
+            usage_profiles: UsageProfileCatalog::default(),
+        })
+    }
 }
 
 const fn default_language_preference() -> LanguagePreference {
@@ -120,6 +193,7 @@ impl Default for Settings {
             language: default_language_preference(),
             last_update_check_unix: None,
             show_remaining_percent: false,
+            usage_profiles: UsageProfileCatalog::default(),
         }
     }
 }
@@ -130,6 +204,7 @@ impl Settings {
             || !matches!(self.refresh_interval_minutes, 1 | 5 | 10 | 15 | 30)
             || self.taskbar_offset < 0
             || self.taskbar_offset > MAX_LOGICAL_COORDINATE
+            || self.usage_profiles.validate().is_err()
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -150,9 +225,8 @@ pub struct SettingsStore {
 impl SettingsStore {
     /// 기본 앱 데이터 경로를 사용하는 저장소를 만듭니다.
     pub fn new() -> Self {
-        let root = dirs::config_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("CodexUsageMonitor");
+        let config_dir = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
+        let root = resolve_settings_root(&config_dir);
         Self::for_root(root)
     }
 
@@ -165,6 +239,11 @@ impl SettingsStore {
             gate: shared_gate(&root),
             root,
         }
+    }
+
+    /// 설정 파일과 관리 프로필 데이터를 보관하는 루트 경로를 반환합니다.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// 설정 파일의 전체 경로를 반환합니다.
@@ -183,8 +262,19 @@ impl SettingsStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
             Err(error) => return Err(error),
         };
-        Ok(serde_json::from_slice::<Settings>(&contents)
-            .is_ok_and(|settings| settings.validate().is_ok()))
+        let Ok(envelope) = serde_json::from_slice::<SettingsEnvelope>(&contents) else {
+            return Ok(false);
+        };
+        Ok(match envelope.schema_version {
+            SCHEMA_VERSION => serde_json::from_slice::<Settings>(&contents)
+                .is_ok_and(|settings| settings.validate().is_ok()),
+            1 => serde_json::from_slice::<LegacySettingsV1>(&contents).is_ok_and(|settings| {
+                settings
+                    .into_current()
+                    .is_some_and(|settings| settings.validate().is_ok())
+            }),
+            _ => false,
+        })
     }
 
     /// 설정을 읽고 손상되었으면 원본을 보관한 뒤 기본값을 반환합니다.
@@ -199,17 +289,49 @@ impl SettingsStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Settings::default()),
             Err(error) => return Err(error),
         };
-        match serde_json::from_slice::<Settings>(&contents).and_then(|settings| {
-            settings
-                .validate()
-                .map(|()| settings)
-                .map_err(serde_json::Error::io)
-        }) {
-            Ok(settings) => Ok(settings),
+        let schema_version = match serde_json::from_slice::<SettingsEnvelope>(&contents) {
+            Ok(envelope) => envelope.schema_version,
+            Err(_) => {
+                self.back_up_corrupt(&path)?;
+                return Ok(Settings::default());
+            }
+        };
+        let loaded = match schema_version {
+            SCHEMA_VERSION => serde_json::from_slice::<Settings>(&contents).and_then(|settings| {
+                settings
+                    .validate()
+                    .map(|()| settings)
+                    .map_err(serde_json::Error::io)
+            }),
+            1 => serde_json::from_slice::<LegacySettingsV1>(&contents).and_then(|legacy| {
+                let settings = legacy.into_current().ok_or_else(|| {
+                    serde_json::Error::io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid legacy settings schema",
+                    ))
+                })?;
+                settings
+                    .validate()
+                    .map(|()| settings)
+                    .map_err(serde_json::Error::io)
+            }),
+            _ => Err(serde_json::Error::io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported settings schema",
+            ))),
+        };
+        match loaded {
+            Ok(settings) if settings.schema_version == SCHEMA_VERSION => {
+                if schema_version == 1 {
+                    self.save_locked(&settings)?;
+                }
+                Ok(settings)
+            }
             Err(_) => {
                 self.back_up_corrupt(&path)?;
                 Ok(Settings::default())
             }
+            Ok(_) => unreachable!("loaded settings always use the current schema"),
         }
     }
 
@@ -220,6 +342,10 @@ impl SettingsStore {
     pub fn save(&self, settings: &Settings) -> io::Result<()> {
         let _gate = self.gate.lock().unwrap_or_else(|error| error.into_inner());
         settings.validate()?;
+        self.save_locked(settings)
+    }
+
+    fn save_locked(&self, settings: &Settings) -> io::Result<()> {
         fs::create_dir_all(&self.root)?;
         let serialized = serde_json::to_vec_pretty(settings)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -275,101 +401,6 @@ impl Default for SettingsStore {
     }
 }
 
-enum SettingsWriteCommand {
-    Save(Settings),
-    Flush(mpsc::SyncSender<io::Result<()>>),
-    Stop,
-}
-
-/// 설정 저장을 제출 순서대로 별도 스레드에서 수행하는 기록기입니다.
-pub struct AsyncSettingsWriter {
-    sender: mpsc::Sender<SettingsWriteCommand>,
-    worker: Option<JoinHandle<io::Result<()>>>,
-}
-
-impl AsyncSettingsWriter {
-    /// 지정한 저장소를 소유하는 직렬 설정 기록 스레드를 시작합니다.
-    pub fn start(store: SettingsStore) -> Self {
-        let (sender, receiver) = mpsc::channel();
-        let worker = thread::spawn(move || settings_writer_loop(store, receiver));
-        Self {
-            sender,
-            worker: Some(worker),
-        }
-    }
-
-    /// 설정 복사본을 대기하지 않고 저장 대기열에 추가합니다.
-    pub fn save(&self, settings: Settings) -> io::Result<()> {
-        self.sender
-            .send(SettingsWriteCommand::Save(settings))
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "settings writer stopped"))
-    }
-
-    /// 앞서 제출한 모든 저장이 끝날 때까지 기다리고 첫 I/O 오류를 반환합니다.
-    ///
-    /// 테스트, 진단 또는 애플리케이션 종료에서만 사용해야 하며 UI 동작 처리 중에는 호출하지 않습니다.
-    pub fn flush(&self) -> io::Result<()> {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        self.sender
-            .send(SettingsWriteCommand::Flush(sender))
-            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "settings writer stopped"))?;
-        receiver.recv().map_err(|_| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "settings writer response lost")
-        })?
-    }
-
-    /// 대기열을 모두 처리하고 기록 스레드를 종료합니다.
-    pub fn stop(mut self) -> io::Result<()> {
-        let _ = self.sender.send(SettingsWriteCommand::Stop);
-        join_settings_writer(self.worker.take())
-    }
-}
-
-impl Drop for AsyncSettingsWriter {
-    fn drop(&mut self) {
-        let _ = self.sender.send(SettingsWriteCommand::Stop);
-        let _ = join_settings_writer(self.worker.take());
-    }
-}
-
-fn settings_writer_loop(
-    store: SettingsStore,
-    receiver: mpsc::Receiver<SettingsWriteCommand>,
-) -> io::Result<()> {
-    let mut first_error: Option<(io::ErrorKind, String)> = None;
-    while let Ok(command) = receiver.recv() {
-        match command {
-            SettingsWriteCommand::Save(settings) => {
-                if let Err(error) = store.save(&settings) {
-                    if first_error.is_none() {
-                        first_error = Some((error.kind(), error.to_string()));
-                    }
-                }
-            }
-            SettingsWriteCommand::Flush(sender) => {
-                let result = first_error
-                    .as_ref()
-                    .map(|(kind, message)| Err(io::Error::new(*kind, message.clone())))
-                    .unwrap_or(Ok(()));
-                let _ = sender.send(result);
-            }
-            SettingsWriteCommand::Stop => break,
-        }
-    }
-    first_error
-        .map(|(kind, message)| Err(io::Error::new(kind, message)))
-        .unwrap_or(Ok(()))
-}
-
-fn join_settings_writer(worker: Option<JoinHandle<io::Result<()>>>) -> io::Result<()> {
-    match worker {
-        Some(worker) => worker
-            .join()
-            .map_err(|_| io::Error::other("settings writer panicked"))?,
-        None => Ok(()),
-    }
-}
-
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -406,5 +437,98 @@ fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {
     #[cfg(not(windows))]
     {
         fs::rename(source, destination)
+    }
+}
+
+#[cfg(test)]
+mod settings_root_tests {
+    use std::{fs, path::PathBuf, sync::atomic::Ordering};
+
+    use super::{resolve_settings_root, FILE_NONCE};
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "codex-peek-{label}-{}-{}",
+                std::process::id(),
+                FILE_NONCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn default_root_uses_codex_peek_without_creating_it() {
+        let config_dir = TestRoot::new("new-settings-root");
+
+        let resolved = resolve_settings_root(&config_dir.0);
+
+        assert_eq!(resolved, config_dir.0.join("CodexPeek"));
+        assert!(!resolved.exists());
+    }
+
+    #[test]
+    fn default_root_moves_the_complete_legacy_directory_atomically() {
+        let config_dir = TestRoot::new("migrate-settings-root");
+        let legacy = config_dir.0.join("CodexUsageMonitor");
+        let legacy_home = legacy
+            .join("profiles")
+            .join("profile-0001")
+            .join("codex-home");
+        fs::create_dir_all(&legacy_home).unwrap();
+        fs::write(legacy.join("settings.json"), b"legacy-settings").unwrap();
+        fs::write(legacy_home.join("opaque-marker"), b"nested-data").unwrap();
+
+        let resolved = resolve_settings_root(&config_dir.0);
+
+        assert_eq!(resolved, config_dir.0.join("CodexPeek"));
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read(resolved.join("settings.json")).unwrap(),
+            b"legacy-settings"
+        );
+        assert_eq!(
+            fs::read(
+                resolved
+                    .join("profiles")
+                    .join("profile-0001")
+                    .join("codex-home")
+                    .join("opaque-marker")
+            )
+            .unwrap(),
+            b"nested-data"
+        );
+    }
+
+    #[test]
+    fn existing_codex_peek_root_wins_without_merging_legacy_data() {
+        let config_dir = TestRoot::new("conflicting-settings-roots");
+        let legacy = config_dir.0.join("CodexUsageMonitor");
+        let current = config_dir.0.join("CodexPeek");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::create_dir_all(&current).unwrap();
+        fs::write(legacy.join("settings.json"), b"legacy-settings").unwrap();
+        fs::write(current.join("settings.json"), b"current-settings").unwrap();
+
+        let resolved = resolve_settings_root(&config_dir.0);
+
+        assert_eq!(resolved, current);
+        assert_eq!(
+            fs::read(legacy.join("settings.json")).unwrap(),
+            b"legacy-settings"
+        );
+        assert_eq!(
+            fs::read(resolved.join("settings.json")).unwrap(),
+            b"current-settings"
+        );
     }
 }

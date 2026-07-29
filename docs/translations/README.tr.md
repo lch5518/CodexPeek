@@ -1,4 +1,4 @@
-# Codex Usage Monitor
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Birincil ve ikincil hız sınırı pencerelerini görev çubuğunda, yüzen bir 
 
 - Birincil ve ikincil Codex kullanım pencerelerini, sıfırlanma zamanlarıyla birlikte gösterir.
 - Kimlik doğrulama dosyalarını ayrıştırmak yerine yüklü Codex CLI'nin `app-server` arayüzünü kullanır.
+- En fazla sekiz yalıtılmış kullanım profili arasından elle seçim yapmanızı sağlar.
 - Aracı her görev çubuğunda veya yalnızca birincil monitörde göstermeyi destekler.
 - Görev çubuğuna ekleme kullanılamadığında güvenli şekilde yüzen araca ve tepsi simgesine geri döner.
 - Elle yenileme, otomatik yenileme aralıkları, Windows başlangıcı, tanılama ve yerelleştirilmiş kullanıcı arayüzünü destekler.
@@ -22,6 +23,40 @@ Yüklü Codex CLI kendi kimlik doğrulamasını yönetir ve mevcut yapılandırm
 
 İzleyici yalnızca görüntüleme için gereken oturum durumunu ve kullanım pencerelerini ister.
 Bir Codex görevi başlatmaz veya `codex exec` çağırmaz.
+
+## Kullanım profilleri
+
+Silinemeyen sistem profili **Varsayılan Codex hesabı**, CodexPeek başlarken devralınan Codex ana
+dizinini veya `CODEX_HOME` ayarlı değilse CLI varsayılanını kullanır. Her yönetilen profil
+`%APPDATA%\CodexPeek\profiles` altında ayrı bir Codex ana dizini kullanır. Sistem
+profili dahil toplam profil sınırı sekizdir.
+
+Profil etiketlerini siz belirlersiniz. CodexPeek hesap e-postasını veya kimliğini incelemez;
+bu nedenle profil eklerken ya da yeniden oturum açarken tarayıcıda kullanılacak ChatGPT
+hesabını doğrulayın. Profil seçimi yalnızca CodexPeek'in sorguladığı ve gösterdiği kullanımı
+değiştirir. Terminal, IDE, Codex uygulaması, WSL, Remote SSH ve Dev Containers oturumları
+değişmez.
+
+Seçim her zaman elledir. CodexPeek kalan sınıra göre profilleri otomatik seçmez veya
+döndürmez ve Codex işlerini bir profil üzerinden yönlendirmez. Yönetilen bir profili silmek,
+ayrı saklanan CLI kimlik bilgileri dahil yerel verilerini kalıcı olarak kaldırır; onayı
+dikkatle inceleyin.
+
+CodexPeek hiçbir profilin `auth.json` dosyasını okumaz, ayrıştırmaz veya kopyalamaz. Yalnızca
+yönetilen profilin `app-server` alt süreci o profile ait `CODEX_HOME` ve dosya kimlik bilgisi
+deposu ayarını alır. Tanılama etiket, yol veya hesap verisi yerine yalnızca toplu sayıları
+kaydeder.
+
+### Profil yöneticisi
+
+Sistem profilini yeniden adlandırabilirsiniz, ancak oturumunu kapatamaz veya silemezsiniz.
+Sistem profiline verilen özel ad yalnızca CodexPeek'in gösterdiği adı değiştirir; bir hesap
+kimliği değildir. Bu profili varsayılan hesap olarak yalnızca profil yöneticisi işaretler.
+
+Tepsideki **Kullanım profilleri** alt menüsü profil seçmenizi ve **Kullanım profillerini
+yönet** seçeneğini açmanızı sağlar; ekleme komutu içermez. Profilleri yalnızca yönetici
+listesinin altındaki `+` ile ekleyin. Altta Kapat veya Ekle düğmesi yoktur: yöneticiyi
+kapatmak için pencerenin `X` düğmesini veya Esc'yi kullanın.
 
 ## Gereksinimler
 
@@ -101,7 +136,7 @@ Bu Windows x64 bilgisayara CodexPeek'i kur ve doğrulamayı benim için tamamla.
    güvenli şekilde dur ve hassas bilgileri açığa çıkarmadan tam engeli açıkla.
 ```
 
-Kurulum ve Taşınabilir sürümler `%APPDATA%\CodexUsageMonitor\settings.json` dosyasını kullanır; bu nedenle
+Kurulum ve Taşınabilir sürümler `%APPDATA%\CodexPeek\settings.json` dosyasını kullanır; bu nedenle
 bu sürümler arasında geçiş yaparsanız ayarlar paylaşılır. Kurulum uygulaması Başlat Menüsü kısayolu ekler
 ancak Windows başlangıcını varsayılan olarak etkinleştirmez.
 
@@ -133,7 +168,7 @@ Tanılama yalnızca bu yolun var olup olmadığını kontrol eder.
 Ham RPC yanıtları yalnızca oturum açma türünü ve görüntülenen hız sınırı alanlarını çıkarmaya yetecek kadar işlenir.
 Token'lar, hesap ID'leri, e-posta adresleri, kimlik doğrulama dosyası içerikleri ve proxy değerleri saklanmaz veya günlüklere yazılmaz.
 
-Ayarlar `%APPDATA%\CodexUsageMonitor\settings.json` içinde saklanır.
+Ayarlar `%APPDATA%\CodexPeek\settings.json` içinde saklanır.
 Sınırlı tanılama günlüğü `%TEMP%\codex-peek.log` içinde saklanır.
 
 Eksiksiz veri işleme ve güvenlik açığı bildirme yönergeleri için [SECURITY.md](../../SECURITY.md) dosyasına bakın.

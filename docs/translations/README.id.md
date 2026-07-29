@@ -1,4 +1,4 @@
-# Codex Usage Monitor
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Aplikasi ini menampilkan jendela batas penggunaan utama dan sekunder di taskbar,
 
 - Menampilkan jendela penggunaan Codex utama dan sekunder, termasuk waktu reset.
 - Menggunakan antarmuka `app-server` dari Codex CLI yang terpasang, bukan mem-parsing file autentikasi.
+- Memungkinkan Anda memilih secara manual dari maksimal delapan profil penggunaan yang terisolasi.
 - Mendukung tampilan widget di setiap taskbar atau hanya di monitor utama.
 - Beralih dengan aman ke widget mengambang dan ikon tray ketika penempelan ke taskbar tidak tersedia.
 - Mendukung refresh manual, interval refresh otomatis, startup Windows, diagnostik, dan UI terlokalisasi.
@@ -22,6 +23,40 @@ Codex CLI yang terpasang menangani autentikasinya sendiri dan dapat menghubungi 
 
 Monitor hanya meminta status masuk dan jendela penggunaan yang diperlukan untuk tampilan.
 Aplikasi ini tidak memulai tugas Codex atau memanggil `codex exec`.
+
+## Profil penggunaan
+
+Profil sistem **Akun Codex default** yang tidak dapat dihapus memakai Codex home yang diwarisi
+saat CodexPeek dimulai, atau nilai bawaan CLI jika `CODEX_HOME` tidak ditetapkan. Setiap
+profil terkelola memakai Codex home terpisah di bawah
+`%APPDATA%\CodexPeek\profiles`. Batasnya delapan profil secara keseluruhan,
+termasuk profil sistem.
+
+Label profil Anda tentukan sendiri. CodexPeek tidak memeriksa email atau ID akun, jadi
+konfirmasikan akun ChatGPT yang dimaksud di browser saat menambah profil atau masuk lagi.
+Pemilihan hanya mengubah penggunaan yang diambil dan ditampilkan CodexPeek. Login di
+terminal, IDE, aplikasi Codex, WSL, Remote SSH, dan Dev Containers tidak berubah.
+
+Pemilihan selalu manual. CodexPeek tidak memilih atau merotasi profil secara otomatis
+berdasarkan sisa batas dan tidak merutekan pekerjaan Codex melalui profil. Menghapus
+profil terkelola akan menghapus permanen data lokalnya, termasuk kredensial CLI yang
+disimpan terpisah; periksa konfirmasi dengan cermat.
+
+CodexPeek tidak pernah membaca, mem-parsing, atau menyalin `auth.json` profil mana pun.
+Hanya proses anak `app-server` untuk profil terkelola yang menerima `CODEX_HOME` dan
+pengaturan penyimpanan kredensial file miliknya. Diagnostik hanya mencatat jumlah agregat,
+tanpa label, jalur, atau data akun.
+
+### Pengelola profil
+
+Anda dapat mengganti nama profil sistem, tetapi tidak dapat keluar atau menghapusnya. Nama
+khusus profil sistem hanya mengubah tampilan CodexPeek; nama tersebut bukan identitas akun.
+Hanya pengelola profil yang menandainya sebagai akun default.
+
+Submenu baki **Profil penggunaan** memungkinkan Anda memilih profil dan membuka **Kelola
+profil penggunaan**; tidak ada perintah tambah di sana. Tambahkan profil hanya dengan `+` di
+bawah daftar pengelola. Tidak ada tombol Tutup atau Tambah di bagian bawah: gunakan `X` jendela
+atau Esc untuk menutup pengelola.
 
 ## Persyaratan
 
@@ -101,7 +136,7 @@ Instal CodexPeek di komputer Windows x64 ini dan selesaikan verifikasinya untuk 
    jelaskan blocker tepatnya tanpa mengekspos informasi sensitif.
 ```
 
-Edisi Installer dan Portable menggunakan `%APPDATA%\CodexUsageMonitor\settings.json`, sehingga
+Edisi Installer dan Portable menggunakan `%APPDATA%\CodexPeek\settings.json`, sehingga
 pengaturan dibagikan jika Anda beralih di antara keduanya. Installer menambahkan shortcut Start Menu,
 tetapi tidak mengaktifkan startup Windows secara default.
 
@@ -133,7 +168,7 @@ Diagnostik hanya memeriksa apakah path tersebut ada.
 Respons RPC mentah diproses hanya cukup lama untuk mengekstrak jenis login dan kolom batas penggunaan yang ditampilkan.
 Token, ID akun, alamat email, isi file autentikasi, dan nilai proxy tidak disimpan atau ditulis ke log.
 
-Pengaturan disimpan di `%APPDATA%\CodexUsageMonitor\settings.json`.
+Pengaturan disimpan di `%APPDATA%\CodexPeek\settings.json`.
 Log diagnostik berbatas disimpan di `%TEMP%\codex-peek.log`.
 
 Untuk panduan lengkap tentang penanganan data dan pelaporan kerentanan, lihat [SECURITY.md](../../SECURITY.md).

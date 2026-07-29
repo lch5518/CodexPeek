@@ -52,6 +52,28 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::UpdateAvailablePrompt,
         LocalizationKey::UpdateFailedHelp,
         LocalizationKey::UpdateOpenFailed,
+        LocalizationKey::MenuUsageProfiles,
+        LocalizationKey::MenuAddUsageProfile,
+        LocalizationKey::MenuManageUsageProfiles,
+        LocalizationKey::UsageProfileSystem,
+        LocalizationKey::UsageProfileDisplayed,
+        LocalizationKey::UsageProfileCliUnchanged,
+        LocalizationKey::UsageProfileLoginRequired,
+        LocalizationKey::UsageProfileAddTitle,
+        LocalizationKey::UsageProfileConfirmBrowserAccount,
+        LocalizationKey::UsageProfileRename,
+        LocalizationKey::UsageProfileLogin,
+        LocalizationKey::UsageProfileLogout,
+        LocalizationKey::UsageProfileDelete,
+        LocalizationKey::UsageProfileDeleteConfirm,
+        LocalizationKey::UsageProfileLimitReached,
+        LocalizationKey::UsageProfileClose,
+        LocalizationKey::UsageProfileName,
+        LocalizationKey::UsageProfileInvalidLabel,
+        LocalizationKey::UsageProfileCliIdeUnchanged,
+        LocalizationKey::UsageProfileDeleteIrrecoverable,
+        LocalizationKey::UsageProfileOperationFailed,
+        LocalizationKey::UsageProfileCancel,
     ];
     let required_languages = [
         Language::Korean,
@@ -68,6 +90,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Arabic,
     ];
 
+    assert_eq!(LocalizationKey::ALL.len(), 71);
     assert_eq!(LocalizationKey::ALL.len(), required_keys.len());
     for required_key in required_keys {
         assert!(LocalizationKey::ALL.contains(&required_key));
@@ -138,5 +161,25 @@ fn korean_and_english_contracts_stay_stable() {
     assert_eq!(
         localized_text(LocalizationKey::MenuWidgetPlacement, Language::English),
         "Widget placement"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::MenuUsageProfiles, Language::Korean),
+        "사용량 프로필"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::MenuUsageProfiles, Language::English),
+        "Usage profiles"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileCliUnchanged, Language::English),
+        "Codex CLI sign-in is unchanged"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileCancel, Language::Korean),
+        "취소"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileCancel, Language::English),
+        "Cancel"
     );
 }

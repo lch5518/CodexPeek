@@ -15,12 +15,13 @@ use windows::{
         Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage},
         Graphics::Gdi::{
             BeginPaint, CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush,
-            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetStockObject,
-            InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
-            BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
-            DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_RIGHT, DT_RTLREADING,
-            DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL, HDC, HGDIOBJ, NULL_PEN,
-            OUT_DEFAULT_PRECIS, PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
+            DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect, GetDC, GetMonitorInfoW,
+            GetStockObject, InvalidateRect, MonitorFromWindow, ReleaseDC, SelectObject, SetBkMode,
+            SetTextColor, BITMAPINFO, BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS,
+            DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
+            DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_MEDIUM, FW_NORMAL,
+            HDC, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTOPRIMARY, NULL_PEN, OUT_DEFAULT_PRECIS,
+            PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
@@ -43,16 +44,16 @@ use windows::{
                 CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
                 GetMessageW, GetParent, GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW,
                 MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-                SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+                SendMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
                 ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
-                CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, GWL_EXSTYLE, HWND_TOPMOST, IDC_ARROW,
-                IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TASKMODAL,
-                MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SWP_FRAMECHANGED,
-                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA,
-                SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY,
-                WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_PAINT,
-                WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CLIPSIBLINGS,
-                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                CS_VREDRAW, CW_USEDEFAULT, GWLP_HWNDPARENT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
+                HWND_TOPMOST, IDC_ARROW, IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK,
+                MB_SETFOREGROUND, MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG,
+                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
+                SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU,
+                WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE,
+                WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW,
+                WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -63,18 +64,23 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
+    profile_dialog::{
+        confirm_profile_login_owned, show_profile_manager_owned, show_profile_message,
+        ProfileMessageRoute,
+    },
     taskbar::{
-        attach_to_taskbar, reposition_taskbar_widget, TaskbarObserver, TaskbarTarget,
-        TASKBAR_LAYOUT_CHANGED,
+        attach_to_taskbar, reconcile_widget_surfaces, reposition_taskbar_widget, TaskbarObserver,
+        TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
     },
     taskbar_widget::{
-        progress_fill_width, select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode,
-        TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
+        profile_header_text, progress_fill_width, select_weekly_row, widget_surface_layout,
+        HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
 };
+use super::{profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch};
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
@@ -388,7 +394,13 @@ unsafe extern "system" fn owner_proc(
                 let snapshot = state.backend.snapshot();
                 let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
                 for widget in &state.widgets {
-                    let _ = paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value(), rtl);
+                    let _ = paint_taskbar_widget(
+                        widget.hwnd,
+                        &snapshot,
+                        widget.hover.value(),
+                        rtl,
+                        widget_is_attached_to_taskbar(widget),
+                    );
                 }
             }
             LRESULT(0)
@@ -413,10 +425,10 @@ unsafe extern "system" fn owner_proc(
                     let state = &*pointer;
                     (state.owner, state.settings.clone())
                 };
-                let command =
+                let action =
                     TrayIcon::show_menu(owner, &settings, snapshot.reset_credits_text.as_deref());
-                if let Some(command) = command {
-                    dispatch_menu(pointer, command);
+                if let Some(action) = action {
+                    dispatch_action(pointer, action);
                 }
             }
             LRESULT(0)
@@ -516,15 +528,18 @@ unsafe extern "system" fn widget_proc(
         }
         WM_PAINT => {
             let snapshot = (*pointer).backend.snapshot();
-            let hover = widget_slot(pointer, hwnd)
-                .map(|widget| (*widget).hover.value())
-                .unwrap_or_default();
+            let (hover, attached_to_taskbar) = widget_slot(pointer, hwnd)
+                .map(|widget| {
+                    let widget = &*widget;
+                    (widget.hover.value(), widget_is_attached_to_taskbar(widget))
+                })
+                .unwrap_or((0, false));
             let rtl = matches!(
                 (*pointer).settings.resolved_language,
                 crate::Language::Arabic
             );
             validate_paint(hwnd);
-            let _ = paint_taskbar_widget(hwnd, &snapshot, hover, rtl);
+            let _ = paint_taskbar_widget(hwnd, &snapshot, hover, rtl, attached_to_taskbar);
             LRESULT(0)
         }
         WM_DPICHANGED => {
@@ -557,25 +572,180 @@ unsafe fn widget_slot(state_pointer: *mut NativeState<'_>, hwnd: HWND) -> Option
         .map(|widget| widget as *mut WidgetSlot)
 }
 
+unsafe fn widget_is_attached_to_taskbar(widget: &WidgetSlot) -> bool {
+    widget.taskbar_parent != HWND::default()
+        && IsWindow(Some(widget.taskbar_parent)).as_bool()
+        && GetParent(widget.hwnd).ok() == Some(widget.taskbar_parent)
+}
+
 unsafe fn store_state(hwnd: HWND, lparam: LPARAM) {
     let create = &*(lparam.0 as *const CREATESTRUCTW);
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as isize);
 }
 
-unsafe fn dispatch_menu(state_pointer: *mut NativeState<'_>, menu_id: u16) {
-    let Some(action) = super::super::menu_action(menu_id) else {
-        return;
-    };
+unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction) {
     if action == UiAction::Exit {
         begin_exit(state_pointer);
         return;
     }
-    let settings = (*state_pointer).backend.dispatch(action);
+    if matches!(
+        action,
+        UiAction::OpenAddUsageProfile | UiAction::OpenManageUsageProfiles
+    ) {
+        open_profile_dialog(state_pointer);
+        return;
+    }
+    let settings = if matches!(
+        action,
+        UiAction::AddUsageProfile(_) | UiAction::Login | UiAction::LoginUsageProfile(_)
+    ) {
+        let latest = (*state_pointer).backend.settings();
+        (*state_pointer).settings = latest;
+        let Some(request) = profile_login_confirmation_request(&action, &(*state_pointer).settings)
+        else {
+            show_profile_dialog_error(
+                (*state_pointer).owner,
+                (*state_pointer).settings.resolved_language,
+            );
+            return;
+        };
+        let confirmed = match confirm_profile_login_owned(
+            (*state_pointer).owner,
+            request.label(),
+            (*state_pointer).settings.resolved_language,
+        ) {
+            Ok(confirmed) => confirmed,
+            Err(_) => {
+                show_profile_dialog_error(
+                    (*state_pointer).owner,
+                    (*state_pointer).settings.resolved_language,
+                );
+                return;
+            }
+        };
+        let Some(dispatch) = request.resolve(confirmed) else {
+            return;
+        };
+        match dispatch {
+            ProfileLoginDispatch::Normal(action) => (*state_pointer).backend.dispatch(action),
+            ProfileLoginDispatch::Confirmed(action) => (*state_pointer)
+                .backend
+                .dispatch_confirmed_profile_login(action),
+        }
+    } else {
+        (*state_pointer).backend.dispatch(action)
+    };
     (*state_pointer).settings = settings;
     update_window_titles(state_pointer);
     let _ = apply_window_policy(state_pointer);
     let _ = refresh_tray(state_pointer, false);
     update_tooltips(state_pointer);
+}
+
+/// 현재 UI 복사본으로 프로필 관리 창을 열고 검증된 결과만 백엔드에 전달합니다.
+///
+/// 대화상자 자체는 파일·설정·Codex 작업을 수행하지 않습니다. `UiBackend`는 반환된 타입 지정
+/// 의도를 받아 장시간 작업을 워커에 예약해야 하며, 오류 문구에는 OS 코드나 프로필 식별 정보를
+/// 포함하지 않습니다.
+unsafe fn open_profile_dialog(state_pointer: *mut NativeState<'_>) {
+    let settings = (*state_pointer).backend.settings();
+    (*state_pointer).settings = settings;
+    let state = &*state_pointer;
+    let result = show_profile_manager_owned(
+        state.owner,
+        &state.settings.usage_profiles,
+        state.settings.usage_profile_mutation_pending,
+        state.settings.resolved_language,
+    );
+    match result {
+        Ok(Some(action)) => dispatch_action(state_pointer, profile_dialog_ui_action(action)),
+        Ok(None) => {}
+        Err(_) => show_profile_dialog_error(state.owner, state.settings.resolved_language),
+    }
+}
+
+/// 네이티브 UI가 프로필 메시지와 일반 애플리케이션 메시지를 서로 다른 경계로 표시합니다.
+trait NativeMessagePresenter {
+    fn present_profile(
+        &mut self,
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT>;
+
+    fn present_application(
+        &mut self,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT>;
+}
+
+struct WindowsNativeMessagePresenter;
+
+impl NativeMessagePresenter for WindowsNativeMessagePresenter {
+    fn present_profile(
+        &mut self,
+        route: ProfileMessageRoute,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT> {
+        // SAFETY: 네이티브 UI 호출자는 기존과 동일한 owner 수명 계약을 지키며, 공통 경계가
+        // 문자열을 소유 UTF-16 버퍼로 복사한 뒤 동기적으로 표시합니다.
+        unsafe { show_profile_message(route, owner, message, title, style) }
+    }
+
+    fn present_application(
+        &mut self,
+        message: &str,
+        title: &str,
+        style: MESSAGEBOX_STYLE,
+    ) -> io::Result<MESSAGEBOX_RESULT> {
+        let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+        let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        // SAFETY: 두 버퍼는 NUL 종료되어 있고 동기 `MessageBoxW` 호출이 반환될 때까지 살아
+        // 있습니다. 소유자를 전달하지 않아 기존 애플리케이션 메시지 동작을 유지합니다.
+        let result = unsafe {
+            MessageBoxW(
+                None,
+                PCWSTR(message.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                style,
+            )
+        };
+        if result.0 == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(result)
+        }
+    }
+}
+
+unsafe fn show_profile_dialog_error(owner: HWND, language: crate::Language) {
+    let mut presenter = WindowsNativeMessagePresenter;
+    show_profile_dialog_error_with_presenter(owner, language, &mut presenter);
+}
+
+/// 네이티브 프로필 작업 오류를 프로필 전용 가운데 배치 경계로 전달합니다.
+fn show_profile_dialog_error_with_presenter<P: NativeMessagePresenter>(
+    owner: HWND,
+    language: crate::Language,
+    presenter: &mut P,
+) {
+    let _ = presenter.present_profile(
+        ProfileMessageRoute::NativeOperationError,
+        owner,
+        crate::localized_text(
+            crate::LocalizationKey::UsageProfileOperationFailed,
+            language,
+        ),
+        crate::localized_text(crate::LocalizationKey::WindowTitle, language),
+        MB_OK | windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR,
+    );
 }
 
 /// 트레이 아이콘 삭제가 끝난 뒤에만 owner 창을 파괴하도록 비동기 종료를 시작합니다.
@@ -607,17 +777,14 @@ unsafe fn tray_shutdown_complete(state_pointer: *mut NativeState<'_>) -> bool {
     )
 }
 
-unsafe fn create_widget(
-    state_pointer: *mut NativeState<'_>,
-    target: TaskbarTarget,
-) -> io::Result<HWND> {
+unsafe fn create_detached_widget(state_pointer: *mut NativeState<'_>) -> io::Result<HWND> {
     let (owner, instance) = {
         let state = &*state_pointer;
         (state.owner, state.instance)
     };
-    // 작업표시줄 위젯의 기본 논리 크기. 실제 물리 크기는 작업표시줄 부착 시 보정됩니다.
+    // 분리 위젯은 프로필 헤더와 기존 48px 본문을 함께 표시합니다.
     let width = logical_to_physical(TASKBAR_WIDTH_LOGICAL, 96);
-    let height = logical_to_physical(48, 96);
+    let height = logical_to_physical(72, 96);
     let widget_title = localized_window_title((*state_pointer).settings.resolved_language);
     let widget = CreateWindowExW(
         WS_EX_TOOLWINDOW,
@@ -637,7 +804,7 @@ unsafe fn create_widget(
     let was_empty = (*state_pointer).widgets.is_empty();
     (*state_pointer).widgets.push(WidgetSlot {
         hwnd: widget,
-        taskbar_parent: target.parent,
+        taskbar_parent: HWND::default(),
         hover: HoverTransition::default(),
         mouse_tracking: false,
         tooltip: HWND::default(),
@@ -648,14 +815,79 @@ unsafe fn create_widget(
         state.lifecycle.widget_created();
     }
     if let Err(error) =
-        set_layered_mode(widget, true).and_then(|()| attach_to_taskbar(widget, target))
+        set_layered_mode(widget, true).and_then(|()| position_detached_widget(widget))
     {
         let _ = DestroyWindow(widget);
         return Err(error);
     }
-    (*state_pointer).lifecycle.widget_attached_to_taskbar();
     let _ = create_tooltip(state_pointer, widget);
     Ok(widget)
+}
+
+unsafe fn attach_widget(
+    state_pointer: *mut NativeState<'_>,
+    widget: HWND,
+    target: TaskbarTarget,
+) -> io::Result<()> {
+    if let Err(attach_error) = attach_to_taskbar(widget, target) {
+        let _ = detach_widget(state_pointer, widget);
+        return Err(attach_error);
+    }
+    let slot = widget_slot(state_pointer, widget)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "widget slot unavailable"))?;
+    (*slot).taskbar_parent = target.parent;
+    (*state_pointer).lifecycle.widget_attached_to_taskbar();
+    Ok(())
+}
+
+unsafe fn detach_widget(state_pointer: *mut NativeState<'_>, widget: HWND) -> io::Result<()> {
+    let owner = (*state_pointer).owner;
+    SetParent(widget, None).map_err(win_error)?;
+    let style = GetWindowLongPtrW(widget, GWL_STYLE) as u32;
+    let detached_style = (style & !WS_CHILD.0) | WS_POPUP.0 | WS_CLIPSIBLINGS.0;
+    SetWindowLongPtrW(widget, GWL_STYLE, detached_style as isize);
+    SetWindowLongPtrW(widget, GWLP_HWNDPARENT, owner.0 as isize);
+    let verified_style = GetWindowLongPtrW(widget, GWL_STYLE) as u32;
+    if verified_style & (WS_CHILD.0 | WS_POPUP.0) != WS_POPUP.0
+        || GetParent(widget).ok() != Some(owner)
+    {
+        return Err(io::Error::other(
+            "detached widget style or owner verification failed",
+        ));
+    }
+    position_detached_widget(widget)?;
+    let slot = widget_slot(state_pointer, widget)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "widget slot unavailable"))?;
+    (*slot).taskbar_parent = HWND::default();
+    Ok(())
+}
+
+unsafe fn position_detached_widget(widget: HWND) -> io::Result<()> {
+    let monitor = MonitorFromWindow(widget, MONITOR_DEFAULTTOPRIMARY);
+    let mut monitor_info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
+        return Err(io::Error::last_os_error());
+    }
+    let dpi = GetDpiForWindow(widget).max(96);
+    let width = logical_to_physical(TASKBAR_WIDTH_LOGICAL, dpi);
+    let height = logical_to_physical(72, dpi);
+    let margin = logical_to_physical(16, dpi);
+    let work_area = monitor_info.rcWork;
+    let x = (work_area.right - width - margin).max(work_area.left);
+    let y = (work_area.bottom - height - margin).max(work_area.top);
+    SetWindowPos(
+        widget,
+        Some(HWND_TOPMOST),
+        x,
+        y,
+        width.min(work_area.right - work_area.left),
+        height.min(work_area.bottom - work_area.top),
+        SWP_FRAMECHANGED | SWP_NOACTIVATE,
+    )
+    .map_err(win_error)
 }
 
 unsafe fn create_tooltip(state_pointer: *mut NativeState<'_>, widget: HWND) -> io::Result<()> {
@@ -799,6 +1031,57 @@ unsafe fn refresh_tray(state_pointer: *mut NativeState<'_>, restore: bool) -> io
     Ok(())
 }
 
+struct NativeWidgetSurfaceBackend<'a> {
+    state_pointer: *mut NativeState<'a>,
+    targets: Vec<TaskbarTarget>,
+}
+
+impl WidgetSurfaceBackend for NativeWidgetSurfaceBackend<'_> {
+    type Window = HWND;
+    type Target = HWND;
+    type Error = io::Error;
+
+    fn surfaces(&self) -> Vec<(Self::Window, WidgetSurface<Self::Target>)> {
+        unsafe {
+            (*self.state_pointer)
+                .widgets
+                .iter()
+                .filter(|widget| IsWindow(Some(widget.hwnd)).as_bool())
+                .map(|widget| {
+                    let surface = if widget_is_attached_to_taskbar(widget) {
+                        WidgetSurface::Attached(widget.taskbar_parent)
+                    } else {
+                        WidgetSurface::Detached
+                    };
+                    (widget.hwnd, surface)
+                })
+                .collect()
+        }
+    }
+
+    fn create_detached(&mut self) -> Result<Self::Window, Self::Error> {
+        unsafe { create_detached_widget(self.state_pointer) }
+    }
+
+    fn attach(&mut self, window: Self::Window, target: Self::Target) -> Result<(), Self::Error> {
+        let target = self
+            .targets
+            .iter()
+            .find(|candidate| candidate.parent == target)
+            .copied()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "taskbar target unavailable"))?;
+        unsafe { attach_widget(self.state_pointer, window, target) }
+    }
+
+    fn detach(&mut self, window: Self::Window) -> Result<(), Self::Error> {
+        unsafe { detach_widget(self.state_pointer, window) }
+    }
+
+    fn destroy(&mut self, window: Self::Window) -> Result<(), Self::Error> {
+        unsafe { DestroyWindow(window).map_err(win_error) }
+    }
+}
+
 unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result<()> {
     let settings = (*state_pointer).settings.clone();
     if !settings.widget_visible {
@@ -808,36 +1091,37 @@ unsafe fn apply_window_policy(state_pointer: *mut NativeState<'_>) -> io::Result
         return Ok(());
     }
     let targets = desired_taskbars(&*state_pointer);
-    if widgets_match_targets(&(*state_pointer).widgets, &targets) {
-        reposition_widgets(&(*state_pointer).widgets, &targets);
-        let state = &*state_pointer;
-        let snapshot = state.backend.snapshot();
-        let rtl = matches!(state.settings.resolved_language, crate::Language::Arabic);
-        for widget in &state.widgets {
-            let _ = ShowWindow(widget.hwnd, SW_SHOWNA);
-            if let Err(error) =
-                paint_taskbar_widget(widget.hwnd, &snapshot, widget.hover.value(), rtl)
-            {
-                log_taskbar_render_error("compose", &error);
-            }
-        }
-        return Ok(());
+    let target_parents = targets
+        .iter()
+        .map(|target| target.parent)
+        .collect::<Vec<_>>();
+    let attach_errors = {
+        let mut backend = NativeWidgetSurfaceBackend {
+            state_pointer,
+            targets: targets.clone(),
+        };
+        reconcile_widget_surfaces(&mut backend, &target_parents)?
+    };
+    for error in attach_errors {
+        log_taskbar_render_error("attach", &error);
     }
-    destroy_all_widgets(state_pointer);
+
+    reposition_widgets(&(*state_pointer).widgets, &targets);
     let snapshot = (*state_pointer).backend.snapshot();
     let rtl = matches!(
         (*state_pointer).settings.resolved_language,
         crate::Language::Arabic
     );
-    for target in targets {
-        match create_widget(state_pointer, target) {
-            Ok(widget) => {
-                let _ = ShowWindow(widget, SW_SHOWNA);
-                if let Err(error) = paint_taskbar_widget(widget, &snapshot, 0, rtl) {
-                    log_taskbar_render_error("compose", &error);
-                }
-            }
-            Err(error) => log_taskbar_render_error("attach", &error),
+    for widget in &(*state_pointer).widgets {
+        let _ = ShowWindow(widget.hwnd, SW_SHOWNA);
+        if let Err(error) = paint_taskbar_widget(
+            widget.hwnd,
+            &snapshot,
+            widget.hover.value(),
+            rtl,
+            widget_is_attached_to_taskbar(widget),
+        ) {
+            log_taskbar_render_error("compose", &error);
         }
     }
     Ok(())
@@ -866,9 +1150,14 @@ unsafe fn widgets_match_targets(widgets: &[WidgetSlot], targets: &[TaskbarTarget
 }
 
 unsafe fn reposition_widgets(widgets: &[WidgetSlot], targets: &[TaskbarTarget]) {
-    for (widget, target) in widgets.iter().zip(targets) {
-        if let Err(error) = reposition_taskbar_widget(widget.hwnd, *target) {
-            log_taskbar_render_error("position", &error);
+    for widget in widgets {
+        if let Some(target) = targets
+            .iter()
+            .find(|target| target.parent == widget.taskbar_parent)
+        {
+            if let Err(error) = reposition_taskbar_widget(widget.hwnd, *target) {
+                log_taskbar_render_error("position", &error);
+            }
         }
     }
 }
@@ -927,6 +1216,7 @@ unsafe fn paint_taskbar_widget(
     view: &WidgetViewModel,
     hover: u8,
     rtl: bool,
+    attached_to_taskbar: bool,
 ) -> io::Result<()> {
     let mut client = RECT::default();
     GetClientRect(hwnd, &mut client).map_err(win_error)?;
@@ -990,19 +1280,32 @@ unsafe fn paint_taskbar_widget(
     let old_bitmap = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
     let dpi = GetDpiForWindow(hwnd).max(96);
     let palette = taskbar_palette(system_uses_light_theme());
-    paint_compact_taskbar_content(
+    let background = CreateSolidBrush(COLORREF(palette.material));
+    FillRect(
         memory_dc,
-        RECT {
+        &RECT {
             left: 0,
             top: 0,
             right: width,
             bottom: height,
         },
+        background,
+    );
+    let _ = DeleteObject(HGDIOBJ(background.0));
+    let surface = widget_surface_layout(width, height, dpi, attached_to_taskbar);
+    paint_compact_taskbar_content(
+        memory_dc,
+        native_rect(surface.content),
         dpi,
         view,
         palette,
         rtl,
     );
+    if let (Some(header), Some(label)) =
+        (surface.profile_header, profile_header_text(view, surface))
+    {
+        paint_profile_header(memory_dc, header, label, dpi, palette, rtl);
+    }
     apply_glass_alpha(
         std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
         width,
@@ -1180,6 +1483,14 @@ unsafe fn paint_compact_taskbar_content(
     let width = client.right - client.left;
     let height = client.bottom - client.top;
     let layout = TaskbarLayout::for_size(width, height, dpi);
+    let positioned = |rect: Rect| {
+        Rect::new(
+            rect.left + client.left,
+            rect.top + client.top,
+            rect.right + client.left,
+            rect.bottom + client.top,
+        )
+    };
     let row = select_weekly_row(view.primary.as_ref(), view.secondary.as_ref());
     let risk = match view.data_state {
         WidgetDataState::Loading => TaskbarRisk::Loading,
@@ -1214,7 +1525,7 @@ unsafe fn paint_compact_taskbar_content(
                 w!("Segoe UI Variable"),
             );
             let old = SelectObject(dc, HGDIOBJ(font.0));
-            let mut dot = native_rect(dot);
+            let mut dot = native_rect(positioned(dot));
             draw_text(
                 dc,
                 "!",
@@ -1229,7 +1540,7 @@ unsafe fn paint_compact_taskbar_content(
         let brush = CreateSolidBrush(accent);
         let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
         let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-        let dot = native_rect(dot);
+        let dot = native_rect(positioned(dot));
         let _ = Ellipse(dc, dot.left, dot.top, dot.right, dot.bottom);
         SelectObject(dc, old_pen);
         SelectObject(dc, old_brush);
@@ -1254,7 +1565,7 @@ unsafe fn paint_compact_taskbar_content(
             w!("Segoe UI Variable"),
         );
         let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
-        let mut label = native_rect(label);
+        let mut label = native_rect(positioned(label));
         let alignment = if rtl {
             DT_RIGHT | DT_RTLREADING
         } else {
@@ -1288,7 +1599,7 @@ unsafe fn paint_compact_taskbar_content(
         w!("Segoe UI Variable"),
     );
     let old_font = SelectObject(dc, HGDIOBJ(percent_font.0));
-    let mut percent = native_rect(layout.percent);
+    let mut percent = native_rect(positioned(layout.percent));
     let percent_alignment = if layout.mode == TaskbarLayoutMode::Minimal {
         DT_CENTER
     } else {
@@ -1313,7 +1624,8 @@ unsafe fn paint_compact_taskbar_content(
     let _ = DeleteObject(HGDIOBJ(percent_font.0));
 
     let track = CreateSolidBrush(COLORREF(palette.track));
-    FillRect(dc, &native_rect(layout.progress), track);
+    let progress = positioned(layout.progress);
+    FillRect(dc, &native_rect(progress), track);
     let _ = DeleteObject(HGDIOBJ(track.0));
     if let Some(row) = row {
         let fill_width = progress_fill_width(layout.progress.width(), row.display_percent);
@@ -1322,14 +1634,62 @@ unsafe fn paint_compact_taskbar_content(
             FillRect(
                 dc,
                 &RECT {
-                    right: layout.progress.left + fill_width,
-                    ..native_rect(layout.progress)
+                    right: progress.left + fill_width,
+                    ..native_rect(progress)
                 },
                 fill,
             );
             let _ = DeleteObject(HGDIOBJ(fill.0));
         }
     }
+}
+
+unsafe fn paint_profile_header(
+    dc: HDC,
+    header: Rect,
+    label: &str,
+    dpi: u32,
+    palette: TaskbarPalette,
+    rtl: bool,
+) {
+    let header = native_rect(header);
+    let background = CreateSolidBrush(COLORREF(palette.material));
+    FillRect(dc, &header, background);
+    let _ = DeleteObject(HGDIOBJ(background.0));
+    let _ = SetBkMode(dc, TRANSPARENT);
+
+    let font = CreateFontW(
+        -logical_to_physical(11, dpi),
+        0,
+        0,
+        0,
+        FW_MEDIUM.0 as i32,
+        0,
+        0,
+        0,
+        DEFAULT_CHARSET,
+        OUT_DEFAULT_PRECIS,
+        CLIP_DEFAULT_PRECIS,
+        PROOF_QUALITY,
+        u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
+        w!("Segoe UI Variable"),
+    );
+    let old_font = SelectObject(dc, HGDIOBJ(font.0));
+    let mut text_rect = header;
+    let alignment = if rtl {
+        DT_RIGHT | DT_RTLREADING
+    } else {
+        DT_LEFT
+    };
+    draw_text(
+        dc,
+        label,
+        &mut text_rect,
+        alignment | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+        COLORREF(palette.label),
+    );
+    SelectObject(dc, old_font);
+    let _ = DeleteObject(HGDIOBJ(font.0));
 }
 
 fn compact_percent_text(mode: TaskbarLayoutMode, risk: TaskbarRisk, percent: Option<&str>) -> &str {
@@ -1462,19 +1822,19 @@ unsafe fn open_browser_url(url: &str) -> io::Result<()> {
 }
 
 pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::Result<()> {
-    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
-    let result = MessageBoxW(
-        None,
-        PCWSTR(message.as_ptr()),
-        PCWSTR(title.as_ptr()),
-        MB_OK | MB_ICONINFORMATION,
-    );
-    if result.0 == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
+    let mut presenter = WindowsNativeMessagePresenter;
+    show_diagnostic_summary_with_presenter(title, message, &mut presenter)
+}
+
+/// 진단 요약을 프로필 라우팅과 분리된 일반 애플리케이션 메시지 경계로 전달합니다.
+fn show_diagnostic_summary_with_presenter<P: NativeMessagePresenter>(
+    title: &str,
+    message: &str,
+    presenter: &mut P,
+) -> io::Result<()> {
+    presenter
+        .present_application(message, title, MB_OK | MB_ICONINFORMATION)
+        .map(|_| ())
 }
 
 pub(super) unsafe fn show_update_dialog(
@@ -1520,15 +1880,88 @@ fn update_dialog_style(buttons: MESSAGEBOX_STYLE, icon: MESSAGEBOX_STYLE) -> MES
 
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use super::{
         compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
+        show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
         taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
-        update_dialog_style, TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk,
-        UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
+        update_dialog_style, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
+        TaskbarRisk, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        IDNO, IDYES, MB_ICONINFORMATION, MB_TASKMODAL, MB_YESNO, WM_LBUTTONUP, WM_RBUTTONUP,
+    use crate::{windows::profile_dialog::ProfileMessageRoute, Language};
+    use windows::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{
+            IDNO, IDOK, IDYES, MB_ICONINFORMATION, MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT,
+            MESSAGEBOX_STYLE, WM_LBUTTONUP, WM_RBUTTONUP,
+        },
     };
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum PresentedNativeMessage {
+        Profile(ProfileMessageRoute),
+        Application,
+    }
+
+    #[derive(Default)]
+    struct RecordingNativeMessagePresenter {
+        messages: Vec<PresentedNativeMessage>,
+    }
+
+    impl NativeMessagePresenter for RecordingNativeMessagePresenter {
+        fn present_profile(
+            &mut self,
+            route: ProfileMessageRoute,
+            _owner: HWND,
+            _message: &str,
+            _title: &str,
+            _style: MESSAGEBOX_STYLE,
+        ) -> io::Result<MESSAGEBOX_RESULT> {
+            self.messages.push(PresentedNativeMessage::Profile(route));
+            Ok(IDOK)
+        }
+
+        fn present_application(
+            &mut self,
+            _message: &str,
+            _title: &str,
+            _style: MESSAGEBOX_STYLE,
+        ) -> io::Result<MESSAGEBOX_RESULT> {
+            self.messages.push(PresentedNativeMessage::Application);
+            Ok(IDOK)
+        }
+    }
+
+    #[test]
+    fn native_profile_operation_error_uses_the_profile_message_boundary() {
+        let mut presenter = RecordingNativeMessagePresenter::default();
+
+        show_profile_dialog_error_with_presenter(
+            HWND(201_usize as _),
+            Language::English,
+            &mut presenter,
+        );
+
+        assert_eq!(
+            presenter.messages,
+            vec![PresentedNativeMessage::Profile(
+                ProfileMessageRoute::NativeOperationError
+            )]
+        );
+    }
+
+    #[test]
+    fn diagnostic_summary_stays_outside_the_profile_message_boundary() {
+        let mut presenter = RecordingNativeMessagePresenter::default();
+
+        show_diagnostic_summary_with_presenter("Diagnostics", "Ready", &mut presenter).unwrap();
+
+        assert_eq!(
+            presenter.messages,
+            vec![PresentedNativeMessage::Application]
+        );
+    }
 
     #[test]
     fn tray_menu_uses_only_version_4_activation_events() {

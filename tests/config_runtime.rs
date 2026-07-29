@@ -4,8 +4,9 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    AsyncSettingsWriter, LanguagePreference, Settings, SettingsStore, StartupView,
-    TaskbarDisplayMode,
+    LanguagePreference, NativeProfileFileSystem, ProfileSettingsEvent, ProfileSettingsMutation,
+    ProfileSettingsService, Settings, SettingsStore, StartupView, TaskbarDisplayMode,
+    UsageProfileId,
 };
 
 fn test_root(label: &str) -> std::path::PathBuf {
@@ -16,14 +17,171 @@ fn test_root(label: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("codex-peek-{label}-{nonce}"))
 }
 
+fn valid_schema_v1_json() -> &'static [u8] {
+    br#"{
+  "schema_version": 1,
+  "refresh_interval_minutes": 15,
+  "widget_visible": false,
+  "taskbar_offset": 24,
+  "taskbar_display_mode": "primary",
+  "start_with_windows": true,
+  "startup_view": "tray_only",
+  "auto_auth_refresh": false,
+  "language": "korean",
+  "last_update_check_unix": 1234,
+  "show_remaining_percent": true
+}"#
+}
+
 #[test]
-fn asynchronous_settings_writer_preserves_submission_order() {
+fn schema_v1_migrates_to_system_profile_and_is_persisted_as_v2() {
+    let root = test_root("profile-migration");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("settings.json"), valid_schema_v1_json()).unwrap();
+    let store = SettingsStore::for_root(root.clone());
+
+    assert_eq!(store.root(), root.as_path());
+    let loaded = store.load().unwrap();
+
+    assert_eq!(loaded.schema_version, 2);
+    assert_eq!(loaded.usage_profiles.selected(), UsageProfileId::System);
+    assert_eq!(loaded.refresh_interval_minutes, 15);
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("settings.json")).unwrap()).unwrap();
+    assert_eq!(persisted["schema_version"], 2);
+    assert!(persisted.get("usage_profiles").is_some());
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn system_profile_label_defaults_for_v2_and_round_trips() {
+    let root = test_root("system-profile-label");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("settings.json"),
+        br#"{
+  "schema_version": 2,
+  "refresh_interval_minutes": 5,
+  "widget_visible": true,
+  "taskbar_offset": 0,
+  "taskbar_display_mode": "all",
+  "start_with_windows": false,
+  "startup_view": "widget",
+  "auto_auth_refresh": true,
+  "language": "auto",
+  "last_update_check_unix": null,
+  "show_remaining_percent": false,
+  "usage_profiles": {
+    "managed": [],
+    "selected": "system",
+    "next_sequence": 1
+  }
+}"#,
+    )
+    .unwrap();
+    let store = SettingsStore::for_root(&root);
+    let mut settings = store.load().unwrap();
+
+    assert_eq!(settings.usage_profiles.system_label(), None);
+    settings
+        .usage_profiles
+        .rename(UsageProfileId::System, "Main")
+        .unwrap();
+    store.save(&settings).unwrap();
+
+    assert_eq!(
+        store.load().unwrap().usage_profiles.system_label(),
+        Some("Main")
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn invalid_usage_profile_catalogs_are_backed_up_and_reset() {
+    let cases = [
+        (
+            "duplicate-sequence",
+            r#"{"managed":[{"sequence":1,"label":"Work"},{"sequence":1,"label":"Personal"}],"selected":"system","next_sequence":2}"#,
+        ),
+        (
+            "missing-selected",
+            r#"{"managed":[],"selected":{"managed":1},"next_sequence":2}"#,
+        ),
+        (
+            "non-increasing-next-sequence",
+            r#"{"managed":[{"sequence":1,"label":"Work"}],"selected":"system","next_sequence":1}"#,
+        ),
+        (
+            "profile-overflow",
+            r#"{"managed":[{"sequence":1,"label":"One"},{"sequence":2,"label":"Two"},{"sequence":3,"label":"Three"},{"sequence":4,"label":"Four"},{"sequence":5,"label":"Five"},{"sequence":6,"label":"Six"},{"sequence":7,"label":"Seven"},{"sequence":8,"label":"Eight"}],"selected":"system","next_sequence":9}"#,
+        ),
+    ];
+
+    for (label, usage_profiles) in cases {
+        let root = test_root(label);
+        fs::create_dir_all(&root).unwrap();
+        let mut settings = serde_json::to_value(Settings::default()).unwrap();
+        settings["usage_profiles"] = serde_json::from_str(usage_profiles).unwrap();
+        let bytes = serde_json::to_vec(&settings).unwrap();
+        fs::write(root.join("settings.json"), &bytes).unwrap();
+        let store = SettingsStore::for_root(&root);
+
+        assert_eq!(store.load().unwrap(), Settings::default(), "{label}");
+        let backup = fs::read_dir(&root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("settings.corrupt-")
+            })
+            .unwrap();
+        assert_eq!(fs::read(backup).unwrap(), bytes, "{label}");
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn schema_v3_is_backed_up_and_reset_to_defaults() {
+    let root = test_root("schema-v3");
+    fs::create_dir_all(&root).unwrap();
+    let mut settings = serde_json::to_value(Settings::default()).unwrap();
+    settings["schema_version"] = serde_json::json!(3);
+    let bytes = serde_json::to_vec(&settings).unwrap();
+    fs::write(root.join("settings.json"), &bytes).unwrap();
+    let store = SettingsStore::for_root(&root);
+
+    assert_eq!(store.load().unwrap(), Settings::default());
+    let backup = fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("settings.corrupt-")
+        })
+        .unwrap();
+    assert_eq!(fs::read(backup).unwrap(), bytes);
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn profile_settings_writer_preserves_preference_submission_order() {
     let root = test_root("async-ordered");
     let store = SettingsStore::for_root(&root);
-    let writer = AsyncSettingsWriter::start(store.clone());
+    let writer = ProfileSettingsService::start(
+        store.clone(),
+        Settings::default(),
+        NativeProfileFileSystem::default(),
+    );
     for offset in [10, 20, 30] {
         writer
-            .save(Settings {
+            .save_preferences(Settings {
                 taskbar_offset: offset,
                 ..Settings::default()
             })
@@ -36,9 +194,46 @@ fn asynchronous_settings_writer_preserves_submission_order() {
 }
 
 #[test]
+fn profile_settings_preference_write_preserves_newer_profile_catalog() {
+    let root = test_root("profile-settings-preference-order");
+    let store = SettingsStore::for_root(&root);
+    let original = Settings::default();
+    let service = ProfileSettingsService::start(
+        store.clone(),
+        original.clone(),
+        NativeProfileFileSystem::default(),
+    );
+    service
+        .submit(ProfileSettingsMutation::Add {
+            label: "Work".to_owned(),
+        })
+        .unwrap();
+    assert!(matches!(
+        service.wait_for_event().unwrap(),
+        ProfileSettingsEvent::Added { .. }
+    ));
+
+    service
+        .save_preferences(Settings {
+            taskbar_offset: 42,
+            ..original
+        })
+        .unwrap();
+    service.flush().unwrap();
+
+    let saved = store.load().unwrap();
+    assert_eq!(saved.taskbar_offset, 42);
+    assert_eq!(saved.usage_profiles.managed().len(), 1);
+    assert_eq!(saved.usage_profiles.managed()[0].label(), "Work");
+    service.stop().unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn settings_defaults_match_product_policy() {
     let settings = Settings::default();
-    assert_eq!(settings.schema_version, 1);
+    assert_eq!(settings.schema_version, 2);
+    assert_eq!(settings.usage_profiles.selected(), UsageProfileId::System);
     assert_eq!(settings.refresh_interval_minutes, 5);
     assert!(settings.widget_visible);
     assert_eq!(settings.taskbar_offset, 0);
@@ -80,7 +275,7 @@ fn language_preferences_round_trip_all_persisted_variants() {
         assert_eq!(store.load().unwrap().language, preference);
         let json: serde_json::Value =
             serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
-        assert_eq!(json["schema_version"], 1);
+        assert_eq!(json["schema_version"], 2);
         assert_eq!(json["language"], persisted);
 
         let _ = fs::remove_dir_all(root);
@@ -217,7 +412,7 @@ fn diagnostic_inspection_reports_valid_and_invalid_settings_without_mutation() {
     let cases = [
         b"not json".to_vec(),
         serde_json::to_vec(&Settings {
-            schema_version: 2,
+            schema_version: 3,
             ..Settings::default()
         })
         .unwrap(),
@@ -456,7 +651,7 @@ fn concurrent_saves_leave_valid_final_json_without_temp_files() {
 #[test]
 fn complete_json_field_mutations_are_backed_up_exactly() {
     let cases = vec![
-        ("schema", serde_json::json!(2)),
+        ("schema", serde_json::json!(3)),
         ("interval", serde_json::json!(2)),
         ("offset", serde_json::json!(2_000_001)),
     ];

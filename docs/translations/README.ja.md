@@ -1,4 +1,4 @@
-# Codex Usage Monitor
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Codex Usage Monitor は、Codex の使用状況をひと目で確認するため
 
 - リセット時刻を含む、Codex の主使用量ウィンドウと副使用量ウィンドウを表示します。
 - 認証ファイルを解析せず、インストール済み Codex CLI の `app-server` インターフェイスを使用します。
+- 最大 8 個の分離された使用量プロファイルから、表示するものを手動で選択できます。
 - すべてのタスクバー、またはメインモニターのみにウィジェットを表示できます。
 - タスクバーへのアタッチが利用できない場合は、フローティングウィジェットとトレイアイコンへ安全にフォールバックします。
 - 手動更新、自動更新間隔、Windows スタートアップ、診断、ローカライズ済み UI に対応しています。
@@ -22,6 +23,37 @@ Codex Usage Monitor は、Codex の使用状況をひと目で確認するため
 
 モニターが要求するのは、表示に必要なサインイン状態と使用量ウィンドウのみです。
 Codex タスクを開始したり、`codex exec` を呼び出したりすることはありません。
+
+## 使用量プロファイル
+
+削除できないシステムプロファイル **デフォルトの Codex アカウント** は、CodexPeek の起動時に継承した Codex
+ホームを使用し、`CODEX_HOME` が未設定の場合は CLI の既定値を使用します。管理プロファイルは
+それぞれ `%APPDATA%\CodexPeek\profiles` 以下に分離された Codex ホームを持ちます。
+システムプロファイルを含め、合計 8 個まで登録できます。
+
+プロファイルのラベルはユーザーが指定します。CodexPeek はアカウントのメールアドレスや ID を
+調べないため、追加または再ログイン時にはブラウザーで使用する ChatGPT アカウントを確認して
+ください。プロファイルの選択で変わるのは、CodexPeek が取得・表示する使用量だけです。
+ターミナル、IDE、Codex アプリ、WSL、Remote SSH、Dev Containers のサインインは変わりません。
+
+選択は常に手動です。CodexPeek は残りの上限に応じた自動選択やローテーションを行わず、Codex
+の作業をプロファイルへルーティングしません。管理プロファイルを削除すると、分離して保存された
+CLI 認証情報を含むローカルデータは復元できないため、確認内容をよく確認してください。
+
+CodexPeek はどのプロファイルの `auth.json` も読み取り、解析、コピーしません。管理プロファイル
+に対応する子 `app-server` だけに、その `CODEX_HOME` とファイル認証ストア設定を適用します。
+診断には、ラベル、パス、アカウント情報ではなく集計件数だけが記録されます。
+
+### プロファイル マネージャー
+
+システムプロファイルの名前は変更できますが、サインアウトや削除はできません。カスタム名は
+CodexPeek の表示だけを変更するもので、アカウント ID ではありません。既定のアカウントで
+あることを示す印は、プロファイル マネージャーにだけ表示されます。
+
+トレイの **使用量プロファイル** サブメニューでは、プロファイルの選択と **使用量プロファイルを
+管理** の表示だけができます。追加コマンドはありません。プロファイルはマネージャーの一覧の
+下にある `+` からだけ追加します。下部に閉じるまたは追加ボタンはありません。マネージャーは
+ウィンドウの `X` または Esc で閉じます。
 
 ## 要件
 
@@ -99,7 +131,7 @@ UI を開かずにビルドと Codex CLI 接続を確認するには、次を実
    機密情報を露出せずに正確な blocker を説明してください。
 ```
 
-Installer 版と Portable 版は `%APPDATA%\CodexUsageMonitor\settings.json` を使用するため、
+Installer 版と Portable 版は `%APPDATA%\CodexPeek\settings.json` を使用するため、
 切り替えて使う場合も設定は共有されます。インストーラーは Start Menu ショートカットを追加しますが、
 既定では Windows スタートアップを有効にしません。
 
@@ -130,7 +162,7 @@ Explorer の再起動やタスクバー配置の変更後にタスクバーウ�
 生の RPC レスポンスは、ログイン種別と表示するレート制限フィールドを抽出するために必要な間だけ処理されます。
 トークン、アカウント ID、メールアドレス、認証ファイルの内容、プロキシ値は保存されず、ログにも書き込まれません。
 
-設定は `%APPDATA%\CodexUsageMonitor\settings.json` に保存されます。
+設定は `%APPDATA%\CodexPeek\settings.json` に保存されます。
 サイズを制限した診断ログは `%TEMP%\codex-peek.log` に保存されます。
 
 データ取り扱いと脆弱性報告に関する完全なガイダンスは、[SECURITY.md](../../SECURITY.md) を参照してください。

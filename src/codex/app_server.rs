@@ -13,7 +13,9 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CodexUsage, ResetCredits, UsageError, UsageWindow, WindowKind};
+use crate::{
+    CodexUsage, ProfileExecutionContext, ResetCredits, UsageError, UsageWindow, WindowKind,
+};
 
 use super::{
     locator::locate_cli,
@@ -25,6 +27,67 @@ const CLIENT_TITLE: &str = "Codex Usage Monitor";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
+const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// app-server가 제공한 로그인 페이지를 안전하게 여는 콜백입니다.
+///
+/// 구현은 URL을 다시 검증해야 하며, 실패 시 브라우저 실행 오류를 반환해야 합니다.
+pub type LoginPageOpener = Arc<dyn Fn(&str) -> std::io::Result<()> + Send + Sync>;
+
+/// 프로필 계정 작업의 취소 상태를 clone 간에 공유하는 토큰입니다.
+///
+/// 토큰에는 프로필 식별자나 경로가 저장되지 않으며, 취소 요청 여부만 원자적으로 공유합니다.
+#[derive(Clone, Default)]
+pub struct OperationCancellation(Arc<AtomicBool>);
+
+impl OperationCancellation {
+    /// 이 토큰을 사용하는 진행 중인 작업에 취소를 요청합니다.
+    ///
+    /// 호출은 블로킹하지 않으며, 작업 측이 상태를 확인하면 해당 app-server 프로세스 트리를
+    /// 종료합니다.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    /// 취소 요청이 관찰되었는지 반환합니다.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+/// 프로필별 사용량 조회와 로그인·로그아웃을 제공하는 객체 안전 인터페이스입니다.
+pub trait ProfileAccountProvider: Send + Sync {
+    /// 지정한 프로필의 사용량을 조회합니다.
+    ///
+    /// `allow_auth_refresh`가 참이면 인증 관련 조회 실패 후 한 번만 계정 정보를 갱신합니다.
+    /// `cancellation`이 설정되면 자식 프로세스 트리를 종료하고 안전한 오류를 반환합니다.
+    fn fetch_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        allow_auth_refresh: bool,
+        cancellation: OperationCancellation,
+    ) -> Result<CodexUsage, UsageError>;
+
+    /// 지정한 프로필의 ChatGPT 로그인을 시작하고 완료 여부를 반환합니다.
+    ///
+    /// `open`은 검증된 로그인 URL을 여는 데 사용하며, 작업은 최대 5분으로 제한됩니다.
+    /// 취소 시 진행 중인 app-server 프로세스 트리가 종료됩니다.
+    fn login_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        open: LoginPageOpener,
+        cancellation: OperationCancellation,
+    ) -> Result<bool, UsageError>;
+
+    /// 지정한 프로필의 Codex 계정 세션을 로그아웃합니다.
+    ///
+    /// 작업은 30초로 제한되며, 취소나 제한 시간 만료 시 자식 프로세스 트리가 종료됩니다.
+    fn logout_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        cancellation: OperationCancellation,
+    ) -> Result<(), UsageError>;
+}
 
 /// Codex 사용량을 가져오는 동기식 제공자입니다.
 pub trait UsageProvider: Send + Sync {
@@ -54,30 +117,6 @@ impl AppServerUsageProvider {
             in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
-
-    /// ChatGPT 브라우저 로그인 세션을 시작하고 완료 여부를 반환합니다.
-    ///
-    /// `open_browser`는 app-server가 제공한 인증 URL을 열어야 하며, 로그인 세션은 최대 5분 동안
-    /// 완료 알림을 기다립니다. 이 메서드는 호출 스레드에서 대기하므로 UI 이벤트 처리에서는 워커
-    /// 스레드로 실행해야 합니다.
-    pub(crate) fn login_with_chatgpt<F>(&self, open_browser: F) -> Result<bool, UsageError>
-    where
-        F: FnOnce(&str) -> std::io::Result<()>,
-    {
-        if self.in_flight.swap(true, Ordering::AcqRel) {
-            return Err(UsageError::RpcOverloaded);
-        }
-        let _reset = InFlightReset(Arc::clone(&self.in_flight));
-        let deadline = Instant::now() + LOGIN_TIMEOUT;
-        let candidate = locate_cli(deadline)?;
-        let mut guard = ProcessGuard::start(candidate, deadline)?;
-        let mut transport = ProcessJsonlTransport {
-            transport: guard.take_transport()?,
-        };
-        let result = login_with_chatgpt_until(&mut transport, deadline, open_browser);
-        guard.shutdown_until(deadline.min(Instant::now() + Duration::from_millis(250)));
-        result
-    }
 }
 
 impl Default for AppServerUsageProvider {
@@ -88,50 +127,118 @@ impl Default for AppServerUsageProvider {
 
 impl UsageProvider for AppServerUsageProvider {
     fn fetch(&self, allow_auth_refresh: bool) -> Result<CodexUsage, UsageError> {
-        let deadline = Instant::now() + PROVIDER_TIMEOUT;
-        let provider = self.clone();
-        run_serialized_operation(self.in_flight.clone(), deadline, move || {
-            provider.fetch_usage_until(deadline, allow_auth_refresh)
-        })
+        self.fetch_profile(
+            &ProfileExecutionContext::system(),
+            allow_auth_refresh,
+            OperationCancellation::default(),
+        )
+    }
+}
+
+impl ProfileAccountProvider for AppServerUsageProvider {
+    fn fetch_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        allow_auth_refresh: bool,
+        cancellation: OperationCancellation,
+    ) -> Result<CodexUsage, UsageError> {
+        self.run_profile_operation(
+            profile,
+            PROVIDER_TIMEOUT,
+            cancellation,
+            move |transport, deadline| {
+                run_jsonl_session_until(transport, allow_auth_refresh, deadline)
+            },
+        )
+    }
+
+    fn login_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        open: LoginPageOpener,
+        cancellation: OperationCancellation,
+    ) -> Result<bool, UsageError> {
+        self.run_profile_operation(
+            profile,
+            LOGIN_TIMEOUT,
+            cancellation,
+            move |transport, deadline| {
+                login_with_chatgpt_until(transport, deadline, move |url| open(url))
+            },
+        )
+    }
+
+    fn logout_profile(
+        &self,
+        profile: &ProfileExecutionContext,
+        cancellation: OperationCancellation,
+    ) -> Result<(), UsageError> {
+        self.run_profile_operation(profile, PROVIDER_TIMEOUT, cancellation, logout_until)
     }
 }
 
 impl AppServerUsageProvider {
-    fn fetch_usage_until(
+    fn run_profile_operation<R, F>(
         &self,
-        deadline: Instant,
-        allow_auth_refresh: bool,
-    ) -> Result<CodexUsage, UsageError> {
+        profile: &ProfileExecutionContext,
+        timeout: Duration,
+        cancellation: OperationCancellation,
+        operation: F,
+    ) -> Result<R, UsageError>
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut ProcessJsonlTransport, Instant) -> Result<R, UsageError> + Send + 'static,
+    {
+        if self.in_flight.swap(true, Ordering::AcqRel) {
+            return Err(UsageError::RpcOverloaded);
+        }
+        let in_flight_reset = InFlightReset::new(Arc::clone(&self.in_flight));
+        if cancellation.is_cancelled() {
+            return Err(UsageError::RequestFailed);
+        }
+
+        let deadline = Instant::now() + timeout;
         let candidate = locate_cli(deadline)?;
-        let mut guard = ProcessGuard::start(candidate, deadline)?;
+        if cancellation.is_cancelled() {
+            return Err(UsageError::RequestFailed);
+        }
+        let mut guard = ProcessGuard::start(candidate, deadline, profile)?;
         let transport = guard.take_transport()?;
         let (sender, receiver) = mpsc::sync_channel(1);
-        let worker = thread::spawn(move || {
+        let worker_reset = in_flight_reset.clone();
+        thread::spawn(move || {
             let mut transport = ProcessJsonlTransport { transport };
-            let _ = sender.send(run_jsonl_session_until(
-                &mut transport,
-                allow_auth_refresh,
-                deadline,
-            ));
+            let result = operation(&mut transport, deadline);
+            drop(transport);
+            drop(worker_reset);
+            let _ = sender.send(result);
         });
 
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let result = match receiver.recv_timeout(remaining) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+        let result = loop {
+            if cancellation.is_cancelled() {
                 guard.terminate_tree();
-                Err(UsageError::RpcTimeout)
+                break Err(UsageError::RequestFailed);
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(UsageError::RequestFailed),
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                guard.terminate_tree();
+                break Err(UsageError::RpcTimeout);
+            }
+            match receiver.recv_timeout(remaining.min(CANCELLATION_POLL_INTERVAL)) {
+                Ok(result) => break result,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    guard.terminate_tree();
+                    break Err(UsageError::RequestFailed);
+                }
+            }
         };
-        if result != Err(UsageError::RpcTimeout) {
-            let _ = worker.join();
-        }
         guard.shutdown_until(deadline.min(Instant::now() + Duration::from_millis(250)));
         result
     }
 }
 
+#[cfg(test)]
 fn run_bounded_operation<F>(deadline: Instant, operation: F) -> Result<CodexUsage, UsageError>
 where
     F: FnOnce() -> Result<CodexUsage, UsageError> + Send + 'static,
@@ -147,6 +254,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn run_serialized_operation<F>(
     in_flight: Arc<AtomicBool>,
     deadline: Instant,
@@ -159,14 +267,28 @@ where
         return Err(UsageError::RpcOverloaded);
     }
     run_bounded_operation(deadline, move || {
-        let _reset = InFlightReset(in_flight);
+        let _reset = InFlightReset::new(in_flight);
         operation()
     })
 }
 
-struct InFlightReset(Arc<AtomicBool>);
+struct InFlightReset(Arc<InFlightResetInner>);
 
-impl Drop for InFlightReset {
+impl InFlightReset {
+    fn new(in_flight: Arc<AtomicBool>) -> Self {
+        Self(Arc::new(InFlightResetInner(in_flight)))
+    }
+}
+
+impl Clone for InFlightReset {
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
+
+struct InFlightResetInner(Arc<AtomicBool>);
+
+impl Drop for InFlightResetInner {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release);
     }
@@ -425,6 +547,20 @@ where
     }
     open_browser(&login.auth_url).map_err(|_| UsageError::RequestFailed)?;
     wait_for_login_completion(transport, &login.login_id, deadline)
+}
+
+fn logout_until<T: JsonlTransport>(transport: &mut T, deadline: Instant) -> Result<(), UsageError> {
+    initialize_session(transport, 1, deadline)?;
+    send_request(
+        transport,
+        &Request {
+            id: Some(2),
+            method: "account/logout",
+            params: EmptyParams {},
+        },
+        deadline,
+    )?;
+    receive_result::<_, serde::de::IgnoredAny>(transport, 2, deadline).map(|_| ())
 }
 
 fn wait_for_login_completion<T: JsonlTransport>(
@@ -707,7 +843,7 @@ mod tests {
     };
 
     use super::{
-        login_with_chatgpt_until, run_bounded_operation, run_jsonl_session,
+        login_with_chatgpt_until, logout_until, run_bounded_operation, run_jsonl_session,
         run_serialized_operation, DelayedRateLimitTransport, ScriptedTransport,
         MAX_JSONL_FRAME_BYTES,
     };
@@ -718,6 +854,47 @@ mod tests {
         env!("CARGO_PKG_VERSION"),
         r#""}}}"#
     );
+
+    #[test]
+    fn logout_initializes_then_sends_account_logout() {
+        let mut transport = ScriptedTransport::new([
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"result":{}}"#,
+        ]);
+
+        logout_until(&mut transport, Instant::now() + Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            transport.requests()[2],
+            r#"{"id":2,"method":"account/logout","params":{}}"#
+        );
+    }
+
+    #[test]
+    fn operation_cancellation_is_clone_shared() {
+        let cancellation = super::OperationCancellation::default();
+        let observer = cancellation.clone();
+
+        cancellation.cancel();
+
+        assert!(observer.is_cancelled());
+    }
+
+    #[test]
+    fn pre_cancelled_profile_operation_releases_the_single_flight_gate() {
+        let provider = super::AppServerUsageProvider::new();
+        let provider: &dyn super::ProfileAccountProvider = &provider;
+        let profile = crate::ProfileExecutionContext::system();
+
+        for _ in 0..2 {
+            let cancellation = super::OperationCancellation::default();
+            cancellation.cancel();
+            assert_eq!(
+                provider.fetch_profile(&profile, false, cancellation),
+                Err(UsageError::RequestFailed)
+            );
+        }
+    }
 
     #[test]
     fn session_ignores_sensitive_extra_fields_and_interleaved_notifications() {

@@ -1,4 +1,4 @@
-# Monitor de Uso de Codex
+# CodexPeek – Codex Usage Monitor for Windows
 
 **Languages:** [English (default)](../../README.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Bahasa Indonesia](README.id.md) · [日本語](README.ja.md) · [हिन्दी](README.hi.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Tiếng Việt](README.vi.md) · [Türkçe](README.tr.md) · [العربية](README.ar.md)
 
@@ -11,6 +11,7 @@ Muestra las ventanas de límite de uso primaria y secundaria en la barra de tare
 
 - Muestra las ventanas de uso primaria y secundaria de Codex, incluidos los horarios de restablecimiento.
 - Usa la interfaz `app-server` del Codex CLI instalado en lugar de analizar archivos de autenticación.
+- Permite elegir manualmente entre un máximo de ocho perfiles de uso aislados.
 - Permite mostrar el widget en todas las barras de tareas o solo en el monitor principal.
 - Recurre de forma segura a un widget flotante y a un icono de bandeja cuando no puede acoplarse a la barra de tareas.
 - Admite actualización manual, intervalos de actualización automática, inicio con Windows, diagnósticos e interfaz localizada.
@@ -22,6 +23,41 @@ El Codex CLI instalado gestiona su propia autenticación y puede comunicarse con
 
 El monitor solicita únicamente el estado de sesión iniciada y las ventanas de uso necesarias para mostrarlas.
 No inicia una tarea de Codex ni llama a `codex exec`.
+
+## Perfiles de uso
+
+El perfil del sistema **Cuenta predeterminada de Codex**, que no se puede eliminar, usa el directorio principal
+de Codex heredado al iniciar CodexPeek o el valor predeterminado del CLI si `CODEX_HOME`
+no está definido. Cada perfil administrado usa un directorio principal de Codex separado
+bajo `%APPDATA%\CodexPeek\profiles`. Se admiten ocho perfiles en total, incluido
+el perfil del sistema.
+
+Tú proporcionas las etiquetas de los perfiles. CodexPeek no inspecciona el correo ni el
+ID de la cuenta, así que confirma en el navegador qué cuenta de ChatGPT quieres usar al
+añadir un perfil o volver a iniciar sesión. La selección solo cambia el uso que CodexPeek
+consulta y muestra. No cambia las sesiones del terminal, IDE, aplicación Codex, WSL,
+Remote SSH ni Dev Containers.
+
+La selección siempre es manual. CodexPeek no selecciona ni rota perfiles automáticamente
+según el límite restante y no dirige trabajos de Codex mediante un perfil. Al eliminar un
+perfil administrado se borran de forma irreversible sus datos locales, incluidas las
+credenciales del CLI almacenadas por separado; revisa atentamente la confirmación.
+
+CodexPeek nunca lee, analiza ni copia el `auth.json` de ningún perfil. Solo el proceso hijo
+`app-server` del perfil administrado recibe su `CODEX_HOME` y la configuración de almacén
+de credenciales en archivo. Los diagnósticos incluyen únicamente recuentos agregados, sin
+etiquetas, rutas ni datos de cuenta.
+
+### Administrador de perfiles
+
+Puedes cambiar el nombre del perfil del sistema, pero no cerrar su sesión ni eliminarlo. Un
+nombre personalizado del perfil del sistema solo cambia lo que muestra CodexPeek; no es una
+identidad de cuenta. Solo el administrador de perfiles lo marca como la cuenta predeterminada.
+
+El submenú de bandeja **Perfiles de uso** permite seleccionar un perfil y abrir **Administrar
+perfiles de uso**; no tiene un comando para agregar. Agrega perfiles solo con `+`, debajo de la
+lista del administrador. No hay botón inferior de Cerrar ni Agregar: usa la `X` de la ventana o
+Escape para cerrar el administrador.
 
 ## Requisitos
 
@@ -101,7 +137,7 @@ Instala CodexPeek en este equipo Windows x64 y completa la verificación por mí
    de forma segura y explica el bloqueo exacto sin exponer información sensible.
 ```
 
-Las ediciones Instalador y Portable usan `%APPDATA%\CodexUsageMonitor\settings.json`, por lo que
+Las ediciones Instalador y Portable usan `%APPDATA%\CodexPeek\settings.json`, por lo que
 comparten la configuración si alternas entre ellas. El instalador agrega un acceso directo al menú
 Inicio, pero no habilita el inicio con Windows de forma predeterminada.
 
@@ -133,7 +169,7 @@ Los diagnósticos solo comprueban si esa ruta existe.
 Las respuestas RPC sin procesar se procesan solo el tiempo necesario para extraer el tipo de inicio de sesión y los campos de límite de uso mostrados.
 Los tokens, ID de cuenta, direcciones de correo, contenido de archivos de autenticación y valores de proxy no se almacenan ni se escriben en registros.
 
-La configuración se guarda en `%APPDATA%\CodexUsageMonitor\settings.json`.
+La configuración se guarda en `%APPDATA%\CodexPeek\settings.json`.
 Un registro de diagnóstico acotado se guarda en `%TEMP%\codex-peek.log`.
 
 Para la guía completa sobre tratamiento de datos e informes de vulnerabilidades, consulta [SECURITY.md](../../SECURITY.md).

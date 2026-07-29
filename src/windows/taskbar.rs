@@ -295,6 +295,153 @@ fn rollback_attachment<B: TaskbarAttachmentBackend>(
     (!errors.is_empty()).then(|| errors.join(", "))
 }
 
+/// 위젯 창이 작업표시줄에 연결되었는지 또는 독립 플로팅 상태인지 나타냅니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum WidgetSurface<T> {
+    /// 지정한 작업표시줄 대상에 연결된 상태입니다.
+    Attached(T),
+    /// 작업표시줄과 분리된 최상위 플로팅 창 상태입니다.
+    Detached,
+}
+
+/// 작업표시줄 연결 실패에도 위젯 창을 유지하는 조정자가 사용하는 창 연산 경계입니다.
+///
+/// 구현은 `create_detached`로 만든 창을 `surfaces`에 즉시 반영하고, attach/detach 성공 뒤
+/// 해당 표면 상태를 갱신해야 합니다. 모든 메서드는 UI 스레드에서 짧은 창 연산만 수행해야
+/// 하며 파일 또는 네트워크 I/O를 수행하면 안 됩니다.
+#[doc(hidden)]
+pub trait WidgetSurfaceBackend {
+    /// 조정 중 식별할 창 핸들 형식입니다.
+    type Window: Copy + Eq;
+    /// 작업표시줄 대상 식별자 형식입니다.
+    type Target: Copy + Eq;
+    /// 창 생성, 연결, 배치 또는 정리 실패 형식입니다.
+    type Error;
+
+    /// 현재 살아 있는 창과 실제 표면 상태의 복사본을 반환합니다.
+    fn surfaces(&self) -> Vec<(Self::Window, WidgetSurface<Self::Target>)>;
+    /// 안전한 최상위 위치에 플로팅 위젯 하나를 만들고 핸들을 반환합니다.
+    fn create_detached(&mut self) -> Result<Self::Window, Self::Error>;
+    /// 기존 플로팅 창을 지정한 작업표시줄에 연결합니다.
+    fn attach(&mut self, window: Self::Window, target: Self::Target) -> Result<(), Self::Error>;
+    /// 기존 창을 최상위 플로팅 상태와 안전한 위치로 복구합니다.
+    fn detach(&mut self, window: Self::Window) -> Result<(), Self::Error>;
+    /// 더 이상 필요하지 않은 창 하나를 파괴합니다.
+    fn destroy(&mut self, window: Self::Window) -> Result<(), Self::Error>;
+}
+
+/// 현재 작업표시줄 대상과 위젯 창을 조정하고 복구 가능한 attach 오류를 반환합니다.
+///
+/// 대상이 없거나 하나 이상의 attach가 실패하면 정확히 한 플로팅 창을 유지합니다. 이후
+/// 대상이 나타나면 기존 attached 창과 fallback 창을 먼저 재사용하므로 중복 창을 만들지
+/// 않습니다. 반환 벡터에는 플로팅 fallback으로 복구한 attach 오류만 담기며
+/// 생성·분리·파괴 실패는 즉시 `Err`로 반환합니다.
+#[doc(hidden)]
+pub fn reconcile_widget_surfaces<B>(
+    backend: &mut B,
+    targets: &[B::Target],
+) -> Result<Vec<B::Error>, B::Error>
+where
+    B: WidgetSurfaceBackend,
+{
+    let current = backend.surfaces();
+    if (!targets.is_empty() && surfaces_match_targets(&current, targets))
+        || (targets.is_empty()
+            && current.len() == 1
+            && matches!(current[0].1, WidgetSurface::Detached))
+    {
+        return Ok(Vec::new());
+    }
+
+    if targets.is_empty() {
+        let keep = current
+            .iter()
+            .find(|(_, surface)| matches!(surface, WidgetSurface::Detached))
+            .or_else(|| current.first())
+            .copied();
+        let (window, surface) = match keep {
+            Some(existing) => existing,
+            None => {
+                let window = backend.create_detached()?;
+                (window, WidgetSurface::Detached)
+            }
+        };
+        if !matches!(surface, WidgetSurface::Detached) {
+            backend.detach(window)?;
+        }
+        for (candidate, _) in current {
+            if candidate != window {
+                backend.destroy(candidate)?;
+            }
+        }
+        return Ok(Vec::new());
+    }
+
+    let mut attached_targets = Vec::new();
+    let mut detached = None;
+    for (window, surface) in current {
+        match surface {
+            WidgetSurface::Attached(target)
+                if targets.contains(&target) && !attached_targets.contains(&target) =>
+            {
+                attached_targets.push(target);
+            }
+            WidgetSurface::Detached if detached.is_none() => detached = Some(window),
+            _ => backend.destroy(window)?,
+        }
+    }
+    if attached_targets.len() == targets.len() {
+        if let Some(window) = detached {
+            backend.destroy(window)?;
+        }
+        return Ok(Vec::new());
+    }
+
+    let mut errors = Vec::new();
+    let mut fallback_locked = false;
+    for target in targets.iter().copied() {
+        if attached_targets.contains(&target) {
+            continue;
+        }
+        let window = if !fallback_locked {
+            detached
+                .take()
+                .map(Ok)
+                .unwrap_or_else(|| backend.create_detached())?
+        } else {
+            backend.create_detached()?
+        };
+        match backend.attach(window, target) {
+            Ok(()) => attached_targets.push(target),
+            Err(error) => {
+                errors.push(error);
+                if detached.is_none() {
+                    detached = Some(window);
+                    fallback_locked = true;
+                } else {
+                    backend.destroy(window)?;
+                }
+                if attached_targets.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(errors)
+}
+
+fn surfaces_match_targets<W: Copy + Eq, T: Copy + Eq>(
+    surfaces: &[(W, WidgetSurface<T>)],
+    targets: &[T],
+) -> bool {
+    surfaces.len() == targets.len()
+        && surfaces
+            .iter()
+            .zip(targets)
+            .all(|((_, surface), target)| *surface == WidgetSurface::Attached(*target))
+}
+
 #[cfg(windows)]
 mod platform;
 

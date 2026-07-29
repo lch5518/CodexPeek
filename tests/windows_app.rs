@@ -8,29 +8,581 @@ use codex_usage_monitor::{
         autostart::{autostart_command, set_autostart, RegistryBackend},
         initial_widget_visible, is_exact_github_tag_page, is_valid_chatgpt_login_url,
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
-        menu_action, resolve_windows_language, startup_plan,
+        menu_action,
+        native::{
+            profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch,
+        },
+        profile_dialog::{
+            add_profile_dialog_monitor_anchor, add_profile_prompt_result,
+            available_profile_actions, profile_delete_confirmation, profile_dialog_keyboard_result,
+            profile_login_confirmation, profile_manager_control_enabled,
+            profile_manager_control_spec, profile_manager_dialog_monitor_anchor,
+            profile_manager_row_label, validated_label, AddProfilePromptCommand,
+            AddProfilePromptState, DialogMonitorAnchor, DialogWindowSize, ModalCleanupAction,
+            ModalDialogLifecycle, ProfileDialogAction, ProfileDialogCommand,
+            ProfileDialogController, ProfileDialogKeyboardCommand, ProfileDialogKeyboardResult,
+            ProfileManagerControl, ProfileManagerDialogState, PROFILE_LABEL_MAX_UTF16_UNITS,
+            PROFILE_MANAGER_CONTROLS,
+        },
+        profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
-            place_taskbar_widget, run_taskbar_attachment, taskbar_widget_size,
-            TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
-            TaskbarPlacementError,
+            place_taskbar_widget, reconcile_widget_surfaces, run_taskbar_attachment,
+            taskbar_widget_size, TaskbarAttachmentBackend, TaskbarAttachmentStage, TaskbarGeometry,
+            TaskbarPlacementError, WidgetSurface, WidgetSurfaceBackend,
         },
         taskbar_widget::{
-            select_weekly_row, HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
+            profile_header_text, select_weekly_row, widget_surface_layout, HoverTransition,
+            TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
         },
-        tray::{language_menu_label, tray_menu_entries, update_menu_text, TrayMenuEntry},
+        tray::{
+            language_menu_label, tray_menu_entries, tray_menu_model, update_menu_text,
+            TrayMenuEntry,
+        },
         widget::{logical_to_physical, Rect},
-        LaunchMode, StartupStep, UiAction, UiSettings, MENU_AUTH_REFRESH, MENU_AUTOSTART,
+        LaunchMode, StartupStep, UiAction, UiSettings, UsageProfileView, WidgetDataState,
+        WidgetViewModel, MENU_ADD_USAGE_PROFILE, MENU_AUTH_REFRESH, MENU_AUTOSTART,
         MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
         MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC,
         MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN,
         MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE,
         MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH,
-        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_REFRESH,
-        MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
-        MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES,
+        MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
+        MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
     },
-    Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
+    Language, LanguagePreference, ProfileValidationError, StartupView, TaskbarDisplayMode,
+    UpdatePresentationStatus, UsageProfileId,
 };
+use windows::Win32::Foundation::HWND;
+
+fn system_profile_view() -> UsageProfileView {
+    UsageProfileView {
+        id: UsageProfileId::System,
+        label: "Default Codex account".to_string(),
+        summary: "Displayed".to_string(),
+        selected: true,
+        login_required: false,
+        managed: false,
+    }
+}
+
+#[test]
+fn profile_dialog_centering_uses_the_cursor_or_a_live_owner_as_its_monitor_anchor() {
+    let owner = HWND(42_usize as _);
+
+    assert_eq!(
+        profile_manager_dialog_monitor_anchor(),
+        DialogMonitorAnchor::Cursor
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(owner, Some(DialogWindowSize::new(560, 180))),
+        DialogMonitorAnchor::Owner(owner)
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(owner, Some(DialogWindowSize::new(0, 180))),
+        DialogMonitorAnchor::Cursor
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(HWND::default(), Some(DialogWindowSize::new(560, 180))),
+        DialogMonitorAnchor::Cursor
+    );
+    assert_eq!(
+        add_profile_dialog_monitor_anchor(owner, None),
+        DialogMonitorAnchor::Cursor
+    );
+}
+
+#[test]
+fn system_profile_offers_rename_but_not_logout_or_delete() {
+    let actions = available_profile_actions(&system_profile_view());
+
+    assert!(actions.contains(&ProfileDialogCommand::Rename));
+    assert!(actions.contains(&ProfileDialogCommand::Login));
+    assert!(!actions.contains(&ProfileDialogCommand::Delete));
+    assert!(!actions.contains(&ProfileDialogCommand::Logout));
+
+    let mut inconsistent_view = system_profile_view();
+    inconsistent_view.managed = true;
+    let actions = available_profile_actions(&inconsistent_view);
+    assert!(actions.contains(&ProfileDialogCommand::Rename));
+    assert!(!actions.contains(&ProfileDialogCommand::Delete));
+    assert!(!actions.contains(&ProfileDialogCommand::Logout));
+}
+
+#[test]
+fn dialog_labels_use_shared_validation() {
+    assert_eq!(validated_label("  Work  ").unwrap(), "Work");
+    assert_eq!(
+        validated_label("bad\\name"),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+}
+
+#[test]
+fn add_prompt_cancel_emits_no_action_and_submit_validates_the_name() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    assert_eq!(
+        add_profile_prompt_result("Work", AddProfilePromptCommand::Cancel),
+        Ok(None)
+    );
+    assert_eq!(
+        add_profile_prompt_result("  Work  ", AddProfilePromptCommand::Submit),
+        Ok(Some(ProfileDialogAction::Add("Work".to_owned())))
+    );
+    assert_eq!(
+        add_profile_prompt_result("", AddProfilePromptCommand::Submit),
+        Err(ProfileValidationError::InvalidLabel)
+    );
+}
+
+#[test]
+fn profile_manager_controls_exclude_bottom_add_and_close() {
+    assert_eq!(
+        PROFILE_MANAGER_CONTROLS,
+        [
+            ProfileManagerControl::AddBelowList,
+            ProfileManagerControl::Rename,
+            ProfileManagerControl::Login,
+            ProfileManagerControl::Logout,
+            ProfileManagerControl::Delete,
+        ]
+    );
+}
+
+#[test]
+fn profile_manager_add_enablement_follows_can_add_exactly() {
+    let available = ProfileDialogController::new(&[system_profile_view()], false);
+    let pending = ProfileDialogController::new(&[system_profile_view()], true);
+    let mut full_profiles = vec![system_profile_view()];
+    for sequence in 1..8 {
+        full_profiles.push(UsageProfileView {
+            id: UsageProfileId::Managed(sequence),
+            label: format!("Profile {sequence}"),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        });
+    }
+    let full = ProfileDialogController::new(&full_profiles, false);
+
+    assert!(profile_manager_control_enabled(
+        &available,
+        ProfileManagerControl::AddBelowList
+    ));
+    assert!(!profile_manager_control_enabled(
+        &pending,
+        ProfileManagerControl::AddBelowList
+    ));
+    assert!(!profile_manager_control_enabled(
+        &full,
+        ProfileManagerControl::AddBelowList
+    ));
+}
+
+#[test]
+fn active_add_prompt_rejects_a_second_child() {
+    let mut manager = ProfileManagerDialogState::new();
+
+    assert!(manager.begin_add_prompt(true));
+    assert!(!manager.accepts_manager_commands());
+    assert!(!manager.begin_add_prompt(true));
+}
+
+#[test]
+fn add_prompt_rejects_reentrant_submit_and_close_while_warning_is_open() {
+    let mut prompt = AddProfilePromptState::new();
+
+    assert!(prompt.begin_command());
+    assert!(!prompt.accepts_commands());
+    assert!(!prompt.begin_command());
+    assert!(prompt.begin_warning());
+    assert!(!prompt.begin_command());
+    assert!(prompt.finish_warning());
+    assert!(prompt.accepts_commands());
+
+    assert!(prompt.begin_command());
+    assert!(prompt.finish_close());
+    assert!(!prompt.accepts_commands());
+    assert!(!prompt.begin_command());
+}
+
+#[test]
+fn add_control_keeps_plus_text_and_uses_the_localized_add_description() {
+    for language in Language::ALL {
+        let spec = profile_manager_control_spec(ProfileManagerControl::AddBelowList, *language);
+
+        assert_eq!(spec.visible_text, "+");
+        assert_eq!(
+            spec.accessible_description,
+            Some(codex_usage_monitor::localized_text(
+                codex_usage_monitor::LocalizationKey::MenuAddUsageProfile,
+                *language,
+            ))
+        );
+    }
+}
+
+#[test]
+fn cancelled_add_prompt_restores_the_live_manager() {
+    let mut manager = ProfileManagerDialogState::new();
+    assert!(manager.begin_add_prompt(true));
+
+    assert!(manager.finish_add_prompt(None));
+    assert!(manager.accepts_manager_commands());
+    assert_eq!(manager.take_result(), None);
+}
+
+#[test]
+fn submitted_add_prompt_returns_exactly_one_action() {
+    let mut manager = ProfileManagerDialogState::new();
+    assert!(manager.begin_add_prompt(true));
+
+    assert!(manager.finish_add_prompt(Some(ProfileDialogAction::Add("Work".to_owned()))));
+    assert!(!manager.finish_add_prompt(Some(ProfileDialogAction::Add("Duplicate".to_owned()))));
+    assert!(!manager.accepts_manager_commands());
+    assert_eq!(
+        manager.take_result(),
+        Some(ProfileDialogAction::Add("Work".to_owned()))
+    );
+    assert_eq!(manager.take_result(), None);
+}
+
+#[test]
+fn dialog_edit_capacity_preserves_labels_across_the_old_astral_boundary() {
+    let twenty_astral = "😀".repeat(20);
+    let twenty_one_astral = "😀".repeat(21);
+
+    assert_eq!(twenty_astral.encode_utf16().count(), 40);
+    assert_eq!(twenty_one_astral.encode_utf16().count(), 42);
+    assert_eq!(validated_label(&twenty_astral).unwrap(), twenty_astral);
+    assert_eq!(
+        validated_label(&twenty_one_astral).unwrap(),
+        twenty_one_astral
+    );
+    assert!(twenty_one_astral.encode_utf16().count() <= PROFILE_LABEL_MAX_UTF16_UNITS);
+}
+
+#[test]
+fn dialog_edit_capacity_preserves_the_worst_case_forty_scalar_label() {
+    let forty_astral = "😀".repeat(40);
+
+    assert_eq!(forty_astral.chars().count(), 40);
+    assert_eq!(
+        forty_astral.encode_utf16().count(),
+        PROFILE_LABEL_MAX_UTF16_UNITS
+    );
+    assert_eq!(validated_label(&forty_astral).unwrap(), forty_astral);
+}
+
+#[test]
+fn pending_profile_mutation_disables_every_mutating_control() {
+    let controller = ProfileDialogController::new(&[system_profile_view()], true);
+
+    assert!(!controller.can_add());
+    for command in [
+        ProfileDialogCommand::Rename,
+        ProfileDialogCommand::Login,
+        ProfileDialogCommand::Logout,
+        ProfileDialogCommand::Delete,
+    ] {
+        assert!(!controller.command_enabled(command));
+    }
+}
+
+#[test]
+fn modal_cleanup_destroys_live_window_and_restores_only_an_owner_it_disabled() {
+    let mut active_owner = ModalDialogLifecycle::new(true, true);
+    active_owner.window_created();
+    assert!(active_owner.should_disable_owner());
+    active_owner.owner_disabled();
+    assert_eq!(
+        active_owner.cleanup_actions(),
+        vec![
+            ModalCleanupAction::ClearWindowState,
+            ModalCleanupAction::DestroyWindow,
+            ModalCleanupAction::RestoreOwner,
+        ]
+    );
+
+    active_owner.window_destroyed();
+    assert_eq!(
+        active_owner.cleanup_actions(),
+        vec![ModalCleanupAction::RestoreOwner]
+    );
+
+    let mut already_disabled_owner = ModalDialogLifecycle::new(true, false);
+    already_disabled_owner.window_created();
+    assert!(!already_disabled_owner.should_disable_owner());
+    assert_eq!(
+        already_disabled_owner.cleanup_actions(),
+        vec![
+            ModalCleanupAction::ClearWindowState,
+            ModalCleanupAction::DestroyWindow,
+        ]
+    );
+}
+
+#[test]
+fn dialog_keyboard_cancel_closes_without_action_and_accept_is_explicitly_ignored() {
+    assert_eq!(
+        profile_dialog_keyboard_result(ProfileDialogKeyboardCommand::Cancel),
+        ProfileDialogKeyboardResult::CloseWithoutAction
+    );
+    assert_eq!(
+        profile_dialog_keyboard_result(ProfileDialogKeyboardCommand::Accept),
+        ProfileDialogKeyboardResult::Ignore
+    );
+}
+
+#[test]
+fn profile_dialog_enforces_the_eight_profile_limit() {
+    let mut profiles = vec![system_profile_view()];
+    for sequence in 1..8 {
+        profiles.push(UsageProfileView {
+            id: UsageProfileId::Managed(sequence),
+            label: format!("Profile {sequence}"),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        });
+    }
+
+    assert!(!ProfileDialogController::new(&profiles, false).can_add());
+    profiles.pop();
+    assert!(ProfileDialogController::new(&profiles, false).can_add());
+}
+
+#[test]
+fn profile_dialog_controls_follow_the_selected_profile_state() {
+    let profiles = vec![
+        system_profile_view(),
+        UsageProfileView {
+            id: UsageProfileId::Managed(1),
+            label: "Signed in".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: false,
+            managed: true,
+        },
+        UsageProfileView {
+            id: UsageProfileId::Managed(2),
+            label: "Signed out".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        },
+    ];
+    let mut controller = ProfileDialogController::new(&profiles, false);
+
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Delete));
+
+    assert!(controller.select(1));
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(controller.command_enabled(ProfileDialogCommand::Delete));
+
+    assert!(controller.select(2));
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(controller.command_enabled(ProfileDialogCommand::Delete));
+}
+
+#[test]
+fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    let profiles = vec![
+        system_profile_view(),
+        UsageProfileView {
+            id: UsageProfileId::Managed(11),
+            label: "One".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: false,
+            managed: true,
+        },
+        UsageProfileView {
+            id: UsageProfileId::Managed(12),
+            label: "Two".to_string(),
+            summary: String::new(),
+            selected: false,
+            login_required: true,
+            managed: true,
+        },
+    ];
+    let mut controller = ProfileDialogController::new(&profiles, false);
+
+    assert!(controller.select(1));
+    assert_eq!(
+        controller.submit_rename("First"),
+        Ok(Some(ProfileDialogAction::Rename(
+            UsageProfileId::Managed(11),
+            "First".to_string(),
+        )))
+    );
+
+    assert!(controller.select(2));
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Delete, true),
+        Some(ProfileDialogAction::Delete(UsageProfileId::Managed(12)))
+    );
+    assert!(!controller.select(99));
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Login, true),
+        Some(ProfileDialogAction::Login(UsageProfileId::Managed(12)))
+    );
+}
+
+#[test]
+fn dialog_controller_emits_only_confirmed_typed_profile_actions() {
+    let managed = UsageProfileView {
+        id: UsageProfileId::Managed(7),
+        label: "Work".to_string(),
+        summary: "Displayed".to_string(),
+        selected: true,
+        login_required: false,
+        managed: true,
+    };
+    let controller = ProfileDialogController::new(&[managed], false);
+
+    assert_eq!(
+        controller.submit_add("  Personal  "),
+        Ok(Some(
+            codex_usage_monitor::windows::profile_dialog::ProfileDialogAction::Add(
+                "Personal".to_string()
+            )
+        ))
+    );
+    assert_eq!(
+        controller.submit_rename("  Team  "),
+        Ok(Some(
+            codex_usage_monitor::windows::profile_dialog::ProfileDialogAction::Rename(
+                UsageProfileId::Managed(7),
+                "Team".to_string()
+            )
+        ))
+    );
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Login, false),
+        None
+    );
+    assert_eq!(
+        controller.confirmed_command(ProfileDialogCommand::Delete, true),
+        Some(
+            codex_usage_monitor::windows::profile_dialog::ProfileDialogAction::Delete(
+                UsageProfileId::Managed(7)
+            )
+        )
+    );
+}
+
+#[test]
+fn profile_confirmations_name_the_chosen_profile_and_scope_side_effects() {
+    let login = profile_login_confirmation("Work", Language::English);
+    let delete = profile_delete_confirmation("Work", Language::English);
+
+    assert!(login.contains("Work"));
+    assert!(login.contains("browser"));
+    assert!(login.contains("CLI and IDE sign-ins are unchanged"));
+    assert!(delete.contains("Work"));
+    assert!(delete.contains("local profile data cannot be recovered"));
+
+    for language in Language::ALL {
+        assert!(profile_login_confirmation("Work", *language).contains("Work"));
+        assert!(profile_delete_confirmation("Work", *language).contains("Work"));
+    }
+}
+
+#[test]
+fn profile_dialog_actions_map_to_task_six_ui_intents() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    let id = UsageProfileId::Managed(3);
+    let cases = [
+        (
+            ProfileDialogAction::Add("Work".to_string()),
+            UiAction::AddUsageProfile("Work".to_string()),
+        ),
+        (
+            ProfileDialogAction::Rename(id, "Team".to_string()),
+            UiAction::RenameUsageProfile(id, "Team".to_string()),
+        ),
+        (
+            ProfileDialogAction::Login(id),
+            UiAction::LoginUsageProfile(id),
+        ),
+        (
+            ProfileDialogAction::Logout(id),
+            UiAction::LogoutUsageProfile(id),
+        ),
+        (
+            ProfileDialogAction::Delete(id),
+            UiAction::DeleteUsageProfile(id),
+        ),
+    ];
+
+    for (dialog, expected) in cases {
+        assert_eq!(profile_dialog_ui_action(dialog), expected);
+    }
+}
+
+#[test]
+fn add_profile_confirmation_identifies_label_and_cancel_still_creates_without_login() {
+    let settings = tray_settings_with_profiles();
+    let action = UiAction::AddUsageProfile("Personal".to_string());
+    let request = profile_login_confirmation_request(&action, &settings).unwrap();
+
+    assert_eq!(request.label(), "Personal");
+    assert_eq!(
+        request.clone().resolve(false),
+        Some(ProfileLoginDispatch::Normal(action.clone()))
+    );
+    assert_eq!(
+        request.resolve(true),
+        Some(ProfileLoginDispatch::Confirmed(action))
+    );
+}
+
+#[test]
+fn top_level_login_confirmation_uses_selected_profile_and_cancel_dispatches_nothing() {
+    let mut settings = tray_settings_with_profiles();
+    settings.usage_profiles[0].selected = false;
+    settings.usage_profiles[1].selected = true;
+    let request = profile_login_confirmation_request(&UiAction::Login, &settings).unwrap();
+
+    assert_eq!(request.label(), "Work");
+    assert_eq!(request.clone().resolve(false), None);
+    assert_eq!(
+        request.resolve(true),
+        Some(ProfileLoginDispatch::Confirmed(
+            UiAction::LoginUsageProfile(UsageProfileId::Managed(1))
+        ))
+    );
+}
+
+#[test]
+fn manager_login_confirmation_is_centralized_and_resolves_once() {
+    use codex_usage_monitor::windows::profile_dialog::ProfileDialogAction;
+
+    let settings = tray_settings_with_profiles();
+    let action = profile_dialog_ui_action(ProfileDialogAction::Login(UsageProfileId::Managed(1)));
+    let request = profile_login_confirmation_request(&action, &settings).unwrap();
+
+    assert_eq!(request.label(), "Work");
+    assert_eq!(request.clone().resolve(false), None);
+    assert_eq!(
+        request.resolve(true),
+        Some(ProfileLoginDispatch::Confirmed(action))
+    );
+}
 
 #[test]
 fn update_menu_labels_surface_every_presentation_status() {
@@ -95,6 +647,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
             .map(|submenu| submenu.label.as_str())
             .collect::<Vec<_>>(),
         [
+            "Usage profiles",
             "Refresh interval",
             "Startup view",
             "Language",
@@ -103,6 +656,10 @@ fn tray_menu_groups_major_settings_into_submenus() {
     );
     assert_eq!(
         submenu_command_ids(submenus[0]),
+        [1000, MENU_MANAGE_USAGE_PROFILES]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[1]),
         [
             MENU_INTERVAL_1,
             MENU_INTERVAL_5,
@@ -112,11 +669,11 @@ fn tray_menu_groups_major_settings_into_submenus() {
         ]
     );
     assert_eq!(
-        submenu_command_ids(submenus[1]),
+        submenu_command_ids(submenus[2]),
         [MENU_STARTUP_WIDGET, MENU_STARTUP_TRAY]
     );
     assert_eq!(
-        submenu_command_ids(submenus[2]),
+        submenu_command_ids(submenus[3]),
         [
             MENU_LANGUAGE_AUTO,
             MENU_LANGUAGE_KOREAN,
@@ -134,7 +691,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
         ]
     );
     assert_eq!(
-        submenu_command_ids(submenus[3]),
+        submenu_command_ids(submenus[4]),
         [MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY]
     );
 }
@@ -148,6 +705,12 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
     assert_eq!(
         commands,
         vec![
+            (1000, "Default Codex account    Displayed".to_string(), true),
+            (
+                MENU_MANAGE_USAGE_PROFILES,
+                "Manage usage profiles".to_string(),
+                false
+            ),
             (MENU_REFRESH, "Refresh now".to_string(), false),
             (MENU_INTERVAL_1, "1 min".to_string(), false),
             (MENU_INTERVAL_5, "5 min".to_string(), false),
@@ -213,7 +776,7 @@ fn tray_menu_entries_localize_korean_labels_and_preserve_endonyms() {
 
     let commands = tray_commands(&settings);
 
-    assert_eq!(commands[0], (MENU_REFRESH, "지금 갱신".to_string(), false));
+    assert!(commands.contains(&(MENU_REFRESH, "지금 갱신".to_string(), false)));
     assert!(commands.contains(&(MENU_INTERVAL_15, "15분".to_string(), true)));
     assert!(commands.contains(&(MENU_AUTOSTART, "Windows 시작 시 실행".to_string(), true)));
     assert!(commands.contains(&(MENU_STARTUP_TRAY, "트레이에만 표시".to_string(), true)));
@@ -234,10 +797,7 @@ fn tray_menu_entries_offer_login_instead_of_auth_refresh_when_signed_out() {
 
     let commands = tray_commands(&settings);
 
-    assert_eq!(
-        commands[0],
-        (MENU_LOGIN, "Sign in to Codex".to_string(), false)
-    );
+    assert!(commands.contains(&(MENU_LOGIN, "Sign in to Codex".to_string(), false)));
     assert!(!commands.iter().any(|(id, _, _)| *id == MENU_AUTH_REFRESH));
 }
 
@@ -255,7 +815,156 @@ fn tray_settings(language: Language) -> UiSettings {
         update_status: UpdatePresentationStatus::Failed,
         show_remaining_percent: true,
         login_required: false,
+        usage_profiles: vec![UsageProfileView {
+            id: UsageProfileId::System,
+            label: codex_usage_monitor::localized_text(
+                codex_usage_monitor::LocalizationKey::UsageProfileSystem,
+                language,
+            )
+            .to_string(),
+            summary: if language == Language::Korean {
+                "표시 중".to_string()
+            } else {
+                "Displayed".to_string()
+            },
+            selected: true,
+            login_required: false,
+            managed: false,
+        }],
+        usage_profile_mutation_pending: false,
     }
+}
+
+fn tray_settings_with_profiles() -> UiSettings {
+    let mut settings = tray_settings(Language::English);
+    settings.usage_profiles.push(UsageProfileView {
+        id: UsageProfileId::Managed(1),
+        label: "Work".to_string(),
+        summary: "Weekly 72% remaining".to_string(),
+        selected: false,
+        login_required: false,
+        managed: true,
+    });
+    settings
+}
+
+#[test]
+fn popup_profile_action_keeps_the_profile_identity() {
+    let model = tray_menu_model(&tray_settings_with_profiles());
+
+    assert_eq!(
+        model.action(1001),
+        Some(UiAction::SelectUsageProfile(UsageProfileId::Managed(1)))
+    );
+    assert_eq!(model.action(MENU_ADD_USAGE_PROFILE), None);
+    assert_eq!(
+        model.action(MENU_MANAGE_USAGE_PROFILES),
+        Some(UiAction::OpenManageUsageProfiles)
+    );
+}
+
+#[test]
+fn usage_profile_submenu_offers_manage_but_not_duplicate_add() {
+    let model = tray_menu_model(&tray_settings_with_profiles());
+    let submenu = usage_profile_submenu(&model);
+    let ids = submenu_command_ids(submenu);
+
+    assert!(ids.contains(&MENU_MANAGE_USAGE_PROFILES));
+    assert!(!ids.contains(&MENU_ADD_USAGE_PROFILE));
+    assert_eq!(model.action(MENU_ADD_USAGE_PROFILE), None);
+}
+
+#[test]
+fn manager_marks_only_the_custom_system_profile_as_default() {
+    let system = UsageProfileView {
+        id: UsageProfileId::System,
+        label: "Main".to_owned(),
+        summary: String::new(),
+        selected: true,
+        login_required: false,
+        managed: false,
+    };
+    assert_eq!(
+        profile_manager_row_label(&system, Language::English),
+        "Main (Default Codex account)"
+    );
+
+    let default_system = UsageProfileView {
+        label: "Default Codex account".to_owned(),
+        ..system.clone()
+    };
+    assert_eq!(
+        profile_manager_row_label(&default_system, Language::English),
+        "Default Codex account"
+    );
+
+    let managed = UsageProfileView {
+        id: UsageProfileId::Managed(1),
+        ..system.clone()
+    };
+    assert_eq!(
+        profile_manager_row_label(&managed, Language::English),
+        "Main"
+    );
+}
+
+#[test]
+fn detached_widget_persistently_consumes_the_selected_profile_label() {
+    let view = WidgetViewModel {
+        usage_profile_label: "Work".to_string(),
+        primary: None,
+        secondary: None,
+        status: "Polling".to_string(),
+        last_success: String::new(),
+        is_stale: false,
+        taskbar_label: "Weekly usage".to_string(),
+        taskbar_tooltip: String::new(),
+        reset_credits_text: None,
+        data_state: WidgetDataState::Loading,
+    };
+    let attached = widget_surface_layout(208, 48, 96, true);
+    let detached = widget_surface_layout(208, 48, 96, false);
+
+    assert_eq!(attached.profile_header, None);
+    assert_eq!(attached.content, Rect::new(0, 0, 208, 48));
+    assert_eq!(profile_header_text(&view, attached), None);
+    assert_eq!(detached.profile_header, Some(Rect::new(8, 2, 200, 18)));
+    assert_eq!(detached.content, Rect::new(0, 18, 208, 48));
+    assert_eq!(profile_header_text(&view, detached), Some("Work"));
+}
+
+#[test]
+fn profile_mutation_actions_keep_ids_and_validated_labels_typed() {
+    let id = UsageProfileId::Managed(7);
+    let actions = [
+        UiAction::AddUsageProfile("Personal".to_string()),
+        UiAction::RenameUsageProfile(id, "Work".to_string()),
+        UiAction::LoginUsageProfile(id),
+        UiAction::LogoutUsageProfile(id),
+        UiAction::DeleteUsageProfile(id),
+    ];
+
+    assert_eq!(
+        actions[0],
+        UiAction::AddUsageProfile("Personal".to_string())
+    );
+    assert_eq!(
+        actions[1],
+        UiAction::RenameUsageProfile(id, "Work".to_string())
+    );
+    assert_eq!(actions[2], UiAction::LoginUsageProfile(id));
+    assert_eq!(actions[3], UiAction::LogoutUsageProfile(id));
+    assert_eq!(actions[4], UiAction::DeleteUsageProfile(id));
+}
+
+#[test]
+fn profile_tooltip_adds_identity_without_changing_taskbar_dimensions() {
+    let tooltip =
+        profile_taskbar_tooltip("Work", "Codex 7d usage\nRemaining: 72%", Language::English);
+
+    assert!(tooltip.starts_with("Usage profiles: Work\nCodex CLI sign-in is unchanged\n"));
+    assert!(tooltip.ends_with("Codex 7d usage\nRemaining: 72%"));
+    assert_eq!(taskbar_widget_size(48, 96), Ok((208, 48)));
 }
 
 fn tray_commands(settings: &UiSettings) -> Vec<(u16, String, bool)> {
@@ -293,6 +1002,19 @@ fn submenu_command_ids(submenu: &codex_usage_monitor::windows::tray::TraySubmenu
             _ => panic!("settings submenus must contain commands only"),
         })
         .collect()
+}
+
+fn usage_profile_submenu(
+    model: &codex_usage_monitor::windows::tray::TrayMenuModel,
+) -> &codex_usage_monitor::windows::tray::TraySubmenu {
+    model
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            TrayMenuEntry::Submenu(submenu) if submenu.label == "Usage profiles" => Some(submenu),
+            _ => None,
+        })
+        .expect("usage profile submenu is present")
 }
 
 #[test]
@@ -547,6 +1269,192 @@ fn periodic_recovery_keeps_a_valid_taskbar_attachment_stable() {
     assert_eq!(
         lifecycle.recovery_decision(RecoveryEvent::Timer, true),
         RecoveryDecision::Keep
+    );
+}
+
+#[derive(Default)]
+struct RecordingWidgetSurfaceBackend {
+    surfaces: Vec<(u32, WidgetSurface<u32>)>,
+    next_window: u32,
+    failed_targets: Vec<u32>,
+    operations: Vec<&'static str>,
+}
+
+impl WidgetSurfaceBackend for RecordingWidgetSurfaceBackend {
+    type Error = &'static str;
+    type Target = u32;
+    type Window = u32;
+
+    fn surfaces(&self) -> Vec<(Self::Window, WidgetSurface<Self::Target>)> {
+        self.surfaces.clone()
+    }
+
+    fn create_detached(&mut self) -> Result<Self::Window, Self::Error> {
+        self.operations.push("create_detached");
+        self.next_window += 1;
+        self.surfaces
+            .push((self.next_window, WidgetSurface::Detached));
+        Ok(self.next_window)
+    }
+
+    fn attach(&mut self, window: Self::Window, target: Self::Target) -> Result<(), Self::Error> {
+        self.operations.push("attach");
+        if self.failed_targets.contains(&target) {
+            return Err("attach failed");
+        }
+        self.surfaces
+            .iter_mut()
+            .find(|surface| surface.0 == window)
+            .unwrap()
+            .1 = WidgetSurface::Attached(target);
+        Ok(())
+    }
+
+    fn detach(&mut self, window: Self::Window) -> Result<(), Self::Error> {
+        self.operations.push("detach");
+        self.surfaces
+            .iter_mut()
+            .find(|surface| surface.0 == window)
+            .unwrap()
+            .1 = WidgetSurface::Detached;
+        Ok(())
+    }
+
+    fn destroy(&mut self, window: Self::Window) -> Result<(), Self::Error> {
+        self.operations.push("destroy");
+        self.surfaces.retain(|surface| surface.0 != window);
+        Ok(())
+    }
+}
+
+#[test]
+fn attachment_failure_keeps_one_detached_widget_and_later_reuses_it() {
+    let mut backend = RecordingWidgetSurfaceBackend {
+        failed_targets: vec![7],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        reconcile_widget_surfaces(&mut backend, &[7]),
+        Ok(vec!["attach failed"])
+    );
+    assert_eq!(backend.surfaces, [(1, WidgetSurface::Detached)]);
+    assert_eq!(backend.operations, ["create_detached", "attach"]);
+
+    let view = WidgetViewModel {
+        usage_profile_label: "Work".to_string(),
+        primary: None,
+        secondary: None,
+        status: "Polling".to_string(),
+        last_success: String::new(),
+        is_stale: false,
+        taskbar_label: "Weekly usage".to_string(),
+        taskbar_tooltip: String::new(),
+        reset_credits_text: None,
+        data_state: WidgetDataState::Loading,
+    };
+    let surface = widget_surface_layout(208, 72, 96, false);
+    assert_eq!(profile_header_text(&view, surface), Some("Work"));
+
+    backend.failed_targets.clear();
+    backend.operations.clear();
+    assert_eq!(reconcile_widget_surfaces(&mut backend, &[7]), Ok(vec![]));
+    assert_eq!(backend.surfaces, [(1, WidgetSurface::Attached(7))]);
+    assert_eq!(backend.operations, ["attach"]);
+}
+
+#[test]
+fn no_taskbar_target_preserves_exactly_one_detached_widget() {
+    let mut backend = RecordingWidgetSurfaceBackend::default();
+    assert_eq!(reconcile_widget_surfaces(&mut backend, &[]), Ok(vec![]));
+    assert_eq!(backend.surfaces, [(1, WidgetSurface::Detached)]);
+
+    reconcile_widget_surfaces(&mut backend, &[9]).unwrap();
+    backend.operations.clear();
+    assert_eq!(reconcile_widget_surfaces(&mut backend, &[]), Ok(vec![]));
+    assert_eq!(backend.surfaces, [(1, WidgetSurface::Detached)]);
+    assert_eq!(backend.operations, ["detach"]);
+}
+
+#[test]
+fn partial_multi_monitor_failure_keeps_one_fallback_and_reuses_every_live_window() {
+    let mut backend = RecordingWidgetSurfaceBackend {
+        failed_targets: vec![2, 3],
+        ..Default::default()
+    };
+
+    assert_eq!(
+        reconcile_widget_surfaces(&mut backend, &[1, 2, 3]),
+        Ok(vec!["attach failed", "attach failed"])
+    );
+    assert_eq!(
+        backend.surfaces,
+        [
+            (1, WidgetSurface::Attached(1)),
+            (2, WidgetSurface::Detached),
+        ]
+    );
+    assert_eq!(
+        backend.operations,
+        [
+            "create_detached",
+            "attach",
+            "create_detached",
+            "attach",
+            "create_detached",
+            "attach",
+            "destroy",
+        ]
+    );
+
+    let view = WidgetViewModel {
+        usage_profile_label: "Work".to_string(),
+        primary: None,
+        secondary: None,
+        status: "Polling".to_string(),
+        last_success: String::new(),
+        is_stale: false,
+        taskbar_label: "Weekly usage".to_string(),
+        taskbar_tooltip: String::new(),
+        reset_credits_text: None,
+        data_state: WidgetDataState::Loading,
+    };
+    let detached = widget_surface_layout(208, 72, 96, false);
+    assert_eq!(profile_header_text(&view, detached), Some("Work"));
+
+    backend.failed_targets.clear();
+    backend.operations.clear();
+    assert_eq!(
+        reconcile_widget_surfaces(&mut backend, &[1, 2, 3]),
+        Ok(vec![])
+    );
+    assert_eq!(
+        backend.surfaces,
+        [
+            (1, WidgetSurface::Attached(1)),
+            (2, WidgetSurface::Attached(2)),
+            (4, WidgetSurface::Attached(3)),
+        ]
+    );
+    assert_eq!(backend.operations, ["attach", "create_detached", "attach"]);
+}
+
+#[test]
+fn detached_widget_is_destroyed_before_its_owner_during_shutdown() {
+    let mut lifecycle = NativeLifecycle::default();
+    lifecycle.owner_created();
+    lifecycle.timer_started();
+    lifecycle.tray_created();
+    lifecycle.widget_created();
+
+    assert_eq!(
+        lifecycle.cleanup_actions(),
+        [
+            CleanupAction::StopTimer,
+            CleanupAction::RemoveTray,
+            CleanupAction::DestroyWidget,
+            CleanupAction::DestroyOwner,
+        ]
     );
 }
 
