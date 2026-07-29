@@ -50,6 +50,35 @@ pub enum ProfileDialogCommand {
     Delete,
 }
 
+/// 네이티브 프로필 관리자에 생성되는 변경 컨트롤의 역할입니다.
+///
+/// `AddBelowList`는 목록 바로 아래의 작은 추가 버튼이고, 나머지 항목은 하단 작업 행에
+/// 배치됩니다. 이 계약은 플랫폼 구현과 결정적 테스트가 같은 컨트롤 구성을 사용하게 합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileManagerControl {
+    /// 프로필 목록 바로 아래에서 추가 입력창을 엽니다.
+    AddBelowList,
+    /// 선택한 프로필의 표시 이름을 변경합니다.
+    Rename,
+    /// 선택한 프로필의 브라우저 로그인을 요청합니다.
+    Login,
+    /// 선택한 관리 프로필에서 로그아웃합니다.
+    Logout,
+    /// 선택한 관리 프로필을 삭제합니다.
+    Delete,
+}
+
+/// 프로필 관리자가 생성하는 컨트롤 역할과 순서를 정의합니다.
+///
+/// 추가는 목록 아래에만 존재하며, 하단 행에는 이름 변경·로그인·로그아웃·삭제만 배치됩니다.
+pub const PROFILE_MANAGER_CONTROLS: [ProfileManagerControl; 5] = [
+    ProfileManagerControl::AddBelowList,
+    ProfileManagerControl::Rename,
+    ProfileManagerControl::Login,
+    ProfileManagerControl::Logout,
+    ProfileManagerControl::Delete,
+];
+
 /// 사용량 프로필 추가 입력창에서 사용자가 선택한 순수 명령입니다.
 ///
 /// `Submit`은 표시 이름 검증을 수행하지만, `Cancel`은 입력값과 무관하게 창을 닫는

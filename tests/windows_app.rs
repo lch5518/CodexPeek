@@ -17,7 +17,8 @@ use codex_usage_monitor::{
             profile_dialog_keyboard_result, profile_login_confirmation, profile_manager_row_label,
             validated_label, AddProfilePromptCommand, ModalCleanupAction, ModalDialogLifecycle,
             ProfileDialogCommand, ProfileDialogController, ProfileDialogKeyboardCommand,
-            ProfileDialogKeyboardResult, PROFILE_LABEL_MAX_UTF16_UNITS,
+            ProfileDialogKeyboardResult, ProfileManagerControl, PROFILE_LABEL_MAX_UTF16_UNITS,
+            PROFILE_MANAGER_CONTROLS,
         },
         profile_taskbar_tooltip, resolve_windows_language, startup_plan,
         taskbar::{
@@ -101,6 +102,49 @@ fn add_prompt_cancel_emits_no_action_and_submit_validates_the_name() {
     assert_eq!(
         add_profile_prompt_result("", AddProfilePromptCommand::Submit),
         Err(ProfileValidationError::InvalidLabel)
+    );
+}
+
+#[test]
+fn profile_manager_controls_exclude_bottom_add_and_close() {
+    assert_eq!(
+        PROFILE_MANAGER_CONTROLS,
+        [
+            ProfileManagerControl::AddBelowList,
+            ProfileManagerControl::Rename,
+            ProfileManagerControl::Login,
+            ProfileManagerControl::Logout,
+            ProfileManagerControl::Delete,
+        ]
+    );
+
+    let controller = ProfileDialogController::new(&[system_profile_view()], true);
+    assert!(PROFILE_MANAGER_CONTROLS.contains(&ProfileManagerControl::AddBelowList));
+    assert!(!controller.can_add());
+}
+
+#[test]
+fn cancelled_add_prompt_restores_the_live_manager() {
+    let mut manager = ModalDialogLifecycle::new(false, false);
+    manager.window_created();
+    let mut prompt = ModalDialogLifecycle::new(true, true);
+    prompt.window_created();
+    prompt.owner_disabled();
+
+    let action = add_profile_prompt_result("ignored", AddProfilePromptCommand::Cancel).unwrap();
+    prompt.window_destroyed();
+
+    assert_eq!(action, None);
+    assert_eq!(
+        prompt.cleanup_actions(),
+        vec![ModalCleanupAction::RestoreOwner]
+    );
+    assert_eq!(
+        manager.cleanup_actions(),
+        vec![
+            ModalCleanupAction::ClearWindowState,
+            ModalCleanupAction::DestroyWindow,
+        ]
     );
 }
 
