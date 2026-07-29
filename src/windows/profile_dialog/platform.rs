@@ -159,6 +159,35 @@ struct DialogResourceSet {
     owns_surface_brush: bool,
 }
 
+#[derive(Clone, Copy)]
+struct DialogVisualSnapshot {
+    body_font: HFONT,
+    heading_font: HFONT,
+    dark: bool,
+}
+
+struct StagedDialogVisualResources {
+    dpi: u32,
+    palette: DialogPalette,
+    resources: DialogResourceSet,
+}
+
+impl StagedDialogVisualResources {
+    fn snapshot(&self) -> DialogVisualSnapshot {
+        DialogVisualSnapshot {
+            body_font: self.resources.body_font,
+            heading_font: self.resources.heading_font,
+            dark: self.palette == DialogPalette::for_theme(DialogTheme::Dark),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DialogVisualUpdateOutcome {
+    Applied,
+    Coalesced,
+}
+
 struct DialogVisualResources {
     dpi: u32,
     palette: DialogPalette,
@@ -171,6 +200,8 @@ struct DialogVisualResources {
     owns_background_brush: bool,
     owns_surface_brush: bool,
     backend: Box<dyn DialogResourceBackend>,
+    update_in_progress: bool,
+    pending_update: Option<(u32, DialogTheme)>,
 }
 
 impl DialogVisualResources {
@@ -201,30 +232,31 @@ impl DialogVisualResources {
             owns_background_brush: resources.owns_background_brush,
             owns_surface_brush: resources.owns_surface_brush,
             backend,
+            update_in_progress: false,
+            pending_update: None,
         }
     }
 
-    /// DPI 또는 테마가 바뀐 대화상자의 GDI 자원을 교체합니다.
+    /// DPI 또는 테마가 바뀐 대화상자의 새 GDI 자원을 활성 자원과 분리해 준비합니다.
     ///
-    /// 새 자원을 먼저 만든 뒤 이전에 소유한 자원만 해제합니다. stock 글꼴은 빌린 핸들이므로
-    /// 해제하지 않으며, 새 자원은 이후 재구성 또는 드롭까지 이 객체가 소유합니다.
-    fn rebuild_for_dpi(&mut self, dpi: u32, theme: DialogTheme) {
+    /// 반환된 staged 집합은 아직 컨트롤에 적용되거나 활성 상태에 저장되지 않습니다. 호출자는
+    /// 새 글꼴을 모든 컨트롤에 먼저 적용한 뒤 `commit_staged`로 교체하고 이전 집합을 해제해야
+    /// 합니다. DPI와 팔레트가 같으면 별도 할당 없이 `None`을 반환합니다.
+    fn rebuild_for_dpi(
+        &mut self,
+        dpi: u32,
+        theme: DialogTheme,
+    ) -> Option<StagedDialogVisualResources> {
         let palette = DialogPalette::for_theme(theme);
         if self.dpi == dpi && self.palette == palette {
-            return;
+            return None;
         }
         let resources = Self::allocate(&mut *self.backend, dpi, palette);
-        self.release_owned();
-        self.dpi = dpi;
-        self.palette = palette;
-        self.body_font = resources.body_font;
-        self.heading_font = resources.heading_font;
-        self.background_brush = resources.background_brush;
-        self.surface_brush = resources.surface_brush;
-        self.owns_body_font = resources.owns_body_font;
-        self.owns_heading_font = resources.owns_heading_font;
-        self.owns_background_brush = resources.owns_background_brush;
-        self.owns_surface_brush = resources.owns_surface_brush;
+        Some(StagedDialogVisualResources {
+            dpi,
+            palette,
+            resources,
+        })
     }
 
     fn allocate(
@@ -248,19 +280,65 @@ impl DialogVisualResources {
         }
     }
 
-    fn release_owned(&mut self) {
+    fn snapshot(&self) -> DialogVisualSnapshot {
+        DialogVisualSnapshot {
+            body_font: self.body_font,
+            heading_font: self.heading_font,
+            dark: self.palette == DialogPalette::for_theme(DialogTheme::Dark),
+        }
+    }
+
+    fn detach_active(&mut self) -> DialogResourceSet {
+        let resources = DialogResourceSet {
+            body_font: self.body_font,
+            heading_font: self.heading_font,
+            background_brush: self.background_brush,
+            surface_brush: self.surface_brush,
+            owns_body_font: self.owns_body_font,
+            owns_heading_font: self.owns_heading_font,
+            owns_background_brush: self.owns_background_brush,
+            owns_surface_brush: self.owns_surface_brush,
+        };
+        self.owns_body_font = false;
+        self.owns_heading_font = false;
+        self.owns_background_brush = false;
+        self.owns_surface_brush = false;
+        resources
+    }
+
+    fn commit_staged(&mut self, staged: StagedDialogVisualResources) -> DialogResourceSet {
+        let previous = self.detach_active();
+        self.dpi = staged.dpi;
+        self.palette = staged.palette;
+        self.body_font = staged.resources.body_font;
+        self.heading_font = staged.resources.heading_font;
+        self.background_brush = staged.resources.background_brush;
+        self.surface_brush = staged.resources.surface_brush;
+        self.owns_body_font = staged.resources.owns_body_font;
+        self.owns_heading_font = staged.resources.owns_heading_font;
+        self.owns_background_brush = staged.resources.owns_background_brush;
+        self.owns_surface_brush = staged.resources.owns_surface_brush;
+        previous
+    }
+
+    fn release_set(&mut self, resources: DialogResourceSet) {
         for (object, owned) in [
-            (HGDIOBJ(self.body_font.0), &mut self.owns_body_font),
-            (HGDIOBJ(self.heading_font.0), &mut self.owns_heading_font),
+            (HGDIOBJ(resources.body_font.0), resources.owns_body_font),
             (
-                HGDIOBJ(self.background_brush.0),
-                &mut self.owns_background_brush,
+                HGDIOBJ(resources.heading_font.0),
+                resources.owns_heading_font,
             ),
-            (HGDIOBJ(self.surface_brush.0), &mut self.owns_surface_brush),
+            (
+                HGDIOBJ(resources.background_brush.0),
+                resources.owns_background_brush,
+            ),
+            (
+                HGDIOBJ(resources.surface_brush.0),
+                resources.owns_surface_brush,
+            ),
         ] {
-            if *owned && !object.0.is_null() {
+            if owned && !object.0.is_null() {
                 self.backend.delete_object(object);
-                *owned = false;
             }
         }
     }
@@ -268,7 +346,8 @@ impl DialogVisualResources {
 
 impl Drop for DialogVisualResources {
     fn drop(&mut self) {
-        self.release_owned();
+        let active = self.detach_active();
+        self.release_set(active);
     }
 }
 
@@ -294,19 +373,83 @@ fn current_dialog_theme() -> DialogTheme {
     }
 }
 
+#[derive(Clone, Copy)]
 struct DialogChildVisualContext {
     body_font: HFONT,
     dark: bool,
 }
 
+/// 대화상자 시각 자원 교체를 staged 적용 순서로 실행하고 중첩 요청은 마지막 값으로 합칩니다.
+///
+/// 새 집합을 만든 뒤 Copy 스냅샷만 `apply`에 전달하고, 적용이 반환된 다음 활성 집합과 교체해
+/// 이전 소유 자원을 해제합니다. 적용 중 같은 포인터로 다시 호출되면 자원을 바꾸지 않고 최신
+/// DPI/테마 요청만 기록해 바깥 호출이 안전한 시점에 이어서 처리합니다.
+///
+/// # Safety
+///
+/// `resources`는 호출 전체와 모든 중첩 호출 동안 같은 UI 스레드에서 살아 있는 단일
+/// `DialogVisualResources`를 가리켜야 합니다. `apply`는 전달된 Copy 값만 사용해야 하며 자원
+/// 객체의 Rust 참조를 보관하면 안 됩니다.
+unsafe fn update_dialog_visual_resources<F>(
+    resources: *mut DialogVisualResources,
+    mut dpi: u32,
+    mut theme: DialogTheme,
+    mut apply: F,
+) -> DialogVisualUpdateOutcome
+where
+    F: FnMut(DialogVisualSnapshot),
+{
+    {
+        let resources = &mut *resources;
+        if resources.update_in_progress {
+            resources.pending_update = Some((dpi, theme));
+            return DialogVisualUpdateOutcome::Coalesced;
+        }
+        resources.update_in_progress = true;
+    }
+
+    loop {
+        let staged = (&mut *resources).rebuild_for_dpi(dpi, theme);
+        let visual = staged
+            .as_ref()
+            .map(StagedDialogVisualResources::snapshot)
+            .unwrap_or_else(|| (&*resources).snapshot());
+
+        apply(visual);
+
+        if let Some(staged) = staged {
+            let previous = (&mut *resources).commit_staged(staged);
+            (&mut *resources).release_set(previous);
+        }
+
+        let pending = {
+            let resources = &mut *resources;
+            match resources.pending_update.take() {
+                Some(pending) => Some(pending),
+                None => {
+                    resources.update_in_progress = false;
+                    None
+                }
+            }
+        };
+        let Some((pending_dpi, pending_theme)) = pending else {
+            break;
+        };
+        dpi = pending_dpi;
+        theme = pending_theme;
+    }
+
+    DialogVisualUpdateOutcome::Applied
+}
+
 /// 대화상자와 모든 기본 자식 컨트롤에 현재 글꼴 및 Windows 컨트롤 테마를 적용합니다.
 ///
-/// `dialog`과 열거되는 자식 HWND는 호출 동안 유효해야 하며, `resources`의 글꼴은 컨트롤보다
-/// 오래 살아 있어야 합니다. DWM 또는 개별 컨트롤 테마 적용 실패는 지원되지 않는 Windows
-/// 버전의 시각적 폴백으로 취급하고 모달 생성을 중단하지 않습니다.
-unsafe fn apply_dialog_visuals(dialog: HWND, resources: &DialogVisualResources) {
-    let dark = resources.palette == DialogPalette::for_theme(DialogTheme::Dark);
-    let dark_attribute = i32::from(dark);
+/// `dialog`과 열거되는 자식 HWND는 호출 동안 유효해야 하며, 스냅샷의 글꼴은 호출자가 staged
+/// 또는 활성 집합으로 계속 소유해야 합니다. 함수는 Copy 값만 사용하므로 동기 Win32 호출 중
+/// 원본 자원 객체의 Rust 참조를 유지하지 않습니다. DWM 또는 개별 컨트롤 테마 적용 실패는
+/// 지원되지 않는 Windows 버전의 시각적 폴백으로 취급하고 모달 생성을 중단하지 않습니다.
+unsafe fn apply_dialog_visuals(dialog: HWND, visual: DialogVisualSnapshot) {
+    let dark_attribute = i32::from(visual.dark);
     let _ = DwmSetWindowAttribute(
         dialog,
         DWMWA_USE_IMMERSIVE_DARK_MODE,
@@ -316,12 +459,12 @@ unsafe fn apply_dialog_visuals(dialog: HWND, resources: &DialogVisualResources) 
     let _ = SendMessageW(
         dialog,
         WM_SETFONT,
-        Some(WPARAM(resources.heading_font.0 as usize)),
+        Some(WPARAM(visual.heading_font.0 as usize)),
         Some(LPARAM(1)),
     );
     let context = DialogChildVisualContext {
-        body_font: resources.body_font,
-        dark,
+        body_font: visual.body_font,
+        dark: visual.dark,
     };
     let _ = EnumChildWindows(
         Some(dialog),
@@ -333,7 +476,7 @@ unsafe fn apply_dialog_visuals(dialog: HWND, resources: &DialogVisualResources) 
 /// `lparam`은 `EnumChildWindows` 호출 동안 살아 있는 `DialogChildVisualContext`를 가리켜야
 /// 하며, 콜백은 포인터를 보관하지 않습니다.
 unsafe extern "system" fn apply_dialog_child_visuals(child: HWND, lparam: LPARAM) -> BOOL {
-    let context = &*(lparam.0 as *const DialogChildVisualContext);
+    let context = *(lparam.0 as *const DialogChildVisualContext);
     let _ = SendMessageW(
         child,
         WM_SETFONT,
@@ -355,11 +498,14 @@ unsafe extern "system" fn apply_dialog_child_visuals(child: HWND, lparam: LPARAM
 /// 레지스트리, DWM, 테마 API 실패는 어두운 테마 또는 기본 제목 표시줄로 안전하게 폴백합니다.
 unsafe fn rebuild_dialog_visuals(dialog: HWND, resources: *mut DialogVisualResources) {
     let dpi = GetDpiForWindow(dialog).max(96);
-    // SAFETY: 호출자가 보장한 유효 포인터를 사용하며, 가변 참조는 재진입 가능한 컨트롤 메시지를
-    // 보내기 전에 버립니다.
-    (&mut *resources).rebuild_for_dpi(dpi, current_dialog_theme());
-    apply_dialog_visuals(dialog, &*resources);
-    let _ = InvalidateRect(Some(dialog), None, true);
+    let outcome =
+        update_dialog_visual_resources(resources, dpi, current_dialog_theme(), |visual| {
+            // SAFETY: Copy 스냅샷만 전달하며 자원 객체의 Rust 참조는 외부 호출 동안 존재하지 않습니다.
+            unsafe { apply_dialog_visuals(dialog, visual) };
+        });
+    if outcome == DialogVisualUpdateOutcome::Applied {
+        let _ = InvalidateRect(Some(dialog), None, true);
+    }
 }
 
 unsafe fn dialog_control_color(
@@ -1876,23 +2022,38 @@ mod tests {
         },
     };
 
-    use crate::{windows::design::DialogTheme, Language, LocalizationKey, UsageProfileId};
+    use crate::{
+        windows::design::{DialogPalette, DialogTheme},
+        Language, LocalizationKey, UsageProfileId,
+    };
 
     use super::{
         add_profile_prompt_result, confirm_profile_delete_with_presenter,
         confirm_profile_login_with_presenter, consume_centered_message_box_request,
         handle_add_profile_prompt_result_with_presenter,
         handle_manager_rename_result_with_presenter, show_add_dialog_warning_with_presenter,
-        show_safe_error_with_presenter, AddDialogState, AddProfilePromptCommand,
-        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
-        DialogResourceBackend, DialogVisualResources, DialogWorkArea, ProfileDialogController,
-        ProfileMessagePresenter, ProfileMessageRoute, UsageProfileView,
+        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
+        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
+        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
+        DialogWorkArea, ProfileDialogController, ProfileMessagePresenter, ProfileMessageRoute,
+        UsageProfileView,
     };
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum ResourceEvent {
+        Created(usize),
+        Applied {
+            body_font: usize,
+            heading_font: usize,
+        },
+        Deleted(usize),
+    }
 
     #[derive(Default)]
     struct ResourceCalls {
         font_faces: Vec<DialogFontFace>,
         deleted: Vec<usize>,
+        events: Vec<ResourceEvent>,
     }
 
     struct RecordingResourceBackend {
@@ -1905,7 +2066,12 @@ mod tests {
     impl DialogResourceBackend for RecordingResourceBackend {
         fn create_font(&mut self, _dpi: u32, _heading: bool, face: DialogFontFace) -> HFONT {
             self.calls.borrow_mut().font_faces.push(face);
-            font_handle(self.fonts.pop_front().unwrap_or_default())
+            let handle = self.fonts.pop_front().unwrap_or_default();
+            self.calls
+                .borrow_mut()
+                .events
+                .push(ResourceEvent::Created(handle));
+            font_handle(handle)
         }
 
         fn stock_font(&mut self) -> HFONT {
@@ -1913,11 +2079,19 @@ mod tests {
         }
 
         fn create_brush(&mut self, _colorref: u32) -> HBRUSH {
-            brush_handle(self.brushes.pop_front().unwrap_or_default())
+            let handle = self.brushes.pop_front().unwrap_or_default();
+            self.calls
+                .borrow_mut()
+                .events
+                .push(ResourceEvent::Created(handle));
+            brush_handle(handle)
         }
 
         fn delete_object(&mut self, object: HGDIOBJ) {
-            self.calls.borrow_mut().deleted.push(object.0 as usize);
+            let handle = object.0 as usize;
+            let mut calls = self.calls.borrow_mut();
+            calls.deleted.push(handle);
+            calls.events.push(ResourceEvent::Deleted(handle));
         }
     }
 
@@ -1980,13 +2154,117 @@ mod tests {
         let mut resources =
             DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
 
-        resources.rebuild_for_dpi(144, DialogTheme::Light);
+        unsafe {
+            update_dialog_visual_resources(
+                std::ptr::addr_of_mut!(resources),
+                144,
+                DialogTheme::Light,
+                |_| {},
+            );
+        }
         drop(resources);
 
         let mut deleted = calls.borrow().deleted.clone();
         deleted.sort_unstable();
         assert_eq!(deleted, [11, 21, 22, 31, 32, 41, 42]);
         assert!(!deleted.contains(&99));
+    }
+
+    #[test]
+    fn rebuild_applies_staged_fonts_before_deleting_old_handles() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls: Rc::clone(&calls),
+            fonts: VecDeque::from([11, 12, 31, 32]),
+            brushes: VecDeque::from([21, 22, 41, 42]),
+            stock_font: 99,
+        };
+        let mut resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+        calls.borrow_mut().events.clear();
+
+        let outcome = unsafe {
+            update_dialog_visual_resources(
+                std::ptr::addr_of_mut!(resources),
+                144,
+                DialogTheme::Light,
+                |visual| {
+                    calls.borrow_mut().events.push(ResourceEvent::Applied {
+                        body_font: visual.body_font.0 as usize,
+                        heading_font: visual.heading_font.0 as usize,
+                    });
+                },
+            )
+        };
+
+        assert_eq!(outcome, DialogVisualUpdateOutcome::Applied);
+        assert_eq!(
+            calls.borrow().events,
+            [
+                ResourceEvent::Created(31),
+                ResourceEvent::Created(32),
+                ResourceEvent::Created(41),
+                ResourceEvent::Created(42),
+                ResourceEvent::Applied {
+                    body_font: 31,
+                    heading_font: 32,
+                },
+                ResourceEvent::Deleted(11),
+                ResourceEvent::Deleted(12),
+                ResourceEvent::Deleted(21),
+                ResourceEvent::Deleted(22),
+            ]
+        );
+    }
+
+    #[test]
+    fn reentrant_visual_update_is_coalesced_to_the_latest_safe_state() {
+        let calls = Rc::new(RefCell::new(ResourceCalls::default()));
+        let backend = RecordingResourceBackend {
+            calls: Rc::clone(&calls),
+            fonts: VecDeque::from([11, 12, 31, 32, 51, 52]),
+            brushes: VecDeque::from([21, 22, 41, 42, 61, 62]),
+            stock_font: 99,
+        };
+        let mut resources =
+            DialogVisualResources::new_with_backend(96, DialogTheme::Dark, Box::new(backend));
+        let resources_pointer = std::ptr::addr_of_mut!(resources);
+        let applied = Rc::new(RefCell::new(Vec::new()));
+        let nested_outcomes = Rc::new(RefCell::new(Vec::new()));
+
+        let outcome = unsafe {
+            update_dialog_visual_resources(resources_pointer, 144, DialogTheme::Light, |visual| {
+                applied
+                    .borrow_mut()
+                    .push((visual.body_font.0 as usize, visual.heading_font.0 as usize));
+                if applied.borrow().len() == 1 {
+                    nested_outcomes
+                        .borrow_mut()
+                        .push(update_dialog_visual_resources(
+                            resources_pointer,
+                            192,
+                            DialogTheme::Dark,
+                            |_| panic!("coalesced update must not apply inside the nested call"),
+                        ));
+                }
+            })
+        };
+
+        assert_eq!(outcome, DialogVisualUpdateOutcome::Applied);
+        assert_eq!(
+            nested_outcomes.borrow().as_slice(),
+            [DialogVisualUpdateOutcome::Coalesced]
+        );
+        assert_eq!(applied.borrow().as_slice(), [(31, 32), (51, 52)]);
+        assert_eq!(resources.dpi, 192);
+        assert_eq!(
+            resources.palette,
+            DialogPalette::for_theme(DialogTheme::Dark)
+        );
+        assert_eq!(resources.body_font.0 as usize, 51);
+        assert_eq!(resources.heading_font.0 as usize, 52);
+        assert!(!resources.update_in_progress);
+        assert!(resources.pending_update.is_none());
     }
 
     #[derive(Debug, PartialEq, Eq)]
