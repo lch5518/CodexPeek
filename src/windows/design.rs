@@ -2,7 +2,7 @@
 mod tests {
     use super::{
         add_profile_layout, profile_manager_layout, scale_logical, DialogLayoutInput,
-        DialogPalette, DialogTheme,
+        DialogPalette, DialogTheme, ROW_HEIGHT,
     };
     use crate::windows::ProfileUsageStatus;
 
@@ -43,8 +43,9 @@ mod tests {
 
     #[test]
     fn logical_dimensions_scale_at_supported_dpis() {
-        for (dpi, expected_row_height) in [(96, 56), (120, 70), (144, 84), (168, 98), (192, 112)] {
-            assert_eq!(scale_logical(56, dpi), expected_row_height);
+        for (dpi, expected_row_height) in [(96, 76), (120, 95), (144, 114), (168, 133), (192, 152)]
+        {
+            assert_eq!(scale_logical(ROW_HEIGHT, dpi), expected_row_height);
         }
     }
 
@@ -282,7 +283,7 @@ impl DialogPalette {
 /// 대화 상자 외곽의 논리 픽셀 여백입니다.
 pub const OUTER_PADDING: i32 = 16;
 /// 프로필 목록 한 행의 논리 픽셀 높이입니다.
-pub const ROW_HEIGHT: i32 = 56;
+pub const ROW_HEIGHT: i32 = 76;
 /// 버튼과 편집 컨트롤의 최소 논리 픽셀 높이입니다.
 pub const CONTROL_HEIGHT: i32 = 32;
 /// 선택된 프로필을 표시하는 논리 픽셀 가장자리 두께입니다.

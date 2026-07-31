@@ -803,6 +803,8 @@ pub struct ProfileManagerRowText {
     pub name: String,
     /// 호출자가 이미 안전하게 구성한 사용량 또는 로그인 상태 요약입니다.
     pub summary: String,
+    /// 리셋권과 한도 정보를 한 줄로 정리한 안전한 지역화 문구입니다.
+    pub details: String,
     /// 시스템 계정과 현재 표시 프로필을 색상 외 텍스트로 구분하는 지역화 표식입니다.
     pub markers: Vec<&'static str>,
 }
@@ -830,6 +832,7 @@ pub fn profile_manager_row_text(
     ProfileManagerRowText {
         name: profile.label.clone(),
         summary: profile.summary.clone(),
+        details: profile.details.clone(),
         markers,
     }
 }
@@ -853,6 +856,10 @@ pub fn profile_manager_accessible_row_text(
     if !copy.summary.trim().is_empty() {
         text.push_str(" — ");
         text.push_str(&copy.summary);
+    }
+    if !copy.details.trim().is_empty() {
+        text.push_str(" — ");
+        text.push_str(&copy.details);
     }
     text
 }

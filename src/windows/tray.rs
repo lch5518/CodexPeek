@@ -614,6 +614,7 @@ mod tests {
                     resolved_language,
                 )
                 .to_string(),
+                details: String::new(),
                 selected: true,
                 login_required: false,
                 used_percent: None,

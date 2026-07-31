@@ -432,7 +432,7 @@ mod tests {
 
 /// UI에 노출할 수 있는 비민감 사용량 프로필 표시 정보입니다.
 ///
-/// 내부 경로와 계정 식별 정보는 포함하지 않으며, `label`과 `summary`만 사용자 화면에
+/// 내부 경로와 계정 식별 정보는 포함하지 않으며, `label`과 사용량 요약만 사용자 화면에
 /// 표시합니다. `id`는 형식화된 UI 동작을 런타임 프로필에 연결하는 데만 사용합니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageProfileView {
@@ -442,6 +442,11 @@ pub struct UsageProfileView {
     pub label: String,
     /// 사용량 또는 로그인 상태를 요약한 지역화 문구입니다.
     pub summary: String,
+    /// 리셋권·단기·주간 한도를 한 줄로 요약한 지역화 문구입니다.
+    ///
+    /// 사용량을 확인할 수 없거나 로그인이 필요한 경우에는 빈 문자열이며, 계정 식별자나 인증
+    /// 정보는 포함하지 않습니다.
+    pub details: String,
     /// 현재 위젯이 이 프로필의 사용량을 표시하는지 나타냅니다.
     pub selected: bool,
     /// 이 프로필에 Codex 로그인이 필요한지 나타냅니다.

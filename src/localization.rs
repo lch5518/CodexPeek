@@ -190,6 +190,12 @@ pub enum LocalizationKey {
     UsageProfileOperationFailed,
     /// 프로필 추가 입력창을 닫는 동작입니다.
     UsageProfileCancel,
+    /// 프로필별 사용 가능한 리셋권 수를 나타내는 레이블입니다.
+    UsageProfileResetCredits,
+    /// 프로필별 한도 소모율을 나타내는 레이블입니다.
+    UsageProfileUsed,
+    /// 프로필별 리셋권 또는 한도의 종료 시각을 나타내는 레이블입니다.
+    UsageProfileEnds,
 }
 
 impl LocalizationKey {
@@ -266,6 +272,9 @@ impl LocalizationKey {
         Self::UsageProfileDeleteIrrecoverable,
         Self::UsageProfileOperationFailed,
         Self::UsageProfileCancel,
+        Self::UsageProfileResetCredits,
+        Self::UsageProfileUsed,
+        Self::UsageProfileEnds,
     ];
 
     const fn index(self) -> usize {
@@ -341,11 +350,14 @@ impl LocalizationKey {
             Self::UsageProfileDeleteIrrecoverable => 68,
             Self::UsageProfileOperationFailed => 69,
             Self::UsageProfileCancel => 70,
+            Self::UsageProfileResetCredits => 71,
+            Self::UsageProfileUsed => 72,
+            Self::UsageProfileEnds => 73,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 71;
+const LOCALIZATION_KEY_COUNT: usize = 74;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -419,6 +431,9 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "로컬 프로필 데이터는 복구할 수 없습니다",
     "프로필 작업을 완료할 수 없습니다",
     "취소",
+    "리셋 쿠폰",
+    "소모",
+    "종료",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -493,6 +508,9 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "local profile data cannot be recovered",
     "The profile operation could not be completed",
     "Cancel",
+    "Reset coupons",
+    "used",
+    "ends",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -567,6 +585,9 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Los datos locales del perfil no se pueden recuperar",
     "No se pudo completar la operación del perfil",
     "Cancelar",
+    "Cupones de reinicio",
+    "usado",
+    "termina",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -641,6 +662,9 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Os dados locais do perfil não podem ser recuperados",
     "Não foi possível concluir a operação do perfil",
     "Cancelar",
+    "Cupons de redefinição",
+    "usado",
+    "termina",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -715,6 +739,9 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Data profil lokal tidak dapat dipulihkan",
     "Operasi profil tidak dapat diselesaikan",
     "Batal",
+    "Kupon reset",
+    "digunakan",
+    "berakhir",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -789,6 +816,9 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "ローカルプロファイルデータは復元できません",
     "プロファイル操作を完了できませんでした",
     "キャンセル",
+    "リセットクーポン",
+    "使用済み",
+    "終了",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -863,6 +893,9 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "स्थानीय प्रोफ़ाइल डेटा पुनर्प्राप्त नहीं किया जा सकता",
     "प्रोफ़ाइल कार्रवाई पूरी नहीं हो सकी",
     "रद्द करें",
+    "रीसेट कूपन",
+    "उपयोग किया गया",
+    "समाप्त",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -937,6 +970,9 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Lokale Profildaten können nicht wiederhergestellt werden",
     "Der Profilvorgang konnte nicht abgeschlossen werden",
     "Abbrechen",
+    "Zurücksetzungsgutscheine",
+    "verwendet",
+    "endet",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1011,6 +1047,9 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Les données locales du profil sont irrécupérables",
     "L'opération de profil n'a pas pu être effectuée",
     "Annuler",
+    "Coupons de réinitialisation",
+    "utilisé",
+    "se termine",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1085,6 +1124,9 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Không thể khôi phục dữ liệu hồ sơ cục bộ",
     "Không thể hoàn tất thao tác hồ sơ",
     "Hủy",
+    "Phiếu đặt lại",
+    "đã dùng",
+    "kết thúc",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1159,6 +1201,9 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Yerel profil verileri kurtarılamaz",
     "Profil işlemi tamamlanamadı",
     "İptal",
+    "Sıfırlama kuponları",
+    "kullanıldı",
+    "biter",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1233,6 +1278,9 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "لا يمكن استعادة بيانات ملف التعريف المحلية",
     "تعذر إكمال عملية ملف التعريف",
     "إلغاء",
+    "قسائم إعادة التعيين",
+    "مستخدم",
+    "ينتهي",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.

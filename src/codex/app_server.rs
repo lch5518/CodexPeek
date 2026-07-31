@@ -395,9 +395,20 @@ struct ResetCreditsDto {
 /// 단일 리셋권 항목입니다. 표시에 필요한 만료 시각만 추출합니다.
 #[derive(Deserialize)]
 struct CreditDto {
-    /// UNIX epoch 기준 만료 시각(초)입니다.
+    /// UNIX epoch 초 또는 RFC 3339 UTC 문자열로 전달되는 만료 시각입니다.
     #[serde(rename = "expiresAt")]
-    expires_at: Option<i64>,
+    expires_at: Option<ResetCreditExpiryDto>,
+}
+
+/// app-server 버전별 리셋권 만료 시각 표현입니다.
+///
+/// 숫자 Unix 초와 RFC 3339 UTC 문자열만 보관하며, 다른 JSON 형식은 응답 전체를 안전하게
+/// 거절합니다.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ResetCreditExpiryDto {
+    UnixSeconds(i64),
+    Rfc3339Utc(String),
 }
 
 #[derive(Deserialize)]
@@ -656,23 +667,103 @@ fn into_usage_window(dto: UsageWindowDto, kind: WindowKind) -> Result<UsageWindo
 
 /// DTO 리셋권 정보를 도메인 모델로 변환합니다.
 ///
-/// 개수가 0이면 표시할 값이 없으므로 `None`을 반환합니다. 만료 시각은 보유 리셋권 중 가장 빠른
+/// 서버가 리셋권 필드를 제공하면 개수가 0이어도 보존합니다. 만료 시각은 보유 리셋권 중 가장 빠른
 /// 시각 하나만 보존하며, 음수이거나 변환할 수 없는 값은 무시합니다.
 fn into_reset_credits(dto: ResetCreditsDto) -> Option<ResetCredits> {
-    if dto.available_count == 0 {
-        return None;
-    }
     let nearest_expiry = dto
         .credits
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|credit| credit.expires_at.filter(|seconds| *seconds >= 0))
-        .filter_map(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds as u64)))
+        .filter_map(|credit| credit.expires_at)
+        .filter_map(reset_credit_expiry_time)
         .min();
     Some(ResetCredits {
         available_count: dto.available_count,
         nearest_expiry,
     })
+}
+
+/// 리셋권 만료 시각을 `SystemTime`으로 변환합니다.
+///
+/// 숫자 Unix 초와 `YYYY-MM-DDTHH:MM:SS[.fraction]Z` 형식만 허용합니다. 잘못된 날짜, UTC가
+/// 아닌 오프셋, Unix epoch 이전 값은 표시하지 않기 위해 `None`으로 처리합니다.
+fn reset_credit_expiry_time(value: ResetCreditExpiryDto) -> Option<SystemTime> {
+    match value {
+        ResetCreditExpiryDto::UnixSeconds(seconds) if seconds >= 0 => {
+            UNIX_EPOCH.checked_add(Duration::from_secs(seconds as u64))
+        }
+        ResetCreditExpiryDto::Rfc3339Utc(value) => parse_rfc3339_utc_seconds(&value)
+            .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds))),
+        ResetCreditExpiryDto::UnixSeconds(_) => None,
+    }
+}
+
+/// RFC 3339 UTC 시각을 Unix epoch 초로 변환합니다.
+///
+/// 리셋권 만료 시각에 사용하는 고정 UTC 형식만 처리하며, 시간대 오프셋·윤년 오류·범위를 벗어난
+/// 달력 값은 `None`으로 반환합니다.
+fn parse_rfc3339_utc_seconds(value: &str) -> Option<u64> {
+    let (date, time) = value.strip_suffix('Z')?.split_once('T')?;
+    let mut date = date.split('-');
+    let year = date.next()?.parse::<i64>().ok()?;
+    let month = date.next()?.parse::<u32>().ok()?;
+    let day = date.next()?.parse::<u32>().ok()?;
+    if date.next().is_some() || !(1970..=9_999).contains(&year) || !(1..=12).contains(&month) {
+        return None;
+    }
+    let mut time = time.split(':');
+    let hour = time.next()?.parse::<u64>().ok()?;
+    let minute = time.next()?.parse::<u64>().ok()?;
+    let second = time.next()?.split('.').next()?.parse::<u64>().ok()?;
+    if time.next().is_some()
+        || hour >= 24
+        || minute >= 60
+        || second >= 60
+        || day == 0
+        || day > days_in_month(year, month)
+    {
+        return None;
+    }
+
+    let days = (1970..year)
+        .try_fold(0_u64, |total, current| {
+            total.checked_add(days_in_year(current))
+        })?
+        .checked_add((1..month).try_fold(0_u64, |total, current| {
+            total.checked_add(u64::from(days_in_month(year, current)))
+        })?)?
+        .checked_add(u64::from(day - 1))?;
+    days.checked_mul(24)?
+        .checked_add(hour)?
+        .checked_mul(60)?
+        .checked_add(minute)?
+        .checked_mul(60)?
+        .checked_add(second)
+}
+
+/// 지정 연도의 일수를 반환합니다.
+fn days_in_year(year: i64) -> u64 {
+    if is_leap_year(year) {
+        366
+    } else {
+        365
+    }
+}
+
+/// 지정한 연도와 월의 일수를 반환합니다.
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+/// 그레고리력 윤년 여부를 반환합니다.
+fn is_leap_year(year: i64) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 fn send_request<T: JsonlTransport, P: Serialize>(
@@ -1227,6 +1318,40 @@ mod tests {
     }
 
     #[test]
+    fn session_parses_rfc3339_reset_credit_expiry_without_rejecting_rate_limits() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":1,"credits":[{"expiresAt":"1970-01-01T00:00:01Z"}]}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            usage.reset_credits,
+            Some(ResetCredits {
+                available_count: 1,
+                nearest_expiry: Some(UNIX_EPOCH + Duration::from_secs(1)),
+            })
+        );
+    }
+
+    #[test]
+    fn session_ignores_malformed_rfc3339_reset_credit_expiry() {
+        let mut transport = ScriptedTransport::ready_and_logged_in(
+            r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":1,"credits":[{"expiresAt":"invalid"}]}"#,
+        );
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            usage.reset_credits,
+            Some(ResetCredits {
+                available_count: 1,
+                nearest_expiry: None,
+            })
+        );
+    }
+
+    #[test]
     fn session_treats_missing_reset_credits_as_none() {
         let mut transport = ScriptedTransport::ready_and_logged_in(
             r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null}"#,
@@ -1239,14 +1364,20 @@ mod tests {
     }
 
     #[test]
-    fn session_treats_zero_available_count_as_none() {
+    fn session_preserves_zero_available_reset_credit_count() {
         let mut transport = ScriptedTransport::ready_and_logged_in(
             r#"{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null},"rateLimitResetCredits":{"availableCount":0,"credits":[]}"#,
         );
 
         let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
 
-        assert_eq!(usage.reset_credits, None);
+        assert_eq!(
+            usage.reset_credits,
+            Some(ResetCredits {
+                available_count: 0,
+                nearest_expiry: None,
+            })
+        );
     }
 
     #[test]

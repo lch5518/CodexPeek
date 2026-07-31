@@ -31,6 +31,7 @@ use crate::{
     SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckNotice,
     UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
     UpdateUserAction, UreqHttpClient, UsageError, UsageProfileId, UsageProfileRoot, UsageWindow,
+    WindowKind,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -1133,6 +1134,7 @@ fn ui_settings(
 /// 이 값은 폴링 스냅샷의 표시 가능한 필드만 보관하며 계정 식별자나 인증 정보는 포함하지 않습니다.
 struct ProfileUsagePresentation {
     summary: String,
+    details: String,
     login_required: bool,
     used_percent: Option<u8>,
     usage_status: Option<ProfileUsageStatus>,
@@ -1146,6 +1148,7 @@ fn profile_usage_presentation_for_window(window: Option<&UsageWindow>) -> Profil
     let Some(window) = window else {
         return ProfileUsagePresentation {
             summary: String::new(),
+            details: String::new(),
             login_required: false,
             used_percent: None,
             usage_status: None,
@@ -1154,6 +1157,7 @@ fn profile_usage_presentation_for_window(window: Option<&UsageWindow>) -> Profil
 
     ProfileUsagePresentation {
         summary: String::new(),
+        details: String::new(),
         login_required: false,
         used_percent: Some(window.bar_percent().round() as u8),
         usage_status: Some(ProfileUsageStatus::from_used_percent(window.used_percent)),
@@ -1173,31 +1177,89 @@ fn profile_usage_presentation_for_snapshot(
         return ProfileUsagePresentation {
             summary: localized_text(LocalizationKey::UsageProfileLoginRequired, language)
                 .to_string(),
+            details: String::new(),
             login_required: true,
             used_percent: None,
             usage_status: None,
         };
     }
 
-    let window = snapshot.and_then(|snapshot| {
-        snapshot
-            .usage
-            .as_ref()
-            .and_then(|usage| usage.secondary.as_ref().or(usage.primary.as_ref()))
-    });
+    let usage = snapshot.and_then(|snapshot| snapshot.usage.as_ref());
+    let window = usage.and_then(|usage| usage.secondary.as_ref().or(usage.primary.as_ref()));
     let mut presentation = profile_usage_presentation_for_window(window);
     presentation.summary = if snapshot.is_some_and(|snapshot| snapshot.is_fetching) {
         localized_text(LocalizationKey::Refreshing, language).to_string()
-    } else if let Some(window) = window {
-        format!(
-            "{}: {:.0}%",
-            localized_text(LocalizationKey::MenuShowRemaining, language),
-            (100.0 - window.used_percent).max(0.0)
-        )
+    } else if let Some(usage) = usage {
+        profile_reset_credits_summary(usage.reset_credits.as_ref(), language)
     } else {
         localized_text(LocalizationKey::Unavailable, language).to_string()
     };
+    presentation.details = if snapshot.is_some_and(|snapshot| snapshot.is_fetching) {
+        String::new()
+    } else if let Some(usage) = usage {
+        profile_usage_details(usage, language)
+    } else {
+        String::new()
+    };
     presentation
+}
+
+/// 리셋권 정보를 프로필 관리 행의 안전한 한 줄 요약으로 변환합니다.
+///
+/// 서버가 리셋권 정보를 제공하지 않으면 사용 가능 여부를 추정하지 않고 정보 없음 상태를 표시합니다.
+fn profile_reset_credits_summary(credits: Option<&ResetCredits>, language: Language) -> String {
+    let label = localized_text(LocalizationKey::UsageProfileResetCredits, language);
+    let Some(credits) = credits else {
+        return format!(
+            "{label}: {}",
+            localized_text(LocalizationKey::Unavailable, language)
+        );
+    };
+    let expiry = credits
+        .nearest_expiry
+        .and_then(|value| local_reset_time(value).ok())
+        .map(|datetime| datetime.localized_label(language));
+    let count = credits.available_count;
+    match expiry {
+        Some(expiry) => format!(
+            "{label}: {count} · {} {expiry}",
+            localized_text(LocalizationKey::UsageProfileEnds, language)
+        ),
+        None => format!("{label}: {count}"),
+    }
+}
+
+/// 단기·주간 사용량 창을 프로필 관리 행의 안전한 한 줄 요약으로 변환합니다.
+///
+/// 각 창은 서버가 제공한 사용률과 초기화 시각만 사용하며, 누락된 창은 표시하지 않습니다.
+fn profile_usage_details(usage: &crate::CodexUsage, language: Language) -> String {
+    [usage.primary.as_ref(), usage.secondary.as_ref()]
+        .into_iter()
+        .flatten()
+        .map(|window| {
+            let label = match window.kind {
+                WindowKind::Primary => {
+                    localized_text(LocalizationKey::PrimaryWindowLabel, language)
+                }
+                WindowKind::Secondary => {
+                    localized_text(LocalizationKey::SecondaryWindowLabel, language)
+                }
+            };
+            let reset = window
+                .resets_at
+                .and_then(|value| local_reset_time(value).ok())
+                .map(|datetime| datetime.localized_label(language))
+                .unwrap_or_else(|| reset_unavailable_label(language).to_owned());
+            format!(
+                "{label} ({}): {:.0}% {} · {} {reset}",
+                window.period_label(language),
+                window.used_percent,
+                localized_text(LocalizationKey::UsageProfileUsed, language),
+                localized_text(LocalizationKey::UsageProfileEnds, language),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn usage_profile_views(
@@ -1223,6 +1285,7 @@ fn usage_profile_views(
         id: UsageProfileId::System,
         label: system_profile_display_label(settings, language),
         summary: system_presentation.summary,
+        details: system_presentation.details,
         selected: selected == UsageProfileId::System,
         login_required: system_presentation.login_required,
         used_percent: system_presentation.used_percent,
@@ -1236,6 +1299,7 @@ fn usage_profile_views(
             id,
             label: profile.label().to_string(),
             summary: presentation.summary,
+            details: presentation.details,
             selected: id == selected,
             login_required: presentation.login_required,
             used_percent: presentation.used_percent,
@@ -2199,9 +2263,9 @@ mod tests {
         CodexUsage, CorrelatedProfileSettingsEvent, DiagnosticLogger, Language, LanguagePreference,
         NativeProfileFileSystem, PollSnapshot, ProfileExecutionContext, ProfilePollingService,
         ProfileRuntimeState, ProfileSettingsOperation, ProfileSettingsRequestId,
-        ProfileSettingsService, Settings, SettingsStore, UpdateCheckNotice, UpdatePresentation,
-        UpdatePresentationStatus, UsageError, UsageLevel, UsageProfileId, UsageProfileRoot,
-        UsageWindow, WindowKind,
+        ProfileSettingsService, ResetCredits, Settings, SettingsStore, UpdateCheckNotice,
+        UpdatePresentation, UpdatePresentationStatus, UsageError, UsageLevel, UsageProfileId,
+        UsageProfileRoot, UsageWindow, WindowKind,
     };
     use semver::Version;
 
@@ -2256,6 +2320,34 @@ mod tests {
 
         assert_eq!(presentation.used_percent, Some(81));
         assert_eq!(presentation.usage_status, Some(ProfileUsageStatus::Warning));
+    }
+
+    #[test]
+    fn profile_usage_presentation_summarizes_reset_credits_and_both_limit_windows() {
+        let snapshot = PollSnapshot {
+            usage: Some(CodexUsage {
+                primary: Some(
+                    UsageWindow::new(WindowKind::Primary, 28.0, Some(300), None).unwrap(),
+                ),
+                secondary: Some(
+                    UsageWindow::new(WindowKind::Secondary, 81.0, Some(10_080), None).unwrap(),
+                ),
+                reset_credits: Some(ResetCredits {
+                    available_count: 2,
+                    nearest_expiry: None,
+                }),
+                fetched_at: std::time::UNIX_EPOCH,
+            }),
+            ..PollSnapshot::default()
+        };
+
+        let presentation =
+            profile_usage_presentation_for_snapshot(Some(&snapshot), false, Language::English);
+
+        assert_eq!(presentation.summary, "Reset coupons: 2");
+        assert!(presentation.details.contains("28% used"));
+        assert!(presentation.details.contains("81% used"));
+        assert!(presentation.details.contains(" | "));
     }
 
     #[test]

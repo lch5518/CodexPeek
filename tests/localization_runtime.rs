@@ -74,6 +74,9 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::UsageProfileDeleteIrrecoverable,
         LocalizationKey::UsageProfileOperationFailed,
         LocalizationKey::UsageProfileCancel,
+        LocalizationKey::UsageProfileResetCredits,
+        LocalizationKey::UsageProfileUsed,
+        LocalizationKey::UsageProfileEnds,
     ];
     let required_languages = [
         Language::Korean,
@@ -90,7 +93,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Arabic,
     ];
 
-    assert_eq!(LocalizationKey::ALL.len(), 71);
+    assert_eq!(LocalizationKey::ALL.len(), 74);
     assert_eq!(LocalizationKey::ALL.len(), required_keys.len());
     for required_key in required_keys {
         assert!(LocalizationKey::ALL.contains(&required_key));
@@ -181,5 +184,13 @@ fn korean_and_english_contracts_stay_stable() {
     assert_eq!(
         localized_text(LocalizationKey::UsageProfileCancel, Language::English),
         "Cancel"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileResetCredits, Language::Korean),
+        "리셋 쿠폰"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsageProfileUsed, Language::English),
+        "used"
     );
 }

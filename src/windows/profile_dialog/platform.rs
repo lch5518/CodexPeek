@@ -1578,6 +1578,7 @@ enum ProfileRowTextStage {
     Name,
     Markers,
     Summary,
+    Details,
     Fallback,
 }
 
@@ -2007,12 +2008,24 @@ fn paint_profile_row_custom<B: ProfileRowPaintBackend>(
             left: content_left,
             top: rect.top + scale_logical(26, visuals.dpi),
             right: content_right,
-            bottom: rect.top + scale_logical(45, visuals.dpi),
+            bottom: rect.top + scale_logical(43, visuals.dpi),
         };
         backend.draw_text(
             ProfileRowTextStage::Summary,
             &copy.summary,
             &mut summary_rect,
+            base_format | DT_END_ELLIPSIS,
+        )?;
+        let mut details_rect = RECT {
+            left: content_left,
+            top: rect.top + scale_logical(43, visuals.dpi),
+            right: content_right,
+            bottom: rect.top + scale_logical(60, visuals.dpi),
+        };
+        backend.draw_text(
+            ProfileRowTextStage::Details,
+            &copy.details,
+            &mut details_rect,
             base_format | DT_END_ELLIPSIS,
         )?;
         if visual.focused {
@@ -3922,7 +3935,8 @@ mod tests {
                     [160, 120, 140, 100],
                 ),
             );
-            let row_height = crate::windows::design::scale_logical(56, dpi);
+            let row_height =
+                crate::windows::design::scale_logical(crate::windows::design::ROW_HEIGHT, dpi);
             let fixed_height = layout.client.height() - layout.list.height();
             let maximum_height = fixed_height + row_height * expected_rows;
 
@@ -4464,6 +4478,7 @@ mod tests {
             id: UsageProfileId::System,
             label: "W".repeat(super::PROFILE_LABEL_MAX_UTF16_UNITS),
             summary: "72% remaining".to_string(),
+            details: "Reset coupons: 2".to_string(),
             selected: true,
             login_required: false,
             used_percent: Some(28),
@@ -4730,7 +4745,10 @@ mod tests {
                         left: 0,
                         top: 0,
                         right: row_width,
-                        bottom: crate::windows::design::scale_logical(56, dpi),
+                        bottom: crate::windows::design::scale_logical(
+                            crate::windows::design::ROW_HEIGHT,
+                            dpi,
+                        ),
                     },
                     &profile,
                     &copy,
@@ -4768,6 +4786,11 @@ mod tests {
                 assert!(name.right <= markers.left || markers.right <= name.left);
                 assert_ne!(name_format & DT_END_ELLIPSIS.0, 0);
                 assert_eq!(marker_format & DT_END_ELLIPSIS.0, 0);
+                assert!(backend.events.iter().any(|event| matches!(
+                    event,
+                    ProfileRowPaintEvent::Draw(ProfileRowTextStage::Details, text, _, _)
+                        if text == "Reset coupons: 2"
+                )));
                 if rtl {
                     assert_eq!(markers.left, crate::windows::design::scale_logical(16, dpi));
                     assert_ne!(marker_format & (DT_RTLREADING | DT_RIGHT).0, 0);
@@ -4785,6 +4808,7 @@ mod tests {
             id: UsageProfileId::Managed(1),
             label: "Work".to_string(),
             summary: "Ready".to_string(),
+            details: String::new(),
             selected: false,
             login_required: false,
             used_percent: Some(42),
@@ -4812,6 +4836,7 @@ mod tests {
                 id: UsageProfileId::Managed(1),
                 label: "Work".to_string(),
                 summary: "Ready".to_string(),
+                details: String::new(),
                 selected: false,
                 login_required: false,
                 used_percent: Some(percent),
@@ -4832,6 +4857,7 @@ mod tests {
             id: UsageProfileId::System,
             label: "Main".to_string(),
             summary: "Login required".to_string(),
+            details: String::new(),
             selected: true,
             login_required: true,
             used_percent: None,
@@ -5212,7 +5238,7 @@ mod tests {
         );
         assert_eq!(resources.body_font.0 as usize, 51);
         assert_eq!(resources.heading_font.0 as usize, 52);
-        assert_eq!(resources.profile_row_height(), 112);
+        assert_eq!(resources.profile_row_height(), 152);
         assert!(!resources.update_in_progress);
         assert!(resources.pending_update.is_none());
     }
@@ -5264,6 +5290,7 @@ mod tests {
             id: UsageProfileId::Managed(7),
             label: "Work".to_string(),
             summary: "Ready".to_string(),
+            details: String::new(),
             selected: true,
             login_required: false,
             used_percent: None,
