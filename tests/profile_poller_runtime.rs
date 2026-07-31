@@ -252,8 +252,17 @@ fn queued_login_runs_between_selected_and_remaining_initial_fetch() {
         ]
     );
     assert_eq!(provider.max_active(), 1);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let events = loop {
+        let events = service.take_events();
+        if !events.is_empty() {
+            break events;
+        }
+        assert!(Instant::now() < deadline, "login event did not arrive");
+        thread::yield_now();
+    };
     assert_eq!(
-        service.take_events(),
+        events,
         vec![ProfilePollEvent::LoginFinished {
             id: UsageProfileId::System,
             result: Ok(true),
@@ -286,7 +295,18 @@ fn timeout_preserves_only_the_target_profiles_last_good_value() {
     service.refresh_selected(PollTrigger::Manual).unwrap();
     provider.wait_for_completed(3);
 
-    let managed = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let managed = loop {
+        let snapshot = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+        if snapshot.last_error == Some(UsageError::RpcTimeout) {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "profile timeout state was not applied"
+        );
+        thread::yield_now();
+    };
     let system = service.snapshot(UsageProfileId::System).unwrap();
     assert_eq!(
         managed
@@ -416,7 +436,23 @@ fn resume_reenables_automatic_and_manual_polling() {
     }
     service.resume(UsageProfileId::Managed(1)).unwrap();
     provider.wait_for_completed(2);
-    let after_automatic = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let after_automatic = loop {
+        let snapshot = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+        if snapshot
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.primary.as_ref())
+            .is_some_and(|window| window.used_percent == 1.0)
+        {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "resumed profile usage was not applied"
+        );
+        thread::yield_now();
+    };
     assert_eq!(
         after_automatic
             .usage
@@ -572,8 +608,17 @@ fn logout_is_serialized_and_reports_an_event() {
 
     service.logout(UsageProfileId::System).unwrap();
     provider.wait_for_completed(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let events = loop {
+        let events = service.take_events();
+        if !events.is_empty() {
+            break events;
+        }
+        assert!(Instant::now() < deadline, "logout event did not arrive");
+        thread::yield_now();
+    };
     assert_eq!(
-        service.take_events(),
+        events,
         vec![ProfilePollEvent::LogoutFinished {
             id: UsageProfileId::System,
             result: Ok(()),
