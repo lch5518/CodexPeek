@@ -479,9 +479,18 @@ fn resume_preserves_last_good_and_backoff_state() {
     }
     service.resume(UsageProfileId::Managed(1)).unwrap();
     service.refresh_selected(PollTrigger::Manual).unwrap();
-    provider.wait_for_completed(3);
-
-    let resumed = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let resumed = loop {
+        let snapshot = service.snapshot(UsageProfileId::Managed(1)).unwrap();
+        if snapshot.last_error == Some(UsageError::RpcTimeout) {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "resumed profile failure state was not applied"
+        );
+        thread::yield_now();
+    };
     assert_eq!(resumed.last_success_at, last_good_at);
     assert_eq!(resumed.last_error, Some(UsageError::RpcTimeout));
     assert_eq!(
