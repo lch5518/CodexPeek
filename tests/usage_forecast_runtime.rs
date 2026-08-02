@@ -1,15 +1,18 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant, SystemTime},
 };
 
 use codex_usage_monitor::{
-    CodexUsage, ForecastPolicy, ForecastResult, SafeDiagnostic, UsageForecastService,
-    UsageHistoryOperation, UsageHistoryStore, UsageProfileId, UsageSampleSink, UsageWindow,
-    WindowKind,
+    CodexUsage, ForecastPolicy, ForecastResult, SafeDiagnostic, UsageForecastService, UsageHistory,
+    UsageHistoryOperation, UsageHistoryStore, UsageProfileId, UsageSample, UsageSampleSink,
+    UsageWindow, WindowKind,
 };
 
 static TEST_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -42,6 +45,40 @@ fn usage(kind: WindowKind, percent: f64, reset: SystemTime, observed_at: SystemT
         reset_credits: None,
         fetched_at: observed_at,
     }
+}
+
+fn two_window_usage(reset: SystemTime, observed_at: SystemTime) -> CodexUsage {
+    CodexUsage {
+        primary: Some(UsageWindow::new(WindowKind::Primary, 12.0, Some(60), Some(reset)).unwrap()),
+        secondary: Some(
+            UsageWindow::new(WindowKind::Secondary, 34.0, Some(60), Some(reset)).unwrap(),
+        ),
+        reset_credits: None,
+        fetched_at: observed_at,
+    }
+}
+
+fn preload_history(store: &UsageHistoryStore, now: SystemTime) {
+    let reset = now + Duration::from_secs(60 * 60);
+    let mut history = UsageHistory::default();
+    for index in 0..1_000_u64 {
+        let observed_at = now - Duration::from_secs((1_000 - index) * 5 * 60);
+        history
+            .record(
+                UsageSample::new(
+                    UsageProfileId::System,
+                    WindowKind::Primary,
+                    index as f64,
+                    Some(reset),
+                    observed_at,
+                    now,
+                )
+                .unwrap(),
+                now,
+            )
+            .unwrap();
+    }
+    store.save(&history, now).unwrap();
 }
 
 fn wait_for_forecast(
@@ -129,6 +166,36 @@ fn successful_samples_are_cached_per_profile_and_window() {
         None
     );
     service.stop();
+}
+
+#[test]
+fn one_successful_two_window_response_persists_both_streams() {
+    let root = TestRoot::new("two-windows");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let service = UsageForecastService::start(
+        store.clone(),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    );
+    let now = SystemTime::now();
+    let reset = now + Duration::from_secs(60 * 60);
+
+    service.record_success(UsageProfileId::System, &two_window_usage(reset, now), now);
+    service.stop();
+
+    let history = store.load(SystemTime::now()).unwrap();
+    assert_eq!(
+        history
+            .samples_for(UsageProfileId::System, WindowKind::Primary)
+            .count(),
+        1
+    );
+    assert_eq!(
+        history
+            .samples_for(UsageProfileId::System, WindowKind::Secondary)
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -244,4 +311,139 @@ fn storage_failures_are_reported_without_exposing_storage_details() {
         )
     }));
     let _ = fs::remove_file(root);
+}
+
+#[test]
+fn clear_is_not_lost_when_the_sample_queue_is_saturated() {
+    let root = TestRoot::new("saturated-clear");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let now = SystemTime::now();
+    preload_history(&store, now);
+    let service = Arc::new(UsageForecastService::start(
+        store.clone(),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    ));
+    let reset = now + Duration::from_secs(60 * 60);
+    let sample = usage(WindowKind::Primary, 10.0, reset, now);
+    let mut senders = Vec::new();
+    for _ in 0..8 {
+        let service = Arc::clone(&service);
+        let sample = sample.clone();
+        senders.push(thread::spawn(move || {
+            for _ in 0..256 {
+                service.record_success(UsageProfileId::System, &sample, now);
+            }
+        }));
+    }
+    for sender in senders {
+        sender.join().unwrap();
+    }
+
+    service.clear_all();
+    service.stop();
+    assert!(store.load(SystemTime::now()).unwrap().samples().is_empty());
+}
+
+#[test]
+fn remove_is_not_lost_when_the_sample_queue_is_saturated() {
+    let root = TestRoot::new("saturated-remove");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let now = SystemTime::now();
+    preload_history(&store, now);
+    let service = Arc::new(UsageForecastService::start(
+        store.clone(),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    ));
+    let reset = now + Duration::from_secs(60 * 60);
+    let sample = usage(WindowKind::Primary, 10.0, reset, now);
+    let mut senders = Vec::new();
+    for _ in 0..8 {
+        let service = Arc::clone(&service);
+        let sample = sample.clone();
+        senders.push(thread::spawn(move || {
+            for _ in 0..256 {
+                service.record_success(UsageProfileId::System, &sample, now);
+            }
+        }));
+    }
+    for sender in senders {
+        sender.join().unwrap();
+    }
+
+    service.remove_profile(UsageProfileId::System);
+    service.stop();
+    assert!(store.load(SystemTime::now()).unwrap().samples().is_empty());
+}
+
+#[test]
+fn queued_samples_before_disable_do_not_reappear_after_reenable() {
+    let root = TestRoot::new("disable-generation");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let now = SystemTime::now();
+    preload_history(&store, now);
+    let service = Arc::new(UsageForecastService::start(
+        store,
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    ));
+    let reset = now + Duration::from_secs(3 * 60 * 60);
+    let sample = usage(WindowKind::Primary, 10.0, reset, now);
+    let mut senders = Vec::new();
+    for _ in 0..8 {
+        let service = Arc::clone(&service);
+        let sample = sample.clone();
+        senders.push(thread::spawn(move || {
+            for _ in 0..256 {
+                service.record_success(UsageProfileId::System, &sample, now);
+            }
+        }));
+    }
+    for sender in senders {
+        sender.join().unwrap();
+    }
+
+    service.set_enabled(false);
+    service.set_enabled(true);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        assert_eq!(
+            service.forecast_at(
+                UsageProfileId::System,
+                WindowKind::Primary,
+                SystemTime::now()
+            ),
+            None
+        );
+        thread::yield_now();
+    }
+    service.stop();
+}
+
+#[test]
+fn first_sample_after_profile_registration_is_not_dropped_by_channel_ordering() {
+    let root = TestRoot::new("add-sample-ordering");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let service = UsageForecastService::start(store.clone(), [], ForecastPolicy::default());
+    let now = SystemTime::now();
+    let reset = now + Duration::from_secs(60 * 60);
+
+    thread::sleep(Duration::from_millis(75));
+    service.add_profile(UsageProfileId::System);
+    service.record_success(
+        UsageProfileId::System,
+        &usage(WindowKind::Primary, 10.0, reset, now),
+        now,
+    );
+    service.stop();
+
+    assert_eq!(
+        store
+            .load(SystemTime::now())
+            .unwrap()
+            .samples_for(UsageProfileId::System, WindowKind::Primary)
+            .count(),
+        1
+    );
 }

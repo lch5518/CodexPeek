@@ -13,6 +13,7 @@ use crate::{
 
 const COMMAND_CAPACITY: usize = 64;
 const SAVE_DEBOUNCE: Duration = Duration::from_secs(10);
+const CONTROL_WAKE_INTERVAL: Duration = Duration::from_millis(50);
 
 /// 성공한 조회 표본을 비동기로 보관하고 창별 예측을 캐시하는 서비스입니다.
 ///
@@ -20,7 +21,8 @@ const SAVE_DEBOUNCE: Duration = Duration::from_secs(10);
 /// 실행하며, 저장 실패는 다음 dirty 저장 시도까지 보존되고 폴링 또는 마지막 정상 표시에 영향을
 /// 주지 않습니다.
 pub struct UsageForecastService {
-    commands: mpsc::SyncSender<ForecastCommand>,
+    samples: mpsc::SyncSender<ForecastSample>,
+    controls: mpsc::Sender<ForecastControl>,
     shared: Arc<Mutex<ForecastShared>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -40,24 +42,17 @@ struct CachedForecast {
     result: ForecastResult,
 }
 
-enum ForecastCommand {
-    Samples {
-        profile_id: UsageProfileId,
-        generation: u64,
-        usage: CodexUsage,
-        observed_at: SystemTime,
-    },
-    Add {
-        profile_id: UsageProfileId,
-        generation: u64,
-    },
-    Remove {
-        profile_id: UsageProfileId,
-        generation: u64,
-    },
-    Clear {
-        active: HashMap<UsageProfileId, u64>,
-    },
+struct ForecastSample {
+    profile_id: UsageProfileId,
+    generation: u64,
+    usage: CodexUsage,
+    observed_at: SystemTime,
+}
+
+enum ForecastControl {
+    Add,
+    Remove { profile_id: UsageProfileId },
+    Clear,
     SetEnabled,
     Stop,
 }
@@ -73,7 +68,7 @@ impl UsageSampleSink for UsageForecastService {
                 .flatten()
         };
         if let Some(generation) = generation {
-            let _ = self.commands.try_send(ForecastCommand::Samples {
+            let _ = self.samples.try_send(ForecastSample {
                 profile_id: id,
                 generation,
                 usage: usage.clone(),
@@ -105,11 +100,21 @@ impl UsageForecastService {
             cache: HashMap::new(),
             diagnostics: Vec::new(),
         }));
-        let (commands, receiver) = mpsc::sync_channel(COMMAND_CAPACITY);
+        let (samples, sample_receiver) = mpsc::sync_channel(COMMAND_CAPACITY);
+        let (controls, control_receiver) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
-        let worker = thread::spawn(move || worker_loop(store, policy, worker_shared, receiver));
+        let worker = thread::spawn(move || {
+            worker_loop(
+                store,
+                policy,
+                worker_shared,
+                sample_receiver,
+                control_receiver,
+            )
+        });
         Self {
-            commands,
+            samples,
+            controls,
             shared,
             worker: Mutex::new(Some(worker)),
         }
@@ -117,40 +122,32 @@ impl UsageForecastService {
 
     /// 새 프로필을 이력 수집·예측 대상으로 등록합니다.
     pub fn add_profile(&self, profile_id: UsageProfileId) {
-        let generation = {
+        {
             let mut shared = lock(&self.shared);
             let generation = *shared.generations.entry(profile_id).or_insert(0);
             shared.active.insert(profile_id, generation);
-            generation
-        };
-        let _ = self.commands.try_send(ForecastCommand::Add {
-            profile_id,
-            generation,
-        });
+        }
+        let _ = self.controls.send(ForecastControl::Add);
     }
 
     /// 지정 프로필의 표본과 캐시를 제거하고 늦게 도착한 표본을 무효화합니다.
     pub fn remove_profile(&self, profile_id: UsageProfileId) {
-        let generation = {
+        {
             let mut shared = lock(&self.shared);
-            let generation = *shared
+            let _generation = *shared
                 .generations
                 .entry(profile_id)
                 .and_modify(|generation| *generation = generation.saturating_add(1))
                 .or_insert(1);
             shared.active.remove(&profile_id);
             shared.cache.retain(|(id, _), _| *id != profile_id);
-            generation
-        };
-        let _ = self.commands.try_send(ForecastCommand::Remove {
-            profile_id,
-            generation,
-        });
+        }
+        let _ = self.controls.send(ForecastControl::Remove { profile_id });
     }
 
     /// 모든 이력과 캐시를 제거하고 이미 큐에 있던 표본을 무효화합니다.
     pub fn clear_all(&self) {
-        let active = {
+        {
             let mut shared = lock(&self.shared);
             for generation in shared.active.values_mut() {
                 *generation = generation.saturating_add(1);
@@ -159,9 +156,8 @@ impl UsageForecastService {
                 shared.generations.insert(profile_id, generation);
             }
             shared.cache.clear();
-            shared.active.clone()
-        };
-        let _ = self.commands.try_send(ForecastCommand::Clear { active });
+        }
+        let _ = self.controls.send(ForecastControl::Clear);
     }
 
     /// 예측 수집과 표시를 함께 켜거나 끕니다.
@@ -171,10 +167,19 @@ impl UsageForecastService {
     pub fn set_enabled(&self, enabled: bool) {
         {
             let mut shared = lock(&self.shared);
+            if shared.enabled == enabled {
+                return;
+            }
             shared.enabled = enabled;
+            for generation in shared.active.values_mut() {
+                *generation = generation.saturating_add(1);
+            }
+            for (profile_id, generation) in shared.active.clone() {
+                shared.generations.insert(profile_id, generation);
+            }
             shared.cache.clear();
         }
-        let _ = self.commands.try_send(ForecastCommand::SetEnabled);
+        let _ = self.controls.send(ForecastControl::SetEnabled);
     }
 
     /// 지정 시각에서 여전히 신선한 프로필·창 예측을 복사합니다.
@@ -210,7 +215,7 @@ impl UsageForecastService {
 
     /// 보류된 저장을 완료하고 worker 종료를 기다립니다.
     pub fn stop(&self) {
-        let _ = self.commands.send(ForecastCommand::Stop);
+        let _ = self.controls.send(ForecastControl::Stop);
         if let Some(worker) = lock(&self.worker).take() {
             let _ = worker.join();
         }
@@ -219,7 +224,7 @@ impl UsageForecastService {
 
 impl Drop for UsageForecastService {
     fn drop(&mut self) {
-        let _ = self.commands.try_send(ForecastCommand::Stop);
+        let _ = self.controls.send(ForecastControl::Stop);
         drop(lock(&self.worker).take());
     }
 }
@@ -228,7 +233,8 @@ fn worker_loop(
     store: UsageHistoryStore,
     policy: ForecastPolicy,
     shared: Arc<Mutex<ForecastShared>>,
-    receiver: mpsc::Receiver<ForecastCommand>,
+    sample_receiver: mpsc::Receiver<ForecastSample>,
+    control_receiver: mpsc::Receiver<ForecastControl>,
 ) {
     let now = SystemTime::now();
     let mut history = match store.load(now) {
@@ -238,95 +244,127 @@ fn worker_loop(
             UsageHistory::default()
         }
     };
-    let mut active = lock(&shared).active.clone();
     let mut dirty = false;
     let mut save_due: Option<SystemTime> = None;
 
     loop {
-        let command = match save_due {
-            Some(due) => match due.duration_since(SystemTime::now()) {
-                Ok(remaining) => match receiver.recv_timeout(remaining) {
-                    Ok(command) => Some(command),
-                    Err(mpsc::RecvTimeoutError::Timeout) => None,
-                    Err(mpsc::RecvTimeoutError::Disconnected) => Some(ForecastCommand::Stop),
-                },
-                Err(_) => None,
-            },
-            None => match receiver.recv() {
-                Ok(command) => Some(command),
-                Err(_) => Some(ForecastCommand::Stop),
-            },
-        };
-
-        if command.is_none() && dirty {
-            if store.save(&history, SystemTime::now()).is_ok() {
-                dirty = false;
-                save_due = None;
-            } else {
-                diagnostic(&shared, UsageHistoryOperation::Save);
-                save_due = SystemTime::now().checked_add(SAVE_DEBOUNCE);
-            }
-            continue;
-        }
-
-        match command.expect("command is present after timeout handling") {
-            ForecastCommand::Samples {
-                profile_id,
-                generation,
-                usage,
-                observed_at,
-            } => {
-                if active.get(&profile_id) != Some(&generation) {
-                    continue;
-                }
-                let added = record_usage(&mut history, profile_id, &usage, observed_at, &shared);
-                if added {
+        let mut stop = false;
+        while let Ok(control) = control_receiver.try_recv() {
+            match control {
+                ForecastControl::Add => {}
+                ForecastControl::Remove { profile_id } => {
+                    history.remove_profile(profile_id);
                     dirty = true;
-                    save_due = SystemTime::now().checked_add(SAVE_DEBOUNCE);
+                    save_due = Some(SystemTime::now());
+                    remove_cache(&shared, profile_id);
                 }
-                cache_usage(
-                    &history,
-                    profile_id,
-                    generation,
-                    &usage,
-                    observed_at,
+                ForecastControl::Clear => {
+                    history.clear();
+                    dirty = true;
+                    save_due = Some(SystemTime::now());
+                    lock(&shared).cache.clear();
+                }
+                ForecastControl::SetEnabled => {}
+                ForecastControl::Stop => stop = true,
+            }
+        }
+        if stop {
+            while let Ok(sample) = sample_receiver.try_recv() {
+                process_sample(
+                    sample,
+                    &mut history,
+                    &mut dirty,
+                    &mut save_due,
                     policy,
                     &shared,
                 );
             }
-            ForecastCommand::Add {
-                profile_id,
-                generation,
-            } => {
-                active.insert(profile_id, generation);
-            }
-            ForecastCommand::Remove {
-                profile_id,
-                generation,
-            } => {
-                active.remove(&profile_id);
-                history.remove_profile(profile_id);
-                dirty = true;
-                save_due = Some(SystemTime::now());
-                remove_cache(&shared, profile_id, generation);
-            }
-            ForecastCommand::Clear {
-                active: next_active,
-            } => {
-                active = next_active;
-                history.clear();
-                dirty = true;
-                save_due = Some(SystemTime::now());
-                lock(&shared).cache.clear();
-            }
-            ForecastCommand::SetEnabled => {}
-            ForecastCommand::Stop => {
-                if dirty && store.save(&history, SystemTime::now()).is_err() {
-                    diagnostic(&shared, UsageHistoryOperation::Save);
+            save_on_shutdown(&store, &history, dirty, &shared);
+            break;
+        }
+
+        let timeout = save_due
+            .and_then(|due| due.duration_since(SystemTime::now()).ok())
+            .unwrap_or(CONTROL_WAKE_INTERVAL)
+            .min(CONTROL_WAKE_INTERVAL);
+        match sample_receiver.recv_timeout(timeout) {
+            Ok(sample) => process_sample(
+                sample,
+                &mut history,
+                &mut dirty,
+                &mut save_due,
+                policy,
+                &shared,
+            ),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if dirty && save_due.is_some_and(|due| due <= SystemTime::now()) {
+                    if store.save(&history, SystemTime::now()).is_ok() {
+                        dirty = false;
+                        save_due = None;
+                    } else {
+                        diagnostic(&shared, UsageHistoryOperation::Save);
+                        save_due = SystemTime::now().checked_add(SAVE_DEBOUNCE);
+                    }
                 }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                save_on_shutdown(&store, &history, dirty, &shared);
                 break;
             }
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_sample(
+    sample: ForecastSample,
+    history: &mut UsageHistory,
+    dirty: &mut bool,
+    save_due: &mut Option<SystemTime>,
+    policy: ForecastPolicy,
+    shared: &Arc<Mutex<ForecastShared>>,
+) {
+    if !sample_is_current(shared, sample.profile_id, sample.generation) {
+        return;
+    }
+    if record_usage(
+        history,
+        sample.profile_id,
+        &sample.usage,
+        sample.observed_at,
+        shared,
+    ) {
+        *dirty = true;
+        *save_due = SystemTime::now().checked_add(SAVE_DEBOUNCE);
+    }
+    cache_usage(
+        history,
+        sample.profile_id,
+        sample.generation,
+        &sample.usage,
+        sample.observed_at,
+        policy,
+        shared,
+    );
+}
+
+fn sample_is_current(
+    shared: &Arc<Mutex<ForecastShared>>,
+    profile_id: UsageProfileId,
+    generation: u64,
+) -> bool {
+    let state = lock(shared);
+    state.enabled && state.active.get(&profile_id) == Some(&generation)
+}
+
+fn save_on_shutdown(
+    store: &UsageHistoryStore,
+    history: &UsageHistory,
+    dirty: bool,
+    shared: &Arc<Mutex<ForecastShared>>,
+) {
+    if dirty && store.save(history, SystemTime::now()).is_err() {
+        diagnostic(shared, UsageHistoryOperation::Save);
     }
 }
 
@@ -337,27 +375,28 @@ fn record_usage(
     observed_at: SystemTime,
     shared: &Arc<Mutex<ForecastShared>>,
 ) -> bool {
-    [usage.primary.as_ref(), usage.secondary.as_ref()]
+    let mut added = false;
+    for window in [usage.primary.as_ref(), usage.secondary.as_ref()]
         .into_iter()
         .flatten()
-        .filter_map(|window| {
-            UsageSample::new(
-                profile_id,
-                window.kind,
-                window.used_percent,
-                window.resets_at,
-                observed_at,
-                observed_at,
-            )
-            .ok()
-        })
-        .any(|sample| match history.record(sample, observed_at) {
-            Ok(record) => record.is_added(),
-            Err(_) => {
-                diagnostic(shared, UsageHistoryOperation::Record);
-                false
-            }
-        })
+    {
+        let Ok(sample) = UsageSample::new(
+            profile_id,
+            window.kind,
+            window.used_percent,
+            window.resets_at,
+            observed_at,
+            observed_at,
+        ) else {
+            diagnostic(shared, UsageHistoryOperation::Record);
+            continue;
+        };
+        match history.record(sample, observed_at) {
+            Ok(record) => added |= record.is_added(),
+            Err(_) => diagnostic(shared, UsageHistoryOperation::Record),
+        }
+    }
+    added
 }
 
 fn cache_usage(
@@ -392,7 +431,7 @@ fn cache_usage(
     }
 }
 
-fn remove_cache(shared: &Arc<Mutex<ForecastShared>>, profile_id: UsageProfileId, _generation: u64) {
+fn remove_cache(shared: &Arc<Mutex<ForecastShared>>, profile_id: UsageProfileId) {
     lock(shared).cache.retain(|(id, _), _| *id != profile_id);
 }
 
