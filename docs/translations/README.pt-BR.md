@@ -10,6 +10,8 @@ Ele mostra as janelas de limite de uso primária e secundária na barra de taref
 ## Destaques
 
 - Mostra as janelas de uso primária e secundária do Codex, incluindo os horários de redefinição.
+- Estima quando cada janela pode se esgotar com base nas observações bem-sucedidas recentes e mostra
+  a estimativa nos detalhes de uso e na dica da barra de tarefas (novidade desta versão).
 - Usa a interface `app-server` do Codex CLI instalado em vez de analisar arquivos de autenticação.
 - Permite escolher manualmente entre até oito perfis de uso isolados.
 - Permite mostrar o widget em todas as barras de tarefas ou apenas no monitor principal.
@@ -160,6 +162,14 @@ Apenas uma solicitação de uso é executada por vez. Solicitações com falha s
 
 Se o widget da barra de tarefas não puder ser fixado após uma reinicialização do Explorer ou uma alteração no layout da barra de tarefas, o ícone da bandeja permanecerá disponível e o monitor tentará novamente com segurança.
 
+Quando a previsão está ativada (padrão), somente observações bem-sucedidas são mantidas no arquivo
+local separado `%APPDATA%\CodexPeek\usage-history.json`. A estimativa exige dados recentes do mesmo
+perfil, janela e ciclo de redefinição; dados novos ou antigos aparecem como coleta ou desatualizados,
+em vez de uma estimativa atual. No submenu da bandeja **Usage forecasting**, você pode desativar o
+recurso ou escolher **Clear usage forecast history**; excluir um perfil gerenciado também remove seu
+histórico. A previsão é uma estimativa local, não garante a política de limites da OpenAI e nunca é
+enviada ou sincronizada.
+
 ## Privacidade e segurança
 
 O monitor nunca lê nem analisa o conteúdo de `%USERPROFILE%\.codex\auth.json`.
@@ -170,6 +180,19 @@ Tokens, IDs de conta, endereços de e-mail, conteúdo de arquivos de autenticaç
 
 As configurações são armazenadas em `%APPDATA%\CodexPeek\settings.json`.
 Um log de diagnóstico limitado é armazenado em `%TEMP%\codex-peek.log`.
+
+`usage-history.json` contém somente o ID interno do perfil, `Primary` ou `Secondary`, a porcentagem
+de uso, um horário de redefinição opcional e o horário da observação bem-sucedida. Não contém e-mail,
+ID da conta, nome ou raiz do perfil, tokens, conteúdo do arquivo de autenticação, conversas/prompts,
+configurações de proxy ou resposta RPC bruta. Os dados são mantidos por no máximo 30 dias e 1.000
+amostras por perfil/janela; valores repetidos e observações separadas por menos de cinco minutos
+são ignorados para reduzir gravações no disco. Um arquivo corrompido é isolado ou reiniciado sem
+impedir a exibição do uso.
+
+**Clear usage forecast history** exclui todas as amostras após a confirmação. O Installer e o
+Portable preservam `%APPDATA%\CodexPeek` ao desinstalar, portanto o histórico pode permanecer após a
+remoção do aplicativo; use a ação da bandeja ou exclua o arquivo/pasta manualmente para uma limpeza
+completa.
 
 Para a orientação completa sobre tratamento de dados e relato de vulnerabilidades, consulte [SECURITY.md](../../SECURITY.md).
 

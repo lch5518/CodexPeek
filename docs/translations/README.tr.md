@@ -10,6 +10,8 @@ Birincil ve ikincil hız sınırı pencerelerini görev çubuğunda, yüzen bir 
 ## Öne çıkanlar
 
 - Birincil ve ikincil Codex kullanım pencerelerini, sıfırlanma zamanlarıyla birlikte gösterir.
+- Son başarılı gözlemlere göre her pencerenin ne zaman tükenebileceğini tahmin eder ve tahmini
+  kullanım ayrıntılarında ve görev çubuğu araç ipucunda gösterir (bu sürümün yeni özelliği).
 - Kimlik doğrulama dosyalarını ayrıştırmak yerine yüklü Codex CLI'nin `app-server` arayüzünü kullanır.
 - En fazla sekiz yalıtılmış kullanım profili arasından elle seçim yapmanızı sağlar.
 - Aracı her görev çubuğunda veya yalnızca birincil monitörde göstermeyi destekler.
@@ -160,6 +162,14 @@ Aynı anda yalnızca bir kullanım isteği çalışır. Başarısız istekler ar
 
 Explorer yeniden başlatıldıktan veya görev çubuğu yerleşimi değiştikten sonra görev çubuğu aracı eklenemezse, tepsi simgesi kullanılabilir kalır ve izleyici güvenli şekilde yeniden dener.
 
+Tahmin varsayılan olarak açıktır ve yalnızca başarılı gözlemleri ayrı yerel
+`%APPDATA%\CodexPeek\usage-history.json` dosyasına kaydeder. Tahmin, aynı profilin, pencerenin ve
+sıfırlama döngüsünün yeterli güncel verisini bekler; yeni veya eski veriler toplama ya da eski
+durumu olarak gösterilir. Tepsi menüsündeki **Usage forecasting** alt menüsünden özelliği
+kapatabilir veya **Clear usage forecast history** seçeneğini kullanabilirsiniz; yönetilen bir
+profili silmek onun geçmişini de siler. Bu bir yerel tahmindir, OpenAI limit politikasını garanti
+etmez ve geçmiş yüklenmez veya eşitlenmez.
+
 ## Gizlilik ve güvenlik
 
 İzleyici `%USERPROFILE%\.codex\auth.json` içeriğini asla okumaz veya ayrıştırmaz.
@@ -170,6 +180,18 @@ Token'lar, hesap ID'leri, e-posta adresleri, kimlik doğrulama dosyası içerikl
 
 Ayarlar `%APPDATA%\CodexPeek\settings.json` içinde saklanır.
 Sınırlı tanılama günlüğü `%TEMP%\codex-peek.log` içinde saklanır.
+
+`usage-history.json` yalnızca dahili profil kimliğini, `Primary` veya `Secondary` değerini,
+kullanım yüzdesini, isteğe bağlı sıfırlama zamanını ve başarılı gözlem zamanını içerir. E-posta,
+hesap kimliği, profil adı veya kök yolu, belirteçler, kimlik doğrulama dosyası içeriği,
+konuşmalar/istemler, proxy ayarları veya ham RPC yanıtı saklanmaz. Veriler en fazla 30 gün ve profil/
+pencere başına 1.000 örnek tutulur; disk yazımını azaltmak için aynı değerler ve beş dakikadan kısa
+aralıklı gözlemler atlanır. Bozuk dosya, kullanım gösterimini durdurmadan karantinaya alınır veya
+sıfırlanır.
+
+Onaydan sonra **Clear usage forecast history** tüm örnekleri siler. Installer ve Portable kaldırılırken
+`%APPDATA%\CodexPeek` korunur; bu nedenle uygulama kaldırıldıktan sonra geçmiş kalabilir. Tam temizlik
+için tepsi eylemini kullanın veya dosya/klasörü elle silin.
 
 Eksiksiz veri işleme ve güvenlik açığı bildirme yönergeleri için [SECURITY.md](../../SECURITY.md) dosyasına bakın.
 

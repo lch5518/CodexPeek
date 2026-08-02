@@ -10,6 +10,8 @@ Codex Usage Monitor là một widget Windows gốc nhỏ giúp bạn xem nhanh m
 ## Điểm nổi bật
 
 - Hiển thị các cửa sổ mức sử dụng Codex chính và phụ, bao gồm thời điểm đặt lại.
+- Ước tính thời điểm mỗi cửa sổ có thể cạn dựa trên các lần quan sát thành công gần đây và hiển thị
+  ước tính trong chi tiết sử dụng cũng như tooltip thanh tác vụ (tính năng mới của bản phát hành).
 - Dùng giao diện `app-server` của Codex CLI đã cài đặt thay vì phân tích các tệp xác thực.
 - Cho phép chọn thủ công trong tối đa tám hồ sơ sử dụng được cô lập.
 - Hỗ trợ hiển thị widget trên mọi thanh tác vụ hoặc chỉ trên màn hình chính.
@@ -157,6 +159,13 @@ Mỗi lần chỉ có một yêu cầu mức sử dụng được chạy. Các y
 
 Nếu widget thanh tác vụ không thể gắn lại sau khi Explorer khởi động lại hoặc bố cục thanh tác vụ thay đổi, biểu tượng khay vẫn khả dụng và trình giám sát sẽ thử lại an toàn.
 
+Khi bật dự báo (mặc định), chỉ các lần quan sát thành công được lưu trong tệp cục bộ riêng
+`%APPDATA%\CodexPeek\usage-history.json`. Dự báo chỉ xuất hiện khi có đủ dữ liệu mới từ cùng hồ sơ,
+cửa sổ và chu kỳ đặt lại; dữ liệu mới hoặc cũ được ghi rõ là đang thu thập hoặc đã cũ thay vì hiển
+thị như dự báo hiện tại. Trong menu khay **Usage forecasting**, bạn có thể tắt tính năng hoặc chọn
+**Clear usage forecast history**; xóa hồ sơ được quản lý cũng xóa lịch sử của hồ sơ đó. Đây là ước
+tính cục bộ, không đảm bảo chính sách giới hạn của OpenAI và không bao giờ được tải lên hay đồng bộ.
+
 ## Quyền riêng tư và bảo mật
 
 Trình giám sát không bao giờ đọc hoặc phân tích nội dung của `%USERPROFILE%\.codex\auth.json`.
@@ -167,6 +176,17 @@ Token, ID tài khoản, địa chỉ email, nội dung tệp xác thực và gi�
 
 Cài đặt được lưu trong `%APPDATA%\CodexPeek\settings.json`.
 Log chẩn đoán có giới hạn được lưu trong `%TEMP%\codex-peek.log`.
+
+`usage-history.json` chỉ chứa ID hồ sơ nội bộ, `Primary` hoặc `Secondary`, phần trăm sử dụng, thời
+điểm đặt lại tùy chọn và thời điểm quan sát thành công. Tệp không chứa email, ID tài khoản, tên hoặc
+thư mục gốc hồ sơ, token, nội dung tệp xác thực, cuộc trò chuyện/prompt, cài đặt proxy hay phản hồi
+RPC thô. Dữ liệu được giữ tối đa 30 ngày và 1.000 mẫu cho mỗi hồ sơ/cửa sổ; các giá trị lặp lại và
+lần quan sát cách nhau dưới năm phút được bỏ qua để giảm ghi đĩa. Tệp hỏng được cách ly hoặc đặt lại
+mà không ngăn hiển thị mức sử dụng.
+
+Sau khi xác nhận, **Clear usage forecast history** xóa toàn bộ mẫu. Installer và Portable giữ lại
+`%APPDATA%\CodexPeek` khi gỡ cài đặt, vì vậy lịch sử có thể còn sau khi xóa ứng dụng; hãy dùng thao tác
+trong khay hoặc xóa tệp/thư mục thủ công để dọn dẹp hoàn toàn.
 
 Để xem hướng dẫn đầy đủ về xử lý dữ liệu và báo cáo lỗ hổng, hãy xem [SECURITY.md](../../SECURITY.md).
 

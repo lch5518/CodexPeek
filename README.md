@@ -10,11 +10,22 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 ## Highlights
 
 - Shows primary and secondary Codex usage windows, including reset times.
+- Estimates when each window may be exhausted from recent successful observations and shows the
+  estimate in the usage details and taskbar tooltip.
 - Uses the installed Codex CLI's `app-server` interface instead of parsing authentication files.
 - Lets you manually choose among as many as eight isolated usage profiles.
 - Supports showing the widget on every taskbar or only on the primary monitor.
 - Falls back safely to a floating widget and tray icon when taskbar attachment is unavailable.
 - Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and localized UI.
+
+### Release note: local usage forecasts
+
+The monitor now keeps a small local history of successful usage observations so it can estimate
+the exhaustion time for each profile and rate-limit window. The estimate is rounded to useful
+time units, is never uploaded or synchronized, and is only an approximation; it does not promise
+or change OpenAI's actual limit policy. Forecasting is enabled by default. Use the tray menu's
+**Usage forecasting** submenu to disable it or choose **Clear usage forecast history**. The clear
+action removes all stored samples; deleting a managed profile removes that profile's samples.
 
 ## How it works
 
@@ -161,6 +172,11 @@ The taskbar widget uses the Windows light/dark system theme for its text and let
 
 Only one usage request runs at a time. Failed requests retry with increasing delays while the last successful values remain visible.
 
+When forecasting is enabled, successful polls are recorded locally in
+`%APPDATA%\CodexPeek\usage-history.json`. The details and taskbar tooltip show a forecast only
+after enough recent data from the same profile, window, and reset cycle is available. New or
+stale data is labelled as collecting or stale rather than presented as a current estimate.
+
 If the taskbar widget cannot be attached after an Explorer restart or taskbar layout change, the tray icon remains available and the monitor retries safely.
 
 ## Privacy and security
@@ -180,6 +196,23 @@ include labels, internal profile IDs, paths, or account details.
 
 Settings are stored in `%APPDATA%\CodexPeek\settings.json`.
 A bounded diagnostic log is stored in `%TEMP%\codex-peek.log`.
+
+Forecast history is a separate local JSON file at
+`%APPDATA%\CodexPeek\usage-history.json`. It contains only the internal profile ID, `Primary` or
+`Secondary`, usage percent, an optional reset timestamp, and the timestamp of a successful
+observation. It does not contain email, account ID, profile label or root path, tokens,
+authentication-file contents, conversation or prompt text, proxy settings, or raw RPC payloads.
+The history is never sent to a server or synchronized. Samples are retained for at most 30 days
+and 1,000 samples per profile/window; repeated values and observations less than five minutes
+apart are skipped to limit disk writes. A corrupt history file is quarantined or reset without
+preventing normal usage display.
+
+The **Usage forecasting** tray setting can disable both recording and display. **Clear usage
+forecast history** asks for confirmation and deletes every stored sample. Removing a managed
+profile also removes its forecast history. Installer and Portable uninstall preserve the entire
+`%APPDATA%\CodexPeek` directory, so history may remain after the application is removed; use the
+tray action before uninstall or delete that file/folder manually when a complete cleanup is
+needed.
 
 For the full data-handling and vulnerability-reporting guidance, see [SECURITY.md](SECURITY.md).
 

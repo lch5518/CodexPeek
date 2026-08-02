@@ -10,6 +10,8 @@ Il affiche les fenêtres de limite de débit principale et secondaire dans la ba
 ## Points forts
 
 - Affiche les fenêtres d'utilisation Codex principale et secondaire, y compris les heures de réinitialisation.
+- Estime le moment où chaque fenêtre peut être épuisée à partir des dernières observations réussies
+  et affiche cette estimation dans les détails d'utilisation et l'infobulle de la barre des tâches (nouveauté).
 - Utilise l'interface `app-server` du Codex CLI installé au lieu d'analyser les fichiers d'authentification.
 - Permet de choisir manuellement parmi huit profils d'utilisation isolés au maximum.
 - Permet d'afficher le widget sur toutes les barres des tâches ou uniquement sur le moniteur principal.
@@ -162,6 +164,14 @@ Une seule demande d'utilisation s'exécute à la fois. Les demandes échouées s
 
 Si le widget ne peut pas être attaché à la barre des tâches après un redémarrage d'Explorer ou un changement de disposition de la barre des tâches, l'icône de zone de notification reste disponible et le moniteur réessaie de façon sûre.
 
+Lorsque la prévision est activée (par défaut), seules les observations réussies sont conservées dans
+le fichier local séparé `%APPDATA%\CodexPeek\usage-history.json`. L'estimation nécessite des données
+récentes du même profil, de la même fenêtre et du même cycle de réinitialisation ; les données
+nouvelles ou anciennes sont indiquées comme collecte ou obsolètes. Dans le menu de notification
+**Usage forecasting**, vous pouvez désactiver la fonction ou choisir **Clear usage forecast history** ;
+la suppression d'un profil géré supprime également son historique. Il s'agit d'une estimation locale,
+pas d'une garantie de la politique de limites d'OpenAI, et l'historique n'est ni envoyé ni synchronisé.
+
 ## Confidentialité et sécurité
 
 Le moniteur ne lit ni n'analyse jamais le contenu de `%USERPROFILE%\.codex\auth.json`.
@@ -172,6 +182,20 @@ Les jetons, identifiants de compte, adresses e-mail, contenus des fichiers d'aut
 
 Les paramètres sont stockés dans `%APPDATA%\CodexPeek\settings.json`.
 Un journal de diagnostic borné est stocké dans `%TEMP%\codex-peek.log`.
+
+`usage-history.json` contient uniquement l'ID interne du profil, `Primary` ou `Secondary`, le
+pourcentage d'utilisation, un horodatage de réinitialisation facultatif et l'horodatage de
+l'observation réussie. Il ne contient ni adresse e-mail, ni identifiant de compte, ni nom ou racine
+de profil, ni jeton, contenu de fichier d'authentification, conversation/prompt, paramètre proxy ou
+réponse RPC brute. Les données sont conservées au plus 30 jours et 1 000 échantillons par profil/
+fenêtre ; les valeurs identiques et les observations espacées de moins de cinq minutes sont ignorées
+pour limiter les écritures. Un fichier corrompu est isolé ou réinitialisé sans bloquer l'affichage de
+l'utilisation.
+
+**Clear usage forecast history** supprime tous les échantillons après confirmation. L'Installer et
+Portable conservent `%APPDATA%\CodexPeek` lors de la désinstallation : l'historique peut donc rester
+après la suppression de l'application ; utilisez l'action de la zone de notification ou supprimez
+manuellement le fichier/dossier pour un nettoyage complet.
 
 Pour les consignes complètes sur le traitement des données et le signalement des vulnérabilités, consultez [SECURITY.md](../../SECURITY.md).
 

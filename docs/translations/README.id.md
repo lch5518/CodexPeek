@@ -10,6 +10,8 @@ Aplikasi ini menampilkan jendela batas penggunaan utama dan sekunder di taskbar,
 ## Sorotan
 
 - Menampilkan jendela penggunaan Codex utama dan sekunder, termasuk waktu reset.
+- Memperkirakan kapan setiap jendela dapat habis berdasarkan pengamatan berhasil terbaru dan
+  menampilkan perkiraan di detail penggunaan serta tooltip taskbar (catatan rilis baru).
 - Menggunakan antarmuka `app-server` dari Codex CLI yang terpasang, bukan mem-parsing file autentikasi.
 - Memungkinkan Anda memilih secara manual dari maksimal delapan profil penggunaan yang terisolasi.
 - Mendukung tampilan widget di setiap taskbar atau hanya di monitor utama.
@@ -160,6 +162,14 @@ Hanya satu permintaan penggunaan yang berjalan pada satu waktu. Permintaan yang 
 
 Jika widget taskbar tidak dapat ditempelkan setelah Explorer dimulai ulang atau tata letak taskbar berubah, ikon tray tetap tersedia dan monitor mencoba ulang dengan aman.
 
+Jika prediksi diaktifkan (default), hanya pengamatan yang berhasil disimpan di berkas lokal terpisah
+`%APPDATA%\CodexPeek\usage-history.json`. Perkiraan memerlukan data terbaru dari profil, jendela,
+dan siklus reset yang sama; data baru atau lama ditandai sedang dikumpulkan atau kedaluwarsa, bukan
+ditampilkan sebagai perkiraan saat ini. Dari submenu tray **Usage forecasting**, Anda dapat
+menonaktifkan fitur atau memilih **Clear usage forecast history**; menghapus profil terkelola juga
+menghapus riwayatnya. Ini adalah perkiraan lokal, bukan jaminan kebijakan batas OpenAI, dan riwayat
+tidak pernah diunggah atau disinkronkan.
+
 ## Privasi dan keamanan
 
 Monitor tidak pernah membaca atau mem-parsing isi `%USERPROFILE%\.codex\auth.json`.
@@ -170,6 +180,17 @@ Token, ID akun, alamat email, isi file autentikasi, dan nilai proxy tidak disimp
 
 Pengaturan disimpan di `%APPDATA%\CodexPeek\settings.json`.
 Log diagnostik berbatas disimpan di `%TEMP%\codex-peek.log`.
+
+`usage-history.json` hanya berisi ID profil internal, `Primary` atau `Secondary`, persentase
+penggunaan, cap waktu reset opsional, dan cap waktu pengamatan berhasil. Berkas ini tidak berisi
+email, ID akun, nama atau root profil, token, isi berkas autentikasi, percakapan/prompt, pengaturan
+proxy, atau respons RPC mentah. Data disimpan paling lama 30 hari dan 1.000 sampel per profil/
+jendela; nilai yang sama dan pengamatan dengan jarak kurang dari lima menit dilewati untuk mengurangi
+penulisan ke disk. Berkas rusak diisolasi atau direset tanpa menghentikan tampilan penggunaan.
+
+**Clear usage forecast history** menghapus semua sampel setelah konfirmasi. Installer dan Portable
+mempertahankan `%APPDATA%\CodexPeek` saat dihapus, sehingga riwayat dapat tertinggal setelah aplikasi
+dihapus; gunakan aksi tray atau hapus berkas/folder secara manual untuk pembersihan lengkap.
 
 Untuk panduan lengkap tentang penanganan data dan pelaporan kerentanan, lihat [SECURITY.md](../../SECURITY.md).
 

@@ -10,6 +10,8 @@ Muestra las ventanas de límite de uso primaria y secundaria en la barra de tare
 ## Aspectos destacados
 
 - Muestra las ventanas de uso primaria y secundaria de Codex, incluidos los horarios de restablecimiento.
+- Estima cuándo puede agotarse cada ventana a partir de observaciones correctas recientes y muestra
+  la estimación en los detalles de uso y en la información de la barra de tareas (novedad de esta versión).
 - Usa la interfaz `app-server` del Codex CLI instalado en lugar de analizar archivos de autenticación.
 - Permite elegir manualmente entre un máximo de ocho perfiles de uso aislados.
 - Permite mostrar el widget en todas las barras de tareas o solo en el monitor principal.
@@ -161,6 +163,14 @@ Solo se ejecuta una solicitud de uso a la vez. Las solicitudes fallidas se reint
 
 Si el widget de la barra de tareas no puede acoplarse después de reiniciar Explorer o de un cambio en el diseño de la barra de tareas, el icono de bandeja sigue disponible y el monitor reintenta de forma segura.
 
+Cuando la predicción está activada (valor predeterminado), solo se guardan observaciones correctas
+en el archivo local independiente `%APPDATA%\CodexPeek\usage-history.json`. La estimación requiere
+datos recientes del mismo perfil, ventana y ciclo de restablecimiento; los datos nuevos o antiguos
+se muestran como recopilación o desactualizados en lugar de presentar una estimación actual. Desde
+el menú de la bandeja **Usage forecasting** puedes desactivarla o elegir **Clear usage forecast
+history**; al eliminar un perfil administrado también se elimina su historial. La predicción es una
+estimación local, no garantiza la política de límites de OpenAI y nunca se sube ni se sincroniza.
+
 ## Privacidad y seguridad
 
 El monitor nunca lee ni analiza el contenido de `%USERPROFILE%\.codex\auth.json`.
@@ -171,6 +181,19 @@ Los tokens, ID de cuenta, direcciones de correo, contenido de archivos de autent
 
 La configuración se guarda en `%APPDATA%\CodexPeek\settings.json`.
 Un registro de diagnóstico acotado se guarda en `%TEMP%\codex-peek.log`.
+
+`usage-history.json` contiene únicamente el ID interno del perfil, `Primary` o `Secondary`, el
+porcentaje de uso, una marca de tiempo de restablecimiento opcional y la marca de tiempo de la
+observación correcta. No contiene correo electrónico, ID de cuenta, nombre o ruta raíz del perfil,
+tokens, contenido del archivo de autenticación, conversaciones o prompts, configuración del proxy
+ni la respuesta RPC sin procesar. Se conservan como máximo 30 días y 1.000 muestras por perfil/
+ventana; se omiten valores repetidos y observaciones separadas por menos de cinco minutos para
+reducir escrituras. Un archivo dañado se aísla o reinicia sin impedir que se muestre el uso.
+
+**Clear usage forecast history** elimina todas las muestras después de confirmar. El instalador y
+Portable conservan `%APPDATA%\CodexPeek` al desinstalar, por lo que el historial puede permanecer
+después de quitar la aplicación; usa la acción de la bandeja o elimina el archivo/carpeta
+manualmente para una limpieza completa.
 
 Para la guía completa sobre tratamiento de datos e informes de vulnerabilidades, consulta [SECURITY.md](../../SECURITY.md).
 

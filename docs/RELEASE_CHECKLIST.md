@@ -72,6 +72,17 @@ The workflow verifies both SHA-256 entries, silently installs and removes the
 installer on its isolated runner, and then creates a new GitHub Release. It fails
 instead of overwriting an existing release or asset.
 
+### User-facing release note
+
+This release adds an optional local usage-exhaustion estimate. When enabled (the default),
+CodexPeek keeps only successful usage percentages and reset/observation timestamps for each
+internal profile and rate-limit window in `%APPDATA%\CodexPeek\usage-history.json`. The estimate
+is rounded and is not a guarantee of OpenAI's limit policy; it is never uploaded or synchronized.
+Users can disable forecasting or clear all history from the tray, and deleting a managed profile
+removes its history. Installer and Portable uninstall preserve `%APPDATA%\CodexPeek`, so release
+notes and support responses must explain that history can remain until the user clears it or
+manually deletes the file.
+
 ## Installer Verification
 
 Confirm all of the following on a clean current-user profile:
@@ -85,7 +96,8 @@ Confirm all of the following on a clean current-user profile:
 - Apps & Features reports the expected version.
 - Uninstall removes the executable, Start Menu shortcut, uninstall entry, and
   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\CodexUsageMonitor`.
-- Uninstall preserves `%APPDATA%\CodexPeek` and the bounded diagnostic log.
+- Uninstall preserves `%APPDATA%\CodexPeek` (including `usage-history.json`) and the bounded
+  diagnostic log; verify that this retention is called out in the user-facing release notes.
 
 ## Portable Verification
 
@@ -119,6 +131,36 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Explorer/taskbar recovery preserves the selected usage profile and cached usage
 - [ ] Windows autostart enable, verify, disable, and uninstall cleanup
 - [ ] Tray icon cleanup on every normal exit path
+
+### Usage forecast and local-history matrix
+
+- [ ] On a new profile, verify the usage detail starts at **Collecting forecast data** and shows a
+      forecast only after at least three successful observations from the same profile, window,
+      and reset cycle; the taskbar surface remains compact and the forecast appears only in its
+      tooltip/details.
+- [ ] Restart the app after enough samples have been collected and verify the estimate is restored
+      from `%APPDATA%\CodexPeek\usage-history.json` without requiring a new login.
+- [ ] Cross a real reset boundary and separately change `resets_at`; verify samples from the old
+      cycle are not mixed into the new forecast. Verify a missing reset time omits only the
+      before-reset comparison, not the exhaustion estimate.
+- [ ] Stop successful polling long enough to make history stale and verify the UI marks or hides
+      the forecast instead of presenting an old estimate as current. A failed poll must not append
+      a sample or erase the last normal usage display.
+- [ ] Toggle **Usage forecasting** off and verify recording and display stop; toggle it on again
+      and verify collection restarts. Use **Clear usage forecast history**, confirm the prompt,
+      and verify every profile returns to collection. Delete one managed profile and verify only
+      that profile's history is removed.
+- [ ] Inspect the local history file after representative polls: it contains only the internal
+      profile ID, `Primary`/`Secondary`, usage percent, optional reset timestamp, and successful
+      observation timestamp. Verify no email, account ID, display name, profile root, token,
+      auth-file content, prompt, proxy setting, or raw RPC payload is present.
+- [ ] Verify the 30-day and 1,000-samples-per-profile/window bounds, duplicate/minimum-interval
+      write suppression, and atomic replacement. Replace the file with empty, malformed, or an
+      unsupported-schema JSON document; verify it is quarantined/reset and usage display still
+      works.
+- [ ] Repeat forecast rendering in all 12 supported locales, including Arabic RTL and long
+      strings, at 100%, 125%, 150%, and 200% DPI. Check the details/tooltip has no clipping and
+      remains readable after Explorer restart, on a single monitor, and on multiple monitors.
 
 ### Usage-profile dialog and sign-in matrix
 

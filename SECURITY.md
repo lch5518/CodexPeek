@@ -31,6 +31,22 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
 - The UI consumes only the login kind and the primary/secondary rate-limit window fields
   needed for display. Settings are stored under `%APPDATA%\CodexPeek`; a bounded,
   rotating diagnostic log is stored at `%TEMP%\codex-peek.log`.
+- When usage forecasting is enabled, a separate `%APPDATA%\CodexPeek\usage-history.json`
+  file retains only successful observations: the internal profile ID, `Primary` or `Secondary`,
+  usage percent, an optional reset timestamp, and the observation timestamp. It never retains
+  email addresses, account IDs, display labels, profile roots, tokens, authentication-file
+  contents, conversations or prompts, proxy settings, or raw RPC payloads. This history stays
+  on the local machine; it is never uploaded or synchronized. Forecasts are estimates and do
+  not guarantee or alter OpenAI's limit policy.
+- Forecasting is enabled by default but can be disabled from the tray's **Usage forecasting**
+  menu. **Clear usage forecast history** removes all samples, and deleting a managed profile
+  removes that profile's samples. History is bounded to 30 days and 1,000 samples per
+  profile/window; duplicate values and observations less than five minutes apart are skipped to
+  reduce writes. A corrupt or unsupported history file is quarantined or reset, while usage
+  display continues using the latest successful poll.
+- The installer and Portable build preserve `%APPDATA%\CodexPeek` when uninstalled, so the
+  history file can remain after the application is removed. Clear it from the tray before
+  uninstalling or remove the file/folder manually for complete local cleanup.
 - The program launches `codex app-server --stdio` hidden and exchanges bounded JSONL
   messages over local pipes. The child is assigned to a Windows Job Object so the child
   process tree is terminated on timeout or monitor shutdown. It never invokes
@@ -93,6 +109,23 @@ The complete storage layout, migration policy, and at-rest limitations are docum
   로그인을 바꾸지 않으며 프로필을 자동 선택·순환하지 않습니다.
 - 진단은 설정됨·정상·로그인 필요·요청 실패 같은 제한된 집계 개수만 노출합니다. 표시명, 내부 ID,
   관리 경로, 계정 정보, 인증 파일 내용, 원본 RPC payload는 기록하지 않습니다.
+
+### 로컬 사용량 소진 예측 기록
+
+- 사용량 소진 예측을 켜면 별도 파일인 `%APPDATA%\CodexPeek\usage-history.json`에 성공한
+  조회의 최소 정보만 저장합니다. 내부 프로필 ID, `Primary` 또는 `Secondary` 창 종류,
+  사용률, 선택적인 초기화 시각, 성공한 조회 시각만 포함합니다. 이메일, 계정 ID, 사용자 지정
+  프로필 이름, 프로필 루트 경로, 토큰, 인증 파일 내용, 대화·프롬프트 내용, 프록시 설정값,
+  원본 RPC payload는 저장하지 않습니다. 이 기록은 로컬에만 있고 업로드하거나 동기화하지
+  않습니다. 예측은 추정치이며 OpenAI 한도 정책을 보장하거나 바꾸지 않습니다.
+- 예측은 기본으로 켜져 있지만 트레이의 **사용량 소진 예측** 메뉴에서 끌 수 있습니다.
+  **사용량 소진 예측 기록 삭제**는 모든 표본을 삭제하며, 관리 프로필을 삭제하면 해당
+  프로필의 표본도 함께 삭제합니다. 보존 기간은 최대 30일, 프로필·창별 최대 1,000개이며,
+  같은 값과 5분보다 짧은 간격의 조회는 디스크 쓰기를 줄이기 위해 생략합니다. 기록 파일이
+  손상되거나 지원하지 않는 버전이면 격리하거나 초기화하지만 사용량 표시는 계속됩니다.
+- Installer와 Portable 제거 과정은 `%APPDATA%\CodexPeek`를 보존하므로 앱을 제거한 뒤에도
+  기록 파일이 남을 수 있습니다. 완전히 지우려면 제거 전에 트레이에서 기록을 삭제하거나,
+  제거 후 해당 파일·폴더를 직접 삭제하세요.
 
 ## Network and updates / 네트워크 및 업데이트
 

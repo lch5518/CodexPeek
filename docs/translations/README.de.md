@@ -10,6 +10,8 @@ Es zeigt die primären und sekundären Rate-Limit-Zeitfenster in der Taskleiste,
 ## Highlights
 
 - Zeigt primäre und sekundäre Codex-Nutzungsfenster einschließlich Reset-Zeiten.
+- Schätzt anhand der letzten erfolgreichen Beobachtungen, wann jedes Fenster erschöpft sein kann,
+  und zeigt die Schätzung in den Nutzungsdetails und im Taskleisten-Tooltip (neue Release-Notiz).
 - Verwendet die `app-server`-Schnittstelle der installierten Codex CLI, statt Authentifizierungsdateien zu parsen.
 - Ermöglicht die manuelle Auswahl aus bis zu acht isolierten Nutzungsprofilen.
 - Unterstützt die Anzeige des Widgets auf jeder Taskleiste oder nur auf dem primären Monitor.
@@ -162,6 +164,15 @@ Es läuft immer nur eine Nutzungsanfrage gleichzeitig. Fehlgeschlagene Anfragen 
 
 Wenn das Taskleisten-Widget nach einem Explorer-Neustart oder einer Änderung des Taskleistenlayouts nicht angehängt werden kann, bleibt das Tray-Symbol verfügbar und der Monitor versucht es sicher erneut.
 
+Wenn die Vorhersage aktiviert ist (Standardeinstellung), werden erfolgreiche Beobachtungen nur in
+der separaten lokalen Datei `%APPDATA%\CodexPeek\usage-history.json` gespeichert. Eine Schätzung
+erscheint erst mit aktuellen Daten desselben Profils, Fensters und Reset-Zyklus; neue oder veraltete
+Daten werden als Sammlung bzw. veraltet gekennzeichnet. Über das Tray-Menü **Usage forecasting**
+kannst du die Funktion deaktivieren oder **Clear usage forecast history** wählen; beim Löschen
+eines verwalteten Profils wird auch dessen Verlauf entfernt. Die Vorhersage ist eine lokale
+Schätzung, keine Zusage zur OpenAI-Limitpolitik, und der Verlauf wird weder hochgeladen noch
+synchronisiert.
+
 ## Datenschutz und Sicherheit
 
 Der Monitor liest oder parst niemals den Inhalt von `%USERPROFILE%\.codex\auth.json`.
@@ -172,6 +183,20 @@ Tokens, Konto-IDs, E-Mail-Adressen, Inhalte von Authentifizierungsdateien und Pr
 
 Einstellungen werden in `%APPDATA%\CodexPeek\settings.json` gespeichert.
 Ein begrenztes Diagnose-Log wird in `%TEMP%\codex-peek.log` gespeichert.
+
+`usage-history.json` enthält ausschließlich die interne Profil-ID, `Primary` oder `Secondary`, den
+Nutzungsprozentsatz, einen optionalen Reset-Zeitstempel und den Zeitstempel der erfolgreichen
+Beobachtung. Es enthält keine E-Mail-Adresse, Konto-ID, Profilbezeichnung oder Profilwurzel,
+Tokens, Authentifizierungsdateiinhalte, Gespräche/Prompts, Proxy-Einstellungen oder rohe RPC-
+Antworten. Die Aufbewahrung ist auf höchstens 30 Tage und 1.000 Samples je Profil/Fenster begrenzt;
+gleiche Werte und Beobachtungen mit weniger als fünf Minuten Abstand werden zur Verringerung von
+Schreibvorgängen übersprungen. Eine beschädigte Datei wird isoliert oder zurückgesetzt, ohne die
+Nutzungsanzeige zu blockieren.
+
+**Clear usage forecast history** löscht nach Bestätigung alle Samples. Installer und Portable
+bewahren `%APPDATA%\CodexPeek` bei der Deinstallation auf, daher kann der Verlauf nach dem Entfernen
+der App bleiben; für eine vollständige Bereinigung die Aktion im Tray verwenden oder Datei/Ordner
+manuell löschen.
 
 Die vollständigen Hinweise zu Datenverarbeitung und Vulnerability Reporting findest du in [SECURITY.md](../../SECURITY.md).
 
