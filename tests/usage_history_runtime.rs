@@ -396,6 +396,23 @@ fn invalid_numbers_and_timestamp_orders_are_rejected_and_quarantined() {
 }
 
 #[test]
+fn negative_zero_usage_is_rejected() {
+    let now = at(9_100_000);
+
+    assert_eq!(
+        UsageSample::new(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            -0.0,
+            None,
+            now,
+            now,
+        ),
+        Err(UsageHistoryError::InvalidUsage)
+    );
+}
+
+#[test]
 fn failed_atomic_replacement_leaves_the_existing_history_file_unchanged() {
     let root = TestRoot::new("atomic-failure");
     let store = UsageHistoryStore::for_root(&root.0);

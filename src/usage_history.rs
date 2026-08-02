@@ -118,7 +118,10 @@ impl UsageSample {
         if self.profile_id == UsageProfileId::Managed(0) {
             return Err(UsageHistoryError::InvalidProfile);
         }
-        if !self.used_percent.is_finite() || self.used_percent < 0.0 {
+        if !self.used_percent.is_finite()
+            || self.used_percent < 0.0
+            || self.used_percent.is_sign_negative()
+        {
             return Err(UsageHistoryError::InvalidUsage);
         }
         if unix_seconds(self.observed_at).is_none()
