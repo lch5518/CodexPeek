@@ -24,6 +24,7 @@ const CONTROL_WAKE_INTERVAL: Duration = Duration::from_millis(50);
 pub struct UsageForecastService {
     samples: mpsc::SyncSender<ForecastSample>,
     controls: mpsc::Sender<ForecastControl>,
+    lifecycle_lock: Mutex<()>,
     shared: Arc<Mutex<ForecastShared>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -125,6 +126,7 @@ impl UsageForecastService {
         Self {
             samples,
             controls,
+            lifecycle_lock: Mutex::new(()),
             shared,
             worker: Mutex::new(Some(worker)),
         }
@@ -132,6 +134,7 @@ impl UsageForecastService {
 
     /// 새 프로필을 이력 수집·예측 대상으로 등록합니다.
     pub fn add_profile(&self, profile_id: UsageProfileId) {
+        let _lifecycle = lock(&self.lifecycle_lock);
         let active = {
             let mut shared = lock(&self.shared);
             let generation = *shared.generations.entry(profile_id).or_insert(0);
@@ -143,6 +146,7 @@ impl UsageForecastService {
 
     /// 지정 프로필의 표본과 캐시를 제거하고 늦게 도착한 표본을 무효화합니다.
     pub fn remove_profile(&self, profile_id: UsageProfileId) {
+        let _lifecycle = lock(&self.lifecycle_lock);
         let active = {
             let mut shared = lock(&self.shared);
             let _generation = *shared
@@ -161,6 +165,7 @@ impl UsageForecastService {
 
     /// 모든 이력과 캐시를 제거하고 이미 큐에 있던 표본을 무효화합니다.
     pub fn clear_all(&self) {
+        let _lifecycle = lock(&self.lifecycle_lock);
         let active = {
             let mut shared = lock(&self.shared);
             for generation in shared.active.values_mut() {
@@ -180,6 +185,7 @@ impl UsageForecastService {
     /// 비활성화하면 기존 캐시를 즉시 숨기며, 다시 켜도 새 성공 표본이 도착하기 전에는 오래된
     /// 캐시를 재사용하지 않습니다.
     pub fn set_enabled(&self, enabled: bool) {
+        let _lifecycle = lock(&self.lifecycle_lock);
         let active = {
             let mut shared = lock(&self.shared);
             if shared.enabled == enabled {
@@ -231,7 +237,9 @@ impl UsageForecastService {
 
     /// 보류된 저장을 완료하고 worker 종료를 기다립니다.
     pub fn stop(&self) {
+        let _lifecycle = lock(&self.lifecycle_lock);
         let _ = self.controls.send(ForecastControl::Stop);
+        drop(_lifecycle);
         if let Some(worker) = lock(&self.worker).take() {
             let _ = worker.join();
         }
@@ -240,6 +248,7 @@ impl UsageForecastService {
 
 impl Drop for UsageForecastService {
     fn drop(&mut self) {
+        let _lifecycle = lock(&self.lifecycle_lock);
         let _ = self.controls.send(ForecastControl::Stop);
         drop(lock(&self.worker).take());
     }

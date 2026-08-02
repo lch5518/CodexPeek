@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Barrier,
     },
     thread,
     time::{Duration, Instant, SystemTime},
@@ -494,6 +494,54 @@ fn sample_after_remove_and_reregistration_waits_for_both_lifecycle_controls() {
     thread::sleep(Duration::from_millis(75));
     service.remove_profile(UsageProfileId::System);
     service.add_profile(UsageProfileId::System);
+    service.record_success(
+        UsageProfileId::System,
+        &usage(WindowKind::Primary, 10.0, reset, now),
+        now,
+    );
+    service.stop();
+
+    assert_eq!(
+        store
+            .load(SystemTime::now())
+            .unwrap()
+            .samples_for(UsageProfileId::System, WindowKind::Primary)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn concurrent_lifecycle_controls_do_not_strand_the_current_generation_sample() {
+    let root = TestRoot::new("concurrent-lifecycle-ordering");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let service = Arc::new(UsageForecastService::start(
+        store.clone(),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    ));
+    let now = SystemTime::now();
+    let reset = now + Duration::from_secs(60 * 60);
+
+    for _ in 0..64 {
+        let barrier = Arc::new(Barrier::new(3));
+        let first_service = Arc::clone(&service);
+        let first_barrier = Arc::clone(&barrier);
+        let first = thread::spawn(move || {
+            first_barrier.wait();
+            first_service.clear_all();
+        });
+        let second_service = Arc::clone(&service);
+        let second_barrier = Arc::clone(&barrier);
+        let second = thread::spawn(move || {
+            second_barrier.wait();
+            second_service.clear_all();
+        });
+        barrier.wait();
+        first.join().unwrap();
+        second.join().unwrap();
+    }
+
     service.record_success(
         UsageProfileId::System,
         &usage(WindowKind::Primary, 10.0, reset, now),
