@@ -346,25 +346,9 @@ impl SettingsStore {
     }
 
     fn save_locked(&self, settings: &Settings) -> io::Result<()> {
-        fs::create_dir_all(&self.root)?;
         let serialized = serde_json::to_vec_pretty(settings)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        let temp = self.root.join(format!(
-            ".settings.tmp-{}-{}",
-            std::process::id(),
-            FILE_NONCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let write_result = (|| {
-            let mut file = File::options().write(true).create_new(true).open(&temp)?;
-            file.write_all(&serialized)?;
-            file.flush()?;
-            file.sync_all()?;
-            atomic_replace(&temp, &self.path())
-        })();
-        if write_result.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
-        write_result
+        write_json_atomically(&self.path(), ".settings.tmp", &serialized)
     }
 
     fn back_up_corrupt(&self, path: &Path) -> io::Result<()> {
@@ -378,7 +362,7 @@ impl SettingsStore {
     }
 }
 
-fn shared_gate(root: &Path) -> Arc<Mutex<()>> {
+pub(crate) fn shared_gate(root: &Path) -> Arc<Mutex<()>> {
     let root = normalized_path(root);
     let gates = SETTINGS_GATES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut gates = gates.lock().unwrap_or_else(|error| error.into_inner());
@@ -406,6 +390,40 @@ fn unix_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// 대상 파일과 같은 디렉터리의 임시 파일을 거쳐 JSON 바이트를 원자적으로 교체합니다.
+///
+/// 호출자는 이미 직렬화하고 검증한 JSON 바이트를 전달합니다. 성공 시 임시 파일은 flush 및
+/// `sync_all`된 뒤 교체되며, 실패 시 남은 임시 파일은 정리합니다.
+pub(crate) fn write_json_atomically(
+    destination: &Path,
+    temp_prefix: &str,
+    serialized: &[u8],
+) -> io::Result<()> {
+    let parent = destination.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "atomic JSON destination has no parent directory",
+        )
+    })?;
+    fs::create_dir_all(parent)?;
+    let temp = parent.join(format!(
+        "{temp_prefix}-{}-{}",
+        std::process::id(),
+        FILE_NONCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let write_result = (|| {
+        let mut file = File::options().write(true).create_new(true).open(&temp)?;
+        file.write_all(serialized)?;
+        file.flush()?;
+        file.sync_all()?;
+        atomic_replace(&temp, destination)
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    write_result
 }
 
 fn atomic_replace(source: &Path, destination: &Path) -> io::Result<()> {

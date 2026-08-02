@@ -10,6 +10,7 @@ mod profile_poller;
 mod profile_settings;
 mod profiles;
 mod update_check;
+mod usage_history;
 pub mod windows;
 
 pub use app::{ProfileRuntimeCommand, ProfileRuntimeState};
@@ -39,4 +40,7 @@ pub use update_check::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,
     UpdateCheckNotice, UpdateCheckStart, UpdateChecker, UpdatePresentation,
     UpdatePresentationStatus, UpdateUserAction, UreqHttpClient,
+};
+pub use usage_history::{
+    UsageHistory, UsageHistoryError, UsageHistoryRecord, UsageHistoryStore, UsageSample,
 };
