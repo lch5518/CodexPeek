@@ -74,6 +74,33 @@ pub struct ProfileLoginConfirmationRequest {
     cancelled_action: Option<UiAction>,
 }
 
+/// 사용량 소진 예측 기록 삭제 확인에 필요한 타입 지정 UI 동작입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageForecastClearConfirmationRequest {
+    confirmed_action: UiAction,
+}
+
+impl UsageForecastClearConfirmationRequest {
+    /// 사용자 확인 결과를 backend에 전달할 동작으로 변환합니다.
+    ///
+    /// 확인하지 않으면 아무 동작도 만들지 않으며, 이 함수는 I/O를 수행하지 않습니다.
+    pub fn resolve(self, confirmed: bool) -> Option<UiAction> {
+        confirmed.then_some(self.confirmed_action)
+    }
+}
+
+/// 사용량 소진 예측 기록 삭제 동작을 소유 창 확인 요청으로 변환합니다.
+///
+/// 확인 창의 실제 표시와 owner 연결은 Windows 플랫폼 경계가 담당하고, 이 함수는 UI 동작을
+/// 해석하는 순수한 계약만 제공합니다.
+pub fn usage_forecast_clear_confirmation_request(
+    action: &UiAction,
+) -> Option<UsageForecastClearConfirmationRequest> {
+    matches!(action, UiAction::ClearUsageHistory).then_some(UsageForecastClearConfirmationRequest {
+        confirmed_action: UiAction::ClearUsageHistory,
+    })
+}
+
 impl ProfileLoginConfirmationRequest {
     /// 확인 창에서 식별할 선택 프로필 표시 이름을 반환합니다.
     pub fn label(&self) -> &str {

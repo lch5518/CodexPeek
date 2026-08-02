@@ -129,6 +129,9 @@ pub struct Settings {
     /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
     #[serde(default)]
     pub show_remaining_percent: bool,
+    /// 사용량 소진 예측 기록과 표시를 활성화할지 여부입니다.
+    #[serde(default = "default_usage_forecast_enabled")]
+    pub usage_forecast_enabled: bool,
     /// 사용량을 조회할 프로필 목록과 현재 선택 상태입니다.
     pub usage_profiles: UsageProfileCatalog,
 }
@@ -170,6 +173,7 @@ impl LegacySettingsV1 {
             language: self.language,
             last_update_check_unix: self.last_update_check_unix,
             show_remaining_percent: self.show_remaining_percent,
+            usage_forecast_enabled: default_usage_forecast_enabled(),
             usage_profiles: UsageProfileCatalog::default(),
         })
     }
@@ -177,6 +181,10 @@ impl LegacySettingsV1 {
 
 const fn default_language_preference() -> LanguagePreference {
     LanguagePreference::Auto
+}
+
+const fn default_usage_forecast_enabled() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -193,6 +201,7 @@ impl Default for Settings {
             language: default_language_preference(),
             last_update_check_unix: None,
             show_remaining_percent: false,
+            usage_forecast_enabled: default_usage_forecast_enabled(),
             usage_profiles: UsageProfileCatalog::default(),
         }
     }

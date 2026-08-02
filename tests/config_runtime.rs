@@ -46,6 +46,7 @@ fn schema_v1_migrates_to_system_profile_and_is_persisted_as_v2() {
     assert_eq!(loaded.schema_version, 2);
     assert_eq!(loaded.usage_profiles.selected(), UsageProfileId::System);
     assert_eq!(loaded.refresh_interval_minutes, 15);
+    assert!(loaded.usage_forecast_enabled);
     let persisted: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("settings.json")).unwrap()).unwrap();
     assert_eq!(persisted["schema_version"], 2);
@@ -94,6 +95,35 @@ fn system_profile_label_defaults_for_v2_and_round_trips() {
         store.load().unwrap().usage_profiles.system_label(),
         Some("Main")
     );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn forecast_setting_defaults_to_enabled_when_omitted_from_v2() {
+    let root = test_root("forecast-default-v2");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("settings.json"),
+        br#"{
+  "schema_version": 2,
+  "refresh_interval_minutes": 5,
+  "widget_visible": true,
+  "taskbar_offset": 0,
+  "start_with_windows": false,
+  "startup_view": "widget",
+  "auto_auth_refresh": true,
+  "last_update_check_unix": null,
+  "usage_profiles": {
+    "managed": [],
+    "selected": "system",
+    "next_sequence": 1
+  }
+}"#,
+    )
+    .unwrap();
+
+    let loaded = SettingsStore::for_root(&root).load().unwrap();
+    assert!(loaded.usage_forecast_enabled);
     let _ = fs::remove_dir_all(root);
 }
 

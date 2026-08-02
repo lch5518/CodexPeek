@@ -15,7 +15,8 @@ use codex_usage_monitor::{
         lifecycle::{CleanupAction, NativeLifecycle, RecoveryDecision, RecoveryEvent},
         menu_action,
         native::{
-            profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch,
+            profile_dialog_ui_action, profile_login_confirmation_request,
+            usage_forecast_clear_confirmation_request, ProfileLoginDispatch,
         },
         profile_dialog::{
             add_profile_dialog_monitor_anchor, add_profile_prompt_result,
@@ -54,7 +55,8 @@ use codex_usage_monitor::{
         MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH,
         MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES,
         MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
-        MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+        MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
+        MENU_USAGE_FORECAST_CLEAR_HISTORY, MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, LocalizationKey, ProfileValidationError, StartupView,
     TaskbarDisplayMode, UpdatePresentationStatus, UsageProfileId,
@@ -738,6 +740,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
             "Refresh interval",
             "Startup view",
             "Language",
+            "Usage forecasting",
             "Widget placement"
         ]
     );
@@ -779,6 +782,13 @@ fn tray_menu_groups_major_settings_into_submenus() {
     );
     assert_eq!(
         submenu_command_ids(submenus[4]),
+        [
+            MENU_USAGE_FORECAST_TOGGLE,
+            MENU_USAGE_FORECAST_CLEAR_HISTORY
+        ]
+    );
+    assert_eq!(
+        submenu_command_ids(submenus[5]),
         [MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY]
     );
 }
@@ -839,6 +849,16 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
             (MENU_LANGUAGE_TURKISH, "Türkçe".to_string(), false),
             (MENU_LANGUAGE_ARABIC, "العربية".to_string(), false),
             (MENU_SHOW_REMAINING, "Show weekly usage".to_string(), false),
+            (
+                MENU_USAGE_FORECAST_TOGGLE,
+                "Usage forecasting".to_string(),
+                true
+            ),
+            (
+                MENU_USAGE_FORECAST_CLEAR_HISTORY,
+                "Clear usage forecast history".to_string(),
+                false
+            ),
             (MENU_DIAGNOSTICS, "Diagnostics".to_string(), false),
             (MENU_UPDATE_CHECK, "Update check failed".to_string(), false),
             (MENU_WIDGET_VISIBLE, "Show widget".to_string(), false),
@@ -888,6 +908,25 @@ fn tray_menu_entries_offer_login_instead_of_auth_refresh_when_signed_out() {
     assert!(!commands.iter().any(|(id, _, _)| *id == MENU_AUTH_REFRESH));
 }
 
+#[test]
+fn forecast_menu_action_mapping_and_confirmation_are_typed() {
+    assert_eq!(
+        menu_action(MENU_USAGE_FORECAST_TOGGLE),
+        Some(UiAction::ToggleUsageForecast)
+    );
+    assert_eq!(
+        menu_action(MENU_USAGE_FORECAST_CLEAR_HISTORY),
+        Some(UiAction::ClearUsageHistory)
+    );
+
+    let request = usage_forecast_clear_confirmation_request(&UiAction::ClearUsageHistory).unwrap();
+    assert_eq!(
+        request.clone().resolve(true),
+        Some(UiAction::ClearUsageHistory)
+    );
+    assert_eq!(request.resolve(false), None);
+}
+
 fn tray_settings(language: Language) -> UiSettings {
     UiSettings {
         widget_visible: false,
@@ -901,6 +940,7 @@ fn tray_settings(language: Language) -> UiSettings {
         taskbar_display_mode: TaskbarDisplayMode::Primary,
         update_status: UpdatePresentationStatus::Failed,
         show_remaining_percent: true,
+        usage_forecast_enabled: true,
         login_required: false,
         usage_profiles: vec![UsageProfileView {
             id: UsageProfileId::System,

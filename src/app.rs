@@ -539,6 +539,7 @@ impl AppRuntime {
                 u64::from(profile_state.settings().refresh_interval_minutes) * 60,
             )),
         ));
+        usage_forecast.set_enabled(profile_state.settings().usage_forecast_enabled);
         let profile_poller = ProfilePollingService::start_with_sample_sink(
             provider,
             usage_forecast.clone(),
@@ -1012,6 +1013,15 @@ impl UiBackend for AppRuntime {
                     settings.show_remaining_percent = !settings.show_remaining_percent;
                 });
             }
+            UiAction::ToggleUsageForecast => {
+                let enabled = !self.settings_snapshot().usage_forecast_enabled;
+                self.with_settings_mut(|settings| settings.usage_forecast_enabled = enabled);
+                self.usage_forecast().set_enabled(enabled);
+            }
+            UiAction::ClearUsageHistory => {
+                self.usage_forecast().clear_all();
+                save_preferences = false;
+            }
             UiAction::SetTaskbarDisplayMode(mode) => {
                 self.with_settings_mut(|settings| settings.taskbar_display_mode = mode)
             }
@@ -1117,6 +1127,7 @@ fn ui_settings(
         taskbar_display_mode: settings.taskbar_display_mode,
         update_status,
         show_remaining_percent: settings.show_remaining_percent,
+        usage_forecast_enabled: settings.usage_forecast_enabled,
         login_required,
         usage_profiles: usage_profile_views(
             settings,
@@ -2478,14 +2489,16 @@ mod tests {
             settings.auto_auth_refresh,
         )
         .expect("system-only profile poller starts");
+        let usage_forecast = Arc::new(UsageForecastService::start(
+            UsageHistoryStore::for_root(store.root().to_path_buf()),
+            [UsageProfileId::System],
+            crate::ForecastPolicy::default(),
+        ));
+        usage_forecast.set_enabled(settings.usage_forecast_enabled);
         AppRuntime {
             profile_settings: Some(profile_settings),
             profile_poller: Some(profile_poller),
-            usage_forecast: Some(Arc::new(UsageForecastService::start(
-                UsageHistoryStore::for_root(store.root().to_path_buf()),
-                [UsageProfileId::System],
-                crate::ForecastPolicy::default(),
-            ))),
+            usage_forecast: Some(usage_forecast),
             profile_state: std::sync::Mutex::new(ProfileRuntimeState::new(
                 settings,
                 UsageProfileRoot::new(store.root().to_path_buf()),
@@ -2506,6 +2519,41 @@ mod tests {
             ),
             "Usage request failed · Update check failed"
         );
+    }
+
+    #[test]
+    fn forecast_toggle_updates_ui_preference_and_service_visibility() {
+        let mut runtime = test_app_runtime(Settings::default());
+        assert!(runtime.settings().usage_forecast_enabled);
+
+        let settings = runtime.dispatch(UiAction::ToggleUsageForecast);
+
+        assert!(!settings.usage_forecast_enabled);
+        assert!(!runtime.settings_snapshot().usage_forecast_enabled);
+        assert!(runtime
+            .usage_forecast()
+            .forecast_at(
+                UsageProfileId::System,
+                WindowKind::Primary,
+                std::time::SystemTime::now()
+            )
+            .is_none());
+
+        let settings = runtime.dispatch(UiAction::ToggleUsageForecast);
+        assert!(settings.usage_forecast_enabled);
+        runtime.shutdown();
+    }
+
+    #[test]
+    fn clear_forecast_history_is_an_action_without_changing_preference() {
+        let mut runtime = test_app_runtime(Settings::default());
+        let before = runtime.settings_snapshot().usage_forecast_enabled;
+
+        let settings = runtime.dispatch(UiAction::ClearUsageHistory);
+
+        assert_eq!(settings.usage_forecast_enabled, before);
+        assert_eq!(runtime.settings_snapshot().usage_forecast_enabled, before);
+        runtime.shutdown();
     }
 
     #[test]

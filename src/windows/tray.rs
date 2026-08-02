@@ -17,7 +17,8 @@ use super::{
     MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
     MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH,
     MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
-    MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_WIDGET_VISIBLE,
+    MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_USAGE_FORECAST_CLEAR_HISTORY,
+    MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
 };
 
 const PROFILE_COMMAND_START: u16 = 1000;
@@ -214,6 +215,27 @@ pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
         MENU_SHOW_REMAINING,
         usage_mode_menu_text(settings.show_remaining_percent, language),
         false,
+    );
+    let mut forecast_entries = Vec::new();
+    push_command(
+        &mut forecast_entries,
+        MENU_USAGE_FORECAST_TOGGLE,
+        crate::localized_text(crate::LocalizationKey::MenuUsageForecastToggle, language),
+        settings.usage_forecast_enabled,
+    );
+    push_command(
+        &mut forecast_entries,
+        MENU_USAGE_FORECAST_CLEAR_HISTORY,
+        crate::localized_text(
+            crate::LocalizationKey::MenuUsageForecastClearHistory,
+            language,
+        ),
+        false,
+    );
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuUsageForecast, language),
+        forecast_entries,
     );
     entries.push(TrayMenuEntry::Separator);
     push_command(
@@ -601,6 +623,7 @@ mod tests {
             taskbar_display_mode: TaskbarDisplayMode::All,
             update_status: UpdatePresentationStatus::Idle,
             show_remaining_percent: false,
+            usage_forecast_enabled: true,
             login_required: false,
             usage_profiles: vec![UsageProfileView {
                 id: UsageProfileId::System,

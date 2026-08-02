@@ -74,6 +74,12 @@ pub const MENU_WIDGET_VISIBLE: u16 = 240;
 pub const MENU_ADD_USAGE_PROFILE: u16 = 260;
 /// 사용량 프로필 관리 메뉴 식별자입니다.
 pub const MENU_MANAGE_USAGE_PROFILES: u16 = 261;
+/// 사용량 소진 예측 전환 메뉴 식별자입니다.
+pub const MENU_USAGE_FORECAST_TOGGLE: u16 = 270;
+/// 사용량 소진 예측 기록 삭제 메뉴 식별자입니다.
+pub const MENU_USAGE_FORECAST_CLEAR_HISTORY: u16 = 271;
+/// 사용량 소진 예측 하위 메뉴 식별자입니다.
+pub const MENU_USAGE_FORECAST: u16 = 272;
 /// 남은 한도 표시 토글 메뉴 식별자입니다.
 pub const MENU_SHOW_REMAINING: u16 = 241;
 /// 모든 모니터 작업표시줄 표시 메뉴 식별자입니다.
@@ -285,6 +291,10 @@ pub enum UiAction {
     ToggleWidget,
     /// 남은 한도 표시 여부를 전환합니다.
     ToggleShowRemaining,
+    /// 사용량 소진 예측 기록과 계산을 전환합니다.
+    ToggleUsageForecast,
+    /// 저장된 사용량 소진 예측 기록을 삭제합니다.
+    ClearUsageHistory,
     /// 작업표시줄 위젯을 표시할 모니터 범위를 변경합니다.
     SetTaskbarDisplayMode(TaskbarDisplayMode),
     /// 새 사용량 프로필 입력 UI를 열도록 요청합니다.
@@ -341,6 +351,8 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_UPDATE_CHECK => UiAction::CheckForUpdates,
         MENU_WIDGET_VISIBLE => UiAction::ToggleWidget,
         MENU_SHOW_REMAINING => UiAction::ToggleShowRemaining,
+        MENU_USAGE_FORECAST_TOGGLE => UiAction::ToggleUsageForecast,
+        MENU_USAGE_FORECAST_CLEAR_HISTORY => UiAction::ClearUsageHistory,
         MENU_TASKBAR_ALL => UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::All),
         MENU_TASKBAR_PRIMARY => UiAction::SetTaskbarDisplayMode(TaskbarDisplayMode::Primary),
         MENU_ADD_USAGE_PROFILE => UiAction::OpenAddUsageProfile,
@@ -545,6 +557,8 @@ pub struct UiSettings {
     pub update_status: crate::UpdatePresentationStatus,
     /// 위젯 숫자를 남은 한도(%)로 표시할지 여부입니다.
     pub show_remaining_percent: bool,
+    /// 사용량 소진 예측 기록과 표시가 활성화되어 있는지 여부입니다.
+    pub usage_forecast_enabled: bool,
     /// Codex 로그인이 필요해 트레이 메뉴에 로그인 동작을 표시할지 여부입니다.
     pub login_required: bool,
     /// 트레이와 프로필 관리 UI에 표시할 비민감 프로필 목록입니다.

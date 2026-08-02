@@ -81,7 +81,10 @@ use super::super::{
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
 };
-use super::{profile_dialog_ui_action, profile_login_confirmation_request, ProfileLoginDispatch};
+use super::{
+    profile_dialog_ui_action, profile_login_confirmation_request,
+    usage_forecast_clear_confirmation_request, ProfileLoginDispatch,
+};
 
 const TIMER_ID: usize = 1;
 const HOVER_TIMER_ID: usize = 2;
@@ -597,7 +600,21 @@ unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction)
         open_profile_dialog(state_pointer);
         return;
     }
-    let settings = if matches!(
+    let settings = if let Some(request) = usage_forecast_clear_confirmation_request(&action) {
+        let latest = (*state_pointer).backend.settings();
+        (*state_pointer).settings = latest;
+        let confirmed = match confirm_usage_forecast_clear_owned(
+            (*state_pointer).owner,
+            (*state_pointer).settings.resolved_language,
+        ) {
+            Ok(confirmed) => confirmed,
+            Err(_) => return,
+        };
+        let Some(action) = request.resolve(confirmed) else {
+            return;
+        };
+        (*state_pointer).backend.dispatch(action)
+    } else if matches!(
         action,
         UiAction::AddUsageProfile(_) | UiAction::Login | UiAction::LoginUsageProfile(_)
     ) {
@@ -734,6 +751,30 @@ impl NativeMessagePresenter for WindowsNativeMessagePresenter {
 unsafe fn show_profile_dialog_error(owner: HWND, language: crate::Language) {
     let mut presenter = WindowsNativeMessagePresenter;
     show_profile_dialog_error_with_presenter(owner, language, &mut presenter);
+}
+
+/// 사용량 소진 예측 기록 삭제를 owner 창에 연결한 확인 대화상자로 표시합니다.
+unsafe fn confirm_usage_forecast_clear_owned(
+    owner: HWND,
+    language: crate::Language,
+) -> io::Result<bool> {
+    let mut presenter = WindowsNativeMessagePresenter;
+    confirm_usage_forecast_clear_with_presenter(owner, language, &mut presenter)
+}
+
+/// 사용량 소진 예측 기록 삭제 확인 문구를 일반 애플리케이션 메시지 경계로 전달합니다.
+fn confirm_usage_forecast_clear_with_presenter<P: NativeMessagePresenter>(
+    owner: HWND,
+    language: crate::Language,
+    presenter: &mut P,
+) -> io::Result<bool> {
+    let result = presenter.present_application(
+        owner,
+        localized_text(LocalizationKey::UsageForecastClearConfirm, language),
+        localized_text(LocalizationKey::WindowTitle, language),
+        MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND | MB_TASKMODAL,
+    )?;
+    Ok(result == IDYES)
 }
 
 /// 네이티브 프로필 작업 오류를 프로필 전용 가운데 배치 경계로 전달합니다.
@@ -1921,12 +1962,12 @@ mod tests {
     use std::io;
 
     use super::{
-        compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
-        show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
-        show_update_notice_with_presenter, taskbar_palette, update_dialog_in_progress,
-        update_dialog_opens_release, update_dialog_style, NativeMessagePresenter,
-        TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, UpdateDialogGuard, NIN_SELECT,
-        WM_CONTEXTMENU,
+        compact_percent_text, confirm_usage_forecast_clear_with_presenter, glass_noise,
+        rounded_material_alpha, should_open_tray_menu, show_diagnostic_summary_with_presenter,
+        show_profile_dialog_error_with_presenter, show_update_notice_with_presenter,
+        taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
+        update_dialog_style, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
+        TaskbarRisk, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
     use crate::{
         windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
@@ -1934,8 +1975,9 @@ mod tests {
     use windows::Win32::{
         Foundation::HWND,
         UI::WindowsAndMessaging::{
-            IDNO, IDOK, IDYES, MB_ICONINFORMATION, MB_OK, MB_TASKMODAL, MB_YESNO,
-            MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, WM_LBUTTONUP, WM_RBUTTONUP,
+            IDNO, IDOK, IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
+            MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, WM_LBUTTONUP,
+            WM_RBUTTONUP,
         },
     };
 
@@ -2003,6 +2045,37 @@ mod tests {
             vec![PresentedNativeMessage::Profile(
                 ProfileMessageRoute::NativeOperationError
             )]
+        );
+    }
+
+    #[test]
+    fn usage_forecast_clear_confirmation_uses_the_owner_and_localized_warning() {
+        let mut presenter = RecordingNativeMessagePresenter {
+            messages: Vec::new(),
+            response: IDYES,
+        };
+
+        assert!(confirm_usage_forecast_clear_with_presenter(
+            HWND(202_usize as _),
+            Language::English,
+            &mut presenter,
+        )
+        .unwrap());
+
+        let [PresentedNativeMessage::Application {
+            owner,
+            message,
+            style,
+            ..
+        }] = presenter.messages.as_slice()
+        else {
+            panic!("expected one confirmation message");
+        };
+        assert_eq!(*owner, HWND(202_usize as _));
+        assert_eq!(message, "Clear the usage forecast history?");
+        assert_eq!(
+            *style,
+            MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND | MB_TASKMODAL
         );
     }
 

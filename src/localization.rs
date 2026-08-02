@@ -196,6 +196,14 @@ pub enum LocalizationKey {
     UsageProfileUsed,
     /// 프로필별 리셋권 또는 한도의 종료 시각을 나타내는 레이블입니다.
     UsageProfileEnds,
+    /// 사용량 소진 예측 하위 메뉴입니다.
+    MenuUsageForecast,
+    /// 사용량 소진 예측 기록과 표시를 전환하는 메뉴입니다.
+    MenuUsageForecastToggle,
+    /// 사용량 소진 예측 기록을 삭제하는 메뉴입니다.
+    MenuUsageForecastClearHistory,
+    /// 사용량 소진 예측 기록 삭제 확인 문구입니다.
+    UsageForecastClearConfirm,
 }
 
 impl LocalizationKey {
@@ -275,6 +283,10 @@ impl LocalizationKey {
         Self::UsageProfileResetCredits,
         Self::UsageProfileUsed,
         Self::UsageProfileEnds,
+        Self::MenuUsageForecast,
+        Self::MenuUsageForecastToggle,
+        Self::MenuUsageForecastClearHistory,
+        Self::UsageForecastClearConfirm,
     ];
 
     const fn index(self) -> usize {
@@ -353,11 +365,15 @@ impl LocalizationKey {
             Self::UsageProfileResetCredits => 71,
             Self::UsageProfileUsed => 72,
             Self::UsageProfileEnds => 73,
+            Self::MenuUsageForecast => 74,
+            Self::MenuUsageForecastToggle => 75,
+            Self::MenuUsageForecastClearHistory => 76,
+            Self::UsageForecastClearConfirm => 77,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 74;
+const LOCALIZATION_KEY_COUNT: usize = 78;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -434,6 +450,10 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "리셋 쿠폰",
     "소모",
     "종료",
+    "사용량 소진 예측",
+    "사용량 소진 예측",
+    "사용량 예측 기록 삭제",
+    "사용량 소진 예측 기록을 삭제할까요?",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -511,6 +531,10 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Reset coupons",
     "used",
     "ends",
+    "Usage forecasting",
+    "Usage forecasting",
+    "Clear usage forecast history",
+    "Clear the usage forecast history?",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -588,6 +612,10 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Cupones de reinicio",
     "usado",
     "termina",
+    "Predicción de uso",
+    "Predicción de uso",
+    "Borrar el historial de predicción de uso",
+    "¿Borrar el historial de predicción de uso?",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -665,6 +693,10 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Cupons de redefinição",
     "usado",
     "termina",
+    "Previsão de uso",
+    "Previsão de uso",
+    "Limpar histórico de previsão de uso",
+    "Limpar o histórico de previsão de uso?",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -742,6 +774,10 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Kupon reset",
     "digunakan",
     "berakhir",
+    "Prediksi penggunaan",
+    "Prediksi penggunaan",
+    "Hapus riwayat prediksi penggunaan",
+    "Hapus riwayat prediksi penggunaan?",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -819,6 +855,10 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "リセットクーポン",
     "使用済み",
     "終了",
+    "使用量の予測",
+    "使用量の予測",
+    "使用量予測の履歴を消去",
+    "使用量予測の履歴を消去しますか？",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -896,6 +936,10 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "रीसेट कूपन",
     "उपयोग किया गया",
     "समाप्त",
+    "उपयोग पूर्वानुमान",
+    "उपयोग पूर्वानुमान",
+    "उपयोग पूर्वानुमान इतिहास साफ़ करें",
+    "उपयोग पूर्वानुमान इतिहास साफ़ करें?",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -973,6 +1017,10 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Zurücksetzungsgutscheine",
     "verwendet",
     "endet",
+    "Nutzungsprognose",
+    "Nutzungsprognose",
+    "Nutzungsprognoseverlauf löschen",
+    "Nutzungsprognoseverlauf löschen?",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1050,6 +1098,10 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Coupons de réinitialisation",
     "utilisé",
     "se termine",
+    "Prévision d'utilisation",
+    "Prévision d'utilisation",
+    "Effacer l'historique des prévisions d'utilisation",
+    "Effacer l'historique des prévisions d'utilisation ?",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1127,6 +1179,10 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Phiếu đặt lại",
     "đã dùng",
     "kết thúc",
+    "Dự báo sử dụng",
+    "Dự báo sử dụng",
+    "Xóa lịch sử dự báo sử dụng",
+    "Xóa lịch sử dự báo sử dụng?",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1204,6 +1260,10 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Sıfırlama kuponları",
     "kullanıldı",
     "biter",
+    "Kullanım tahmini",
+    "Kullanım tahmini",
+    "Kullanım tahmin geçmişini temizle",
+    "Kullanım tahmin geçmişi temizlensin mi?",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1281,6 +1341,10 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "قسائم إعادة التعيين",
     "مستخدم",
     "ينتهي",
+    "توقع الاستخدام",
+    "توقع الاستخدام",
+    "مسح سجل توقع الاستخدام",
+    "هل تريد مسح سجل توقع الاستخدام؟",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.
