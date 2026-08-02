@@ -1603,7 +1603,12 @@ fn forecast_duration_text(duration: Duration, language: Language) -> Option<Stri
             },
         )
     };
-    Some(format!("{value} {}", localized_text(key, language)))
+    let unit = localized_text(key, language);
+    let duration = match language {
+        Language::Korean | Language::Japanese => format!("{value}{unit}"),
+        _ => format!("{value} {unit}"),
+    };
+    Some(duration)
 }
 
 fn append_forecast_tooltip(
@@ -3233,6 +3238,14 @@ mod tests {
 
     #[test]
     fn forecast_duration_uses_localized_plural_units() {
+        assert_eq!(
+            forecast_duration_text(Duration::from_secs(60), Language::Korean).as_deref(),
+            Some("1분")
+        );
+        assert_eq!(
+            forecast_duration_text(Duration::from_secs(60), Language::Japanese).as_deref(),
+            Some("1分")
+        );
         for language in ALL_LANGUAGES {
             let singular = forecast_duration_text(Duration::from_secs(60), language).unwrap();
             let plural = forecast_duration_text(Duration::from_secs(2 * 60), language).unwrap();
