@@ -7,10 +7,27 @@ use std::{
 
 use crate::{
     codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider},
-    PollSnapshot, PollState, PollTrigger, ProfileExecutionContext, UsageError, UsageProfileId,
+    CodexUsage, PollSnapshot, PollState, PollTrigger, ProfileExecutionContext, UsageError,
+    UsageProfileId,
 };
 
 const MANUAL_REFRESH_COOLDOWN: Duration = Duration::from_secs(10);
+
+/// 정상적으로 완료된 프로필 조회 표본을 비동기로 전달받는 대상입니다.
+///
+/// 호출은 프로필 폴링 상태 잠금을 보유하지 않은 상태에서 이루어지며, `usage`에는 성공한
+/// 공급자 응답만 전달됩니다. 구현체는 호출자를 차단하지 않아야 하며 표본 보관·저장 실패가
+/// 폴링 결과나 마지막 정상 표시를 바꾸지 않도록 자체적으로 격리해야 합니다.
+pub trait UsageSampleSink: Send + Sync {
+    /// 성공한 사용량 응답을 관측 시각과 함께 기록하도록 요청합니다.
+    fn record_success(&self, id: UsageProfileId, usage: &CodexUsage, observed_at: SystemTime);
+}
+
+struct DiscardingSampleSink;
+
+impl UsageSampleSink for DiscardingSampleSink {
+    fn record_success(&self, _id: UsageProfileId, _usage: &CodexUsage, _observed_at: SystemTime) {}
+}
 
 /// 프로필 계정 작업이 직렬 워커에서 완료되었음을 알리는 이벤트입니다.
 ///
@@ -89,6 +106,28 @@ impl ProfilePollingService {
         refresh_interval_minutes: u32,
         auto_auth_refresh: bool,
     ) -> Result<Self, &'static str> {
+        Self::start_with_sample_sink(
+            provider,
+            Arc::new(DiscardingSampleSink),
+            contexts,
+            selected,
+            refresh_interval_minutes,
+            auto_auth_refresh,
+        )
+    }
+
+    /// 성공한 조회 표본을 지정 sink에 전달하는 직렬 폴링 워커를 시작합니다.
+    ///
+    /// `sink`는 성공한 공급자 결과만 프로필 상태 잠금 밖에서 받습니다. 나머지 프로필 검증과
+    /// 스케줄 제약은 [`Self::start`]와 같습니다.
+    pub fn start_with_sample_sink(
+        provider: Arc<dyn ProfileAccountProvider>,
+        sample_sink: Arc<dyn UsageSampleSink>,
+        contexts: Vec<ProfileExecutionContext>,
+        selected: UsageProfileId,
+        refresh_interval_minutes: u32,
+        auto_auth_refresh: bool,
+    ) -> Result<Self, &'static str> {
         if contexts.is_empty() {
             return Err("at least one profile is required");
         }
@@ -127,6 +166,7 @@ impl ProfilePollingService {
         let worker = thread::spawn(move || {
             worker_loop(
                 provider,
+                sample_sink,
                 worker_shared,
                 worker_lifecycle,
                 refresh_interval_minutes,
@@ -290,6 +330,7 @@ impl Drop for ProfilePollingService {
 
 fn worker_loop(
     provider: Arc<dyn ProfileAccountProvider>,
+    sample_sink: Arc<dyn UsageSampleSink>,
     shared: Arc<Mutex<SharedProfileState>>,
     lifecycle: Arc<Mutex<WorkerLifecycle>>,
     mut refresh_interval_minutes: u32,
@@ -303,6 +344,7 @@ fn worker_loop(
                 if !handle_command(
                     command,
                     provider.as_ref(),
+                    sample_sink.as_ref(),
                     &shared,
                     &lifecycle,
                     &mut refresh_interval_minutes,
@@ -323,6 +365,7 @@ fn worker_loop(
                     if !handle_command(
                         command,
                         provider.as_ref(),
+                        sample_sink.as_ref(),
                         &shared,
                         &lifecycle,
                         &mut refresh_interval_minutes,
@@ -343,6 +386,7 @@ fn worker_loop(
                 id,
                 PollTrigger::Automatic,
                 provider.as_ref(),
+                sample_sink.as_ref(),
                 &shared,
                 &lifecycle,
                 auto_auth_refresh,
@@ -356,6 +400,7 @@ fn worker_loop(
                 if !handle_command(
                     command,
                     provider.as_ref(),
+                    sample_sink.as_ref(),
                     &shared,
                     &lifecycle,
                     &mut refresh_interval_minutes,
@@ -375,6 +420,7 @@ fn worker_loop(
 fn handle_command(
     command: ProfilePollCommand,
     provider: &dyn ProfileAccountProvider,
+    sample_sink: &dyn UsageSampleSink,
     shared: &Arc<Mutex<SharedProfileState>>,
     lifecycle: &Arc<Mutex<WorkerLifecycle>>,
     refresh_interval_minutes: &mut u32,
@@ -394,6 +440,7 @@ fn handle_command(
                 id,
                 trigger,
                 provider,
+                sample_sink,
                 shared,
                 lifecycle,
                 *auto_auth_refresh,
@@ -483,10 +530,12 @@ fn handle_command(
     true
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_fetch(
     id: UsageProfileId,
     trigger: PollTrigger,
     provider: &dyn ProfileAccountProvider,
+    sample_sink: &dyn UsageSampleSink,
     shared: &Arc<Mutex<SharedProfileState>>,
     lifecycle: &Arc<Mutex<WorkerLifecycle>>,
     auto_auth_refresh: bool,
@@ -529,8 +578,12 @@ fn execute_fetch(
     };
     let result =
         provider.fetch_profile(&operation.0, auto_auth_refresh || operation.1, cancellation);
+    let completed_at = SystemTime::now();
+    if let Ok(usage) = &result {
+        sample_sink.record_success(id, usage, completed_at);
+    }
     if let Some(poll_state) = lock(shared).states.get_mut(&id) {
-        poll_state.finish(result, SystemTime::now());
+        poll_state.finish(result, completed_at);
     }
 }
 

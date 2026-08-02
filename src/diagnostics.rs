@@ -35,6 +35,31 @@ pub enum DiagnosticCode {
     TaskbarRender,
     /// 사용량 프로필의 집계 상태입니다.
     Profiles,
+    /// 사용량 이력의 안전한 작업 실패입니다.
+    UsageHistory,
+}
+
+/// 사용량 이력 진단에서 기록할 수 있는 고정 작업 코드입니다.
+///
+/// 경로, 표본, 프로필 식별자, 표시 이름 또는 원본 오류는 포함하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsageHistoryOperation {
+    /// 이력 파일을 읽는 작업입니다.
+    Load,
+    /// 이력 파일을 저장하는 작업입니다.
+    Save,
+    /// 수신한 사용량 표본을 검증하고 기록하는 작업입니다.
+    Record,
+}
+
+impl UsageHistoryOperation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Load => "load",
+            Self::Save => "save",
+            Self::Record => "record",
+        }
+    }
 }
 
 impl DiagnosticCode {
@@ -48,6 +73,7 @@ impl DiagnosticCode {
             Self::TaskbarCheck => "taskbar_check",
             Self::TaskbarRender => "taskbar_render",
             Self::Profiles => "profiles",
+            Self::UsageHistory => "usage_history",
         }
     }
 }
@@ -87,6 +113,11 @@ pub enum SafeDiagnostic {
         login_required: u8,
         /// 안전하게 분류된 요청 실패 상태의 프로필 수입니다.
         request_failed: u8,
+    },
+    /// 사용량 이력의 고정 작업 코드만 포함하는 실패 진단입니다.
+    UsageHistory {
+        /// 실패한 이력 작업의 고정 분류입니다.
+        operation: UsageHistoryOperation,
     },
 }
 
@@ -191,6 +222,9 @@ impl DiagnosticLogger {
                     request_failed.min(8),
                 ),
             ),
+            SafeDiagnostic::UsageHistory { operation } => {
+                self.record(DiagnosticCode::UsageHistory, operation.as_str())
+            }
         }
     }
 }

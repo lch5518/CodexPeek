@@ -11,6 +11,7 @@ mod profile_poller;
 mod profile_settings;
 mod profiles;
 mod update_check;
+mod usage_forecast;
 mod usage_history;
 pub mod windows;
 
@@ -20,7 +21,7 @@ pub use config::{LanguagePreference, Settings, SettingsStore, StartupView, Taskb
 pub use diagnostics::{
     aggregate_profile_diagnostics, diagnose_profile_contexts, inspect_settings_for_diagnostics,
     AsyncDiagnosticWriter, DiagnosticCode, DiagnosticLogger, ProfileDiagnosticRun,
-    ProfileDiagnosticSnapshot, SafeDiagnostic,
+    ProfileDiagnosticSnapshot, SafeDiagnostic, UsageHistoryOperation,
 };
 pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
@@ -30,7 +31,7 @@ pub use forecast::{
 };
 pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
-pub use profile_poller::{ProfilePollEvent, ProfilePollingService};
+pub use profile_poller::{ProfilePollEvent, ProfilePollingService, UsageSampleSink};
 pub use profile_settings::{
     CorrelatedProfileSettingsEvent, NativeProfileFileSystem, ProfileFileSystem,
     ProfileSettingsEvent, ProfileSettingsMutation, ProfileSettingsOperation,
@@ -46,6 +47,7 @@ pub use update_check::{
     UpdateCheckNotice, UpdateCheckStart, UpdateChecker, UpdatePresentation,
     UpdatePresentationStatus, UpdateUserAction, UreqHttpClient,
 };
+pub use usage_forecast::UsageForecastService;
 pub use usage_history::{
     UsageHistory, UsageHistoryError, UsageHistoryRecord, UsageHistoryStore, UsageSample,
 };

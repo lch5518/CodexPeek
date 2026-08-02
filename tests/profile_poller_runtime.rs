@@ -12,7 +12,7 @@ use std::{
 use codex_usage_monitor::{
     codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider},
     CodexUsage, PollTrigger, ProfileExecutionContext, ProfilePollEvent, ProfilePollingService,
-    UsageError, UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
+    UsageError, UsageProfileId, UsageProfileRoot, UsageSampleSink, UsageWindow, WindowKind,
 };
 
 #[derive(Clone)]
@@ -180,6 +180,66 @@ fn managed_context(sequence: u32) -> ProfileExecutionContext {
 
 fn no_opener() -> LoginPageOpener {
     Arc::new(|_| Ok(()))
+}
+
+#[derive(Clone, Default)]
+struct CapturingSampleSink {
+    samples: Arc<Mutex<Vec<(UsageProfileId, CodexUsage)>>>,
+}
+
+impl CapturingSampleSink {
+    fn samples(&self) -> Vec<(UsageProfileId, CodexUsage)> {
+        self.samples.lock().unwrap().clone()
+    }
+}
+
+impl UsageSampleSink for CapturingSampleSink {
+    fn record_success(&self, id: UsageProfileId, usage: &CodexUsage, _observed_at: SystemTime) {
+        self.samples.lock().unwrap().push((id, usage.clone()));
+    }
+}
+
+#[test]
+fn successful_fetches_are_forwarded_to_the_sample_sink_but_failures_are_not() {
+    let provider = FakeProfileProvider::with_steps([
+        ProviderStep {
+            operation: "fetch",
+            result: ProviderResult::Fetch(Ok(usage_for(UsageProfileId::System))),
+            waits_for_release: false,
+        },
+        ProviderStep {
+            operation: "fetch",
+            result: ProviderResult::Fetch(Err(UsageError::RpcTimeout)),
+            waits_for_release: false,
+        },
+    ]);
+    let sink = CapturingSampleSink::default();
+    let service = ProfilePollingService::start_with_sample_sink(
+        Arc::new(provider.clone()),
+        Arc::new(sink.clone()),
+        vec![ProfileExecutionContext::system()],
+        UsageProfileId::System,
+        5,
+        false,
+    )
+    .unwrap();
+    provider.wait_for_completed(1);
+
+    service.refresh_selected(PollTrigger::Manual).unwrap();
+    provider.wait_for_completed(2);
+
+    let samples = sink.samples();
+    assert_eq!(samples.len(), 1);
+    assert_eq!(samples[0].0, UsageProfileId::System);
+    assert_eq!(
+        samples[0]
+            .1
+            .primary
+            .as_ref()
+            .map(|window| window.used_percent),
+        Some(20.0)
+    );
+    service.stop();
 }
 
 #[test]

@@ -30,8 +30,8 @@ use crate::{
     ProfileSettingsRequestId, ProfileSettingsService, ProfileValidationError, ResetCredits,
     SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckNotice,
     UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
-    UpdateUserAction, UreqHttpClient, UsageError, UsageProfileId, UsageProfileRoot, UsageWindow,
-    WindowKind,
+    UpdateUserAction, UreqHttpClient, UsageError, UsageForecastService, UsageHistoryStore,
+    UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -502,6 +502,7 @@ impl ProfileRuntimeState {
 struct AppRuntime {
     profile_settings: Option<ProfileSettingsService>,
     profile_poller: Option<ProfilePollingService>,
+    usage_forecast: Option<Arc<UsageForecastService>>,
     profile_state: std::sync::Mutex<ProfileRuntimeState>,
     diagnostics: Option<AsyncDiagnosticWriter>,
     startup_hidden: bool,
@@ -512,6 +513,7 @@ impl AppRuntime {
     fn new(store: SettingsStore, settings: Settings, startup_hidden: bool) -> io::Result<Self> {
         let usage_provider = Arc::new(AppServerUsageProvider::new());
         let root = UsageProfileRoot::new(store.root().to_path_buf());
+        let history_store = UsageHistoryStore::for_root(store.root().to_path_buf());
         let (profile_settings, startup) = ProfileSettingsService::start_with_recovery(
             store,
             settings.clone(),
@@ -530,8 +532,16 @@ impl AppRuntime {
         let profile_state = ProfileRuntimeState::new(runtime_settings, root);
         let selected = profile_state.settings().usage_profiles.selected();
         let provider: Arc<dyn crate::codex::ProfileAccountProvider> = usage_provider;
-        let profile_poller = ProfilePollingService::start(
+        let usage_forecast = Arc::new(UsageForecastService::start(
+            history_store,
+            contexts.iter().map(ProfileExecutionContext::id),
+            crate::ForecastPolicy::new(std::time::Duration::from_secs(
+                u64::from(profile_state.settings().refresh_interval_minutes) * 60,
+            )),
+        ));
+        let profile_poller = ProfilePollingService::start_with_sample_sink(
             provider,
+            usage_forecast.clone(),
             contexts,
             selected,
             profile_state.settings().refresh_interval_minutes,
@@ -545,6 +555,7 @@ impl AppRuntime {
         Ok(Self {
             profile_settings: Some(profile_settings),
             profile_poller: Some(profile_poller),
+            usage_forecast: Some(usage_forecast),
             profile_state: std::sync::Mutex::new(profile_state),
             diagnostics: Some(diagnostics),
             startup_hidden,
@@ -638,6 +649,12 @@ impl AppRuntime {
             .expect("profile polling service is available")
     }
 
+    fn usage_forecast(&self) -> &UsageForecastService {
+        self.usage_forecast
+            .as_deref()
+            .expect("usage forecast service is available")
+    }
+
     fn enqueue_diagnostic(&self, event: SafeDiagnostic) {
         if let Some(writer) = self.diagnostics.as_ref() {
             let _ = writer.enqueue(event);
@@ -677,6 +694,9 @@ impl AppRuntime {
     }
 
     fn drain_profile_events(&self) {
+        for event in self.usage_forecast().take_diagnostics() {
+            self.enqueue_diagnostic(event);
+        }
         for event in self.profile_settings().take_correlated_events() {
             let failed = matches!(event, CorrelatedProfileSettingsEvent::Failed { .. });
             let commands = self
@@ -727,7 +747,11 @@ impl AppRuntime {
                         })
                 }
                 ProfileRuntimeCommand::AddPollContext(context) => {
-                    self.profile_poller().add(context).map_err(|_| ())
+                    let id = context.id();
+                    self.profile_poller()
+                        .add(context)
+                        .map(|_| self.usage_forecast().add_profile(id))
+                        .map_err(|_| ())
                 }
                 ProfileRuntimeCommand::SelectPoll(id) => {
                     self.profile_poller().select(id).map_err(|_| ())
@@ -749,9 +773,11 @@ impl AppRuntime {
                 ProfileRuntimeCommand::Resume(id) => {
                     self.profile_poller().resume(id).map_err(|_| ())
                 }
-                ProfileRuntimeCommand::Remove(id) => {
-                    self.profile_poller().remove(id).map_err(|_| ())
-                }
+                ProfileRuntimeCommand::Remove(id) => self
+                    .profile_poller()
+                    .remove(id)
+                    .map(|_| self.usage_forecast().remove_profile(id))
+                    .map_err(|_| ()),
             };
             if result.is_err() {
                 self.profile_state
@@ -814,6 +840,9 @@ impl AppRuntime {
     fn shutdown(&mut self) {
         if let Some(poller) = self.profile_poller.take() {
             poller.stop();
+        }
+        if let Some(forecast) = self.usage_forecast.take() {
+            forecast.stop();
         }
         if let Some(settings) = self.profile_settings.take() {
             let _ = settings.stop();
@@ -2197,8 +2226,8 @@ mod tests {
         NativeProfileFileSystem, PollSnapshot, ProfileExecutionContext, ProfilePollingService,
         ProfileRuntimeState, ProfileSettingsOperation, ProfileSettingsRequestId,
         ProfileSettingsService, ResetCredits, Settings, SettingsStore, UpdateCheckNotice,
-        UpdatePresentation, UpdatePresentationStatus, UsageError, UsageLevel, UsageProfileId,
-        UsageProfileRoot, UsageWindow, WindowKind,
+        UpdatePresentation, UpdatePresentationStatus, UsageError, UsageForecastService,
+        UsageHistoryStore, UsageLevel, UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
     };
     const ALL_LANGUAGES: [Language; 12] = [
         Language::Korean,
@@ -2452,6 +2481,11 @@ mod tests {
         AppRuntime {
             profile_settings: Some(profile_settings),
             profile_poller: Some(profile_poller),
+            usage_forecast: Some(Arc::new(UsageForecastService::start(
+                UsageHistoryStore::for_root(store.root().to_path_buf()),
+                [UsageProfileId::System],
+                crate::ForecastPolicy::default(),
+            ))),
             profile_state: std::sync::Mutex::new(ProfileRuntimeState::new(
                 settings,
                 UsageProfileRoot::new(store.root().to_path_buf()),

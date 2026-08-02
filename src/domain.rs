@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 use crate::{Language, UsageError};
 
 /// 사용량 제한 창의 종류를 구분합니다.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WindowKind {
     /// 짧은 주기의 기본 사용량 창입니다.
     Primary,
