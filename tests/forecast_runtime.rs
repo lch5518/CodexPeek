@@ -16,13 +16,31 @@ fn sample(
     resets_at: Option<SystemTime>,
     observed_at: SystemTime,
 ) -> UsageSample {
-    UsageSample::new(
+    sample_at(
         profile_id,
         window_kind,
         used_percent,
         resets_at,
         observed_at,
         at(10_000_000),
+    )
+}
+
+fn sample_at(
+    profile_id: UsageProfileId,
+    window_kind: WindowKind,
+    used_percent: f64,
+    resets_at: Option<SystemTime>,
+    observed_at: SystemTime,
+    validation_now: SystemTime,
+) -> UsageSample {
+    UsageSample::new(
+        profile_id,
+        window_kind,
+        used_percent,
+        resets_at,
+        observed_at,
+        validation_now,
     )
     .unwrap()
 }
@@ -472,6 +490,7 @@ fn recent_thirty_two_samples_bound_pair_calculation() {
     match calculate(&samples, &window(39.0, None), now) {
         ForecastResult::ForecastAvailable(forecast) => {
             assert_eq!(forecast.sample_count, 32);
+            assert_eq!(forecast.sample_count * (forecast.sample_count - 1) / 2, 496);
             assert!((forecast.hourly_rate - 12.0).abs() < 0.000_001);
         }
         result => panic!("expected available forecast, got {result:?}"),
@@ -479,9 +498,9 @@ fn recent_thirty_two_samples_bound_pair_calculation() {
 }
 
 #[test]
-fn unordered_and_same_time_samples_are_ignored_deterministically() {
+fn conflicting_same_time_samples_choose_the_highest_value_independent_of_input_order() {
     let now = at(1_900_000);
-    let samples = [
+    let first_order = [
         sample(UsageProfileId::System, WindowKind::Primary, 30.0, None, now),
         sample(
             UsageProfileId::System,
@@ -499,13 +518,36 @@ fn unordered_and_same_time_samples_are_ignored_deterministically() {
         ),
         sample(UsageProfileId::System, WindowKind::Primary, 99.0, None, now),
     ];
+    let reverse_order = [
+        sample(UsageProfileId::System, WindowKind::Primary, 99.0, None, now),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            None,
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            20.0,
+            None,
+            now - Duration::from_secs(60 * 60),
+        ),
+        sample(UsageProfileId::System, WindowKind::Primary, 30.0, None, now),
+    ];
 
-    match calculate(&samples, &window(30.0, None), now) {
-        ForecastResult::ForecastAvailable(forecast) => {
-            assert_eq!(forecast.sample_count, 3);
-            assert!((forecast.hourly_rate - 10.0).abs() < 0.000_001);
-        }
+    let forecast_for = |samples: &[UsageSample]| match calculate(samples, &window(99.0, None), now)
+    {
+        ForecastResult::ForecastAvailable(forecast) => forecast,
         result => panic!("expected available forecast, got {result:?}"),
+    };
+    let first = forecast_for(&first_order);
+    let reverse = forecast_for(&reverse_order);
+
+    for forecast in [first, reverse] {
+        assert_eq!(forecast.sample_count, 3);
+        assert!((forecast.hourly_rate - 44.5).abs() < 0.000_001);
     }
 }
 
@@ -616,4 +658,228 @@ fn eight_samples_over_two_hours_are_high_quality() {
         }
         result => panic!("expected available forecast, got {result:?}"),
     }
+}
+
+#[test]
+fn expired_reset_omits_reset_comparison_without_discarding_the_matching_period() {
+    let now = at(2_300_000);
+    let expired_reset = now - Duration::from_secs(60);
+    let samples = [
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(expired_reset),
+            now - Duration::from_secs(3 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            20.0,
+            Some(expired_reset),
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            30.0,
+            Some(expired_reset),
+            now - Duration::from_secs(60 * 60),
+        ),
+    ];
+
+    match calculate(&samples, &window(30.0, Some(expired_reset)), now) {
+        ForecastResult::ForecastAvailable(forecast) => {
+            assert_eq!(forecast.exhausts_before_reset, None);
+            assert_eq!(forecast.expected_used_percent_at_reset, None);
+            assert_eq!(forecast.expected_remaining_percent_at_reset, None);
+        }
+        result => panic!("expected available forecast, got {result:?}"),
+    }
+}
+
+#[test]
+fn signed_zero_and_pre_epoch_current_inputs_are_invalid() {
+    let now = at(2_400_000);
+    let signed_zero = UsageWindow {
+        kind: WindowKind::Primary,
+        used_percent: -0.0,
+        window_duration_mins: None,
+        resets_at: None,
+    };
+    let pre_epoch_reset = UsageWindow {
+        kind: WindowKind::Primary,
+        used_percent: 10.0,
+        window_duration_mins: None,
+        resets_at: Some(UNIX_EPOCH - Duration::from_secs(1)),
+    };
+
+    assert_eq!(calculate(&[], &signed_zero, now), ForecastResult::Invalid);
+    assert_eq!(
+        calculate(&[], &pre_epoch_reset, now),
+        ForecastResult::Invalid
+    );
+    assert_eq!(
+        ForecastEngine::calculate(
+            &[],
+            &window(10.0, None),
+            UNIX_EPOCH - Duration::from_secs(1),
+            UNIX_EPOCH - Duration::from_secs(1),
+            false,
+            &ForecastPolicy::default(),
+        ),
+        ForecastResult::Invalid
+    );
+}
+
+#[test]
+fn reversed_sample_order_is_sorted_before_rate_calculation() {
+    let now = at(2_450_000);
+    let samples = [
+        sample(UsageProfileId::System, WindowKind::Primary, 30.0, None, now),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            None,
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            20.0,
+            None,
+            now - Duration::from_secs(60 * 60),
+        ),
+    ];
+
+    match calculate(&samples, &window(30.0, None), now) {
+        ForecastResult::ForecastAvailable(forecast) => {
+            assert!((forecast.hourly_rate - 10.0).abs() < 0.000_001);
+        }
+        result => panic!("expected available forecast, got {result:?}"),
+    }
+}
+
+#[test]
+fn old_missing_reset_samples_are_not_mixed_after_reset_initialization() {
+    let now = at(2_500_000);
+    let reset = now + Duration::from_secs(8 * 60 * 60);
+    let samples = [
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            80.0,
+            None,
+            now - Duration::from_secs(4 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(reset),
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            20.0,
+            Some(reset),
+            now - Duration::from_secs(60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            30.0,
+            Some(reset),
+            now,
+        ),
+    ];
+
+    match calculate(&samples, &window(30.0, Some(reset)), now) {
+        ForecastResult::ForecastAvailable(forecast) => {
+            assert_eq!(forecast.sample_count, 3);
+            assert!((forecast.hourly_rate - 10.0).abs() < 0.000_001);
+        }
+        result => panic!("expected available forecast, got {result:?}"),
+    }
+}
+
+#[test]
+fn exact_stale_boundary_is_fresh_and_quality_thresholds_are_explainable() {
+    let now = at(2_600_000);
+    let policy = ForecastPolicy::with_refresh_interval(Duration::from_secs(15 * 60));
+    let stale_boundary = now - policy.stale_after();
+    let medium: Vec<_> = (0..5_u64)
+        .map(|index| {
+            sample(
+                UsageProfileId::System,
+                WindowKind::Primary,
+                10.0 + index as f64,
+                None,
+                now - Duration::from_secs((4 - index) * 15 * 60),
+            )
+        })
+        .collect();
+
+    assert!(matches!(
+        ForecastEngine::calculate(
+            &medium,
+            &window(14.0, None),
+            stale_boundary,
+            now,
+            false,
+            &policy,
+        ),
+        ForecastResult::ForecastAvailable(forecast) if forecast.quality == ForecastQuality::Medium
+    ));
+}
+
+#[test]
+fn exhaustion_timestamp_overflow_returns_invalid() {
+    let mut seconds = 0_u64;
+    for bit in (0..64).rev() {
+        let candidate = seconds | (1_u64 << bit);
+        if UNIX_EPOCH
+            .checked_add(Duration::from_secs(candidate))
+            .is_some()
+        {
+            seconds = candidate;
+        }
+    }
+    let latest = UNIX_EPOCH
+        .checked_add(Duration::from_secs(seconds))
+        .expect("binary search retained a representable timestamp");
+    let now = latest - Duration::from_secs(3 * 60 * 60);
+    let samples = [
+        sample_at(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            None,
+            now - Duration::from_secs(2 * 60 * 60),
+            now,
+        ),
+        sample_at(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            11.0,
+            None,
+            now - Duration::from_secs(60 * 60),
+            now,
+        ),
+        sample_at(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            12.0,
+            None,
+            now,
+            now,
+        ),
+    ];
+
+    assert_eq!(
+        calculate(&samples, &window(12.0, None), now),
+        ForecastResult::Invalid
+    );
 }

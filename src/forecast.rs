@@ -164,7 +164,15 @@ impl ForecastEngine {
                 used_percent: sample.used_percent(),
             })
             .collect();
-        selected.sort_by_key(|point| point.observed_at);
+        // 동일 시각의 손상·중복 표본은 사용량이 큰 값을 남겨 입력 순서에 의존하지 않게 합니다.
+        selected.sort_by(|left, right| {
+            left.observed_at.cmp(&right.observed_at).then_with(|| {
+                right
+                    .used_percent
+                    .partial_cmp(&left.used_percent)
+                    .unwrap_or(Ordering::Equal)
+            })
+        });
         selected.dedup_by_key(|point| point.observed_at);
         if selected.len() > ForecastPolicy::MAX_SAMPLES {
             selected.drain(..selected.len() - ForecastPolicy::MAX_SAMPLES);
