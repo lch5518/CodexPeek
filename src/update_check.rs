@@ -265,11 +265,22 @@ impl UpdatePresentation {
     /// 백그라운드 작업자는 결과만 기록하며, 호출자는 UI 스레드에서 이 메서드를 호출해 대화상자 같은
     /// 사용자 상호작용을 처리해야 합니다. 결과를 반환하면 같은 알림은 즉시 제거됩니다.
     pub fn take_user_notice(&self) -> Option<UpdateCheckNotice> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .pending_user_notice
-            .take()
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        let notice = inner.pending_user_notice.take();
+        if notice.is_some() {
+            inner.open_requested = false;
+        }
+        notice
+    }
+
+    /// UI 스레드가 표시할 사용자 업데이트 결과를 한 번 저장합니다.
+    ///
+    /// 자동 검사로 이미 발견된 업데이트를 사용자가 메뉴에서 요청한 경우처럼 작업자가 새 요청을
+    /// 만들지 않고도 결과를 표시해야 할 때 사용합니다. 호출은 네트워크 I/O를 수행하지 않습니다.
+    pub fn queue_user_notice(&self, notice: UpdateCheckNotice) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        inner.open_requested = false;
+        inner.pending_user_notice = Some(notice);
     }
 }
 

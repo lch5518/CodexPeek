@@ -585,18 +585,15 @@ impl AppRuntime {
     }
 
     fn handle_user_update_action(&mut self) {
-        if let Some(notice) = self.update_presentation.take_user_notice() {
-            self.show_update_notice(notice);
-            return;
-        }
         let Some(checker) = update_checker() else {
-            self.show_update_notice(UpdateCheckNotice::Failed);
+            self.update_presentation
+                .queue_user_notice(UpdateCheckNotice::Failed);
             return;
         };
         match self.update_presentation.begin_user_action() {
-            UpdateUserAction::Open(update) => {
-                self.show_update_notice(UpdateCheckNotice::Available(update));
-            }
+            UpdateUserAction::Open(update) => self
+                .update_presentation
+                .queue_user_notice(UpdateCheckNotice::Available(update)),
             UpdateUserAction::StartCheck => {
                 self.spawn_update_worker(checker, None, SystemTime::now());
             }
@@ -627,35 +624,6 @@ impl AppRuntime {
     fn snapshot_inner(&self) -> PollSnapshot {
         let selected = self.settings_snapshot().usage_profiles.selected();
         self.profile_poller().snapshot(selected).unwrap_or_default()
-    }
-
-    fn consume_update_notice(&self) {
-        if let Some(notice) = self.update_presentation.take_user_notice() {
-            self.show_update_notice(notice);
-        }
-    }
-
-    fn show_update_notice(&self, notice: UpdateCheckNotice) {
-        let language = effective_language(self.settings_snapshot().language);
-        let copy = update_notice_copy(&notice, language);
-        let confirmed = native::show_update_dialog(
-            copy.title,
-            &copy.message,
-            copy.confirm_open,
-            notice == UpdateCheckNotice::Failed,
-        )
-        .unwrap_or(false);
-        let Some(release_url) = release_url_after_confirmation(&notice, confirmed) else {
-            return;
-        };
-        if native::open_validated_tag_page(release_url).is_err() {
-            let _ = native::show_update_dialog(
-                copy.title,
-                localized_text(LocalizationKey::UpdateOpenFailed, language),
-                false,
-                true,
-            );
-        }
     }
 
     fn profile_settings(&self) -> &ProfileSettingsService {
@@ -859,7 +827,6 @@ impl AppRuntime {
 impl UiBackend for AppRuntime {
     fn snapshot(&self) -> WidgetViewModel {
         self.drain_profile_events();
-        self.consume_update_notice();
         let settings = self.settings_snapshot();
         let snapshot = self.snapshot_inner();
         let language = effective_language(settings.language);
@@ -929,7 +896,6 @@ impl UiBackend for AppRuntime {
 
     fn settings(&self) -> UiSettings {
         self.drain_profile_events();
-        self.consume_update_notice();
         let settings = self.settings_snapshot();
         ui_settings(
             &settings,
@@ -939,6 +905,10 @@ impl UiBackend for AppRuntime {
             self.profile_poller(),
             &self.profile_state,
         )
+    }
+
+    fn take_update_notice(&self) -> Option<UpdateCheckNotice> {
+        self.update_presentation.take_user_notice()
     }
 
     fn dispatch(&mut self, action: UiAction) -> UiSettings {
@@ -1342,42 +1312,6 @@ fn update_status_key(status: UpdatePresentationStatus) -> Option<LocalizationKey
         UpdatePresentationStatus::Available => Some(LocalizationKey::UpdateAvailable),
         UpdatePresentationStatus::Current => Some(LocalizationKey::UpdateCurrent),
         UpdatePresentationStatus::Failed => Some(LocalizationKey::UpdateFailed),
-    }
-}
-
-struct UpdateDialogCopy {
-    title: &'static str,
-    message: String,
-    confirm_open: bool,
-}
-
-fn update_notice_copy(notice: &UpdateCheckNotice, language: Language) -> UpdateDialogCopy {
-    let (message, confirm_open) = match notice {
-        UpdateCheckNotice::Current => (
-            localized_text(LocalizationKey::UpdateCurrent, language).to_owned(),
-            false,
-        ),
-        UpdateCheckNotice::Available(update) => (
-            localized_text(LocalizationKey::UpdateAvailablePrompt, language)
-                .replace("{version}", &update.version.to_string()),
-            true,
-        ),
-        UpdateCheckNotice::Failed => (
-            localized_text(LocalizationKey::UpdateFailedHelp, language).to_owned(),
-            false,
-        ),
-    };
-    UpdateDialogCopy {
-        title: localized_text(LocalizationKey::WindowTitle, language),
-        message,
-        confirm_open,
-    }
-}
-
-fn release_url_after_confirmation(notice: &UpdateCheckNotice, confirmed: bool) -> Option<&str> {
-    match notice {
-        UpdateCheckNotice::Available(update) if confirmed => Some(&update.release_url),
-        _ => None,
     }
 }
 
@@ -2252,9 +2186,8 @@ mod tests {
     use super::{
         data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail,
         profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
-        proxy_presence, release_url_after_confirmation, row_view, row_view_with_reset_time,
-        status_with_update, taskbar_copy, taskbar_risk_text, update_notice_copy, AppRuntime,
-        DiagnosticSummary,
+        proxy_presence, row_view, row_view_with_reset_time, status_with_update, taskbar_copy,
+        taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
     use crate::windows::{ProfileUsageStatus, UiAction, UiBackend, WidgetDataState};
@@ -2267,8 +2200,6 @@ mod tests {
         UpdatePresentation, UpdatePresentationStatus, UsageError, UsageLevel, UsageProfileId,
         UsageProfileRoot, UsageWindow, WindowKind,
     };
-    use semver::Version;
-
     const ALL_LANGUAGES: [Language; 12] = [
         Language::Korean,
         Language::English,
@@ -2544,77 +2475,43 @@ mod tests {
     }
 
     #[test]
-    fn update_notice_copy_distinguishes_current_available_and_failed_results() {
-        let current = update_notice_copy(&UpdateCheckNotice::Current, Language::English);
-        assert_eq!(current.title, "Codex Usage Monitor");
-        assert_eq!(current.message, "You are up to date");
-        assert!(!current.confirm_open);
+    fn update_notice_remains_pending_until_the_ui_boundary_takes_it() {
+        let mut runtime = test_app_runtime(Settings::default());
+        runtime
+            .update_presentation
+            .begin_check(crate::UpdateCheckIntent::UserInitiated);
+        runtime.update_presentation.record_result(Ok(None));
 
-        let available = update_notice_copy(
-            &UpdateCheckNotice::Available(AvailableUpdate {
-                version: Version::parse("2.0.0").unwrap(),
-                release_url: "https://github.com/owner/repo/releases/tag/v2.0.0".to_owned(),
-            }),
-            Language::English,
-        );
+        let _ = runtime.snapshot();
         assert_eq!(
-            available.message,
-            "Version 2.0.0 is available.\n\nOpen the GitHub release page?"
+            runtime.take_update_notice(),
+            Some(UpdateCheckNotice::Current)
         );
-        assert!(available.confirm_open);
-
-        let failed = update_notice_copy(&UpdateCheckNotice::Failed, Language::English);
-        assert_eq!(
-            failed.message,
-            "The update check failed. Check your network or proxy settings and try again."
-        );
-        assert!(!failed.confirm_open);
+        assert!(runtime.take_update_notice().is_none());
+        runtime.shutdown();
     }
 
     #[test]
-    fn update_notice_copy_is_complete_for_every_language() {
-        let update = UpdateCheckNotice::Available(AvailableUpdate {
-            version: Version::parse("9.8.7").unwrap(),
-            release_url: "https://github.com/owner/repo/releases/tag/v9.8.7".to_owned(),
-        });
-        for language in ALL_LANGUAGES {
-            for notice in [
-                &UpdateCheckNotice::Current,
-                &update,
-                &UpdateCheckNotice::Failed,
-            ] {
-                let copy = update_notice_copy(notice, language);
-                assert!(!copy.title.trim().is_empty(), "{language:?}");
-                assert!(!copy.message.trim().is_empty(), "{language:?}");
-            }
-            assert!(
-                update_notice_copy(&update, language)
-                    .message
-                    .contains("9.8.7"),
-                "{language:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn release_url_requires_an_available_notice_and_explicit_confirmation() {
-        let update = UpdateCheckNotice::Available(AvailableUpdate {
-            version: Version::parse("2.0.0").unwrap(),
+    fn selecting_an_existing_automatic_update_queues_it_for_the_ui_boundary() {
+        let mut runtime = test_app_runtime(Settings::default());
+        let update = AvailableUpdate {
+            version: semver::Version::parse("2.0.0").unwrap(),
             release_url: "https://github.com/owner/repo/releases/tag/v2.0.0".to_owned(),
-        });
+        };
+        runtime
+            .update_presentation
+            .begin_check(crate::UpdateCheckIntent::Automatic);
+        runtime
+            .update_presentation
+            .record_result(Ok(Some(update.clone())));
+
+        let _ = runtime.dispatch(UiAction::CheckForUpdates);
+
         assert_eq!(
-            release_url_after_confirmation(&update, true),
-            Some("https://github.com/owner/repo/releases/tag/v2.0.0")
+            runtime.take_update_notice(),
+            Some(UpdateCheckNotice::Available(update))
         );
-        assert_eq!(release_url_after_confirmation(&update, false), None);
-        assert_eq!(
-            release_url_after_confirmation(&UpdateCheckNotice::Current, true),
-            None
-        );
-        assert_eq!(
-            release_url_after_confirmation(&UpdateCheckNotice::Failed, true),
-            None
-        );
+        runtime.shutdown();
     }
 
     #[test]

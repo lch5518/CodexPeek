@@ -207,6 +207,9 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 
 - [ ] Missing, unsupported, and logged-out Codex CLI
 - [ ] Automatic release-metadata check and user-initiated release-page opening
+- [ ] After the tray menu closes, a user-initiated update check shows exactly one owned dialog for
+      current, failed, and available-release results; an available release opens only after an
+      explicit confirmation and a browser failure shows the localized recovery message
 - [ ] Installer and portable upgrade preserve settings and recover valid profile state
 
 Record any check that could not be completed. Fix failures in a new patch version
