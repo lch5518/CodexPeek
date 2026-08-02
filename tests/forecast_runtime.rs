@@ -64,6 +64,41 @@ fn calculate(
     )
 }
 
+fn evenly_spaced_samples(
+    count: usize,
+    observation_span: Duration,
+    rise: f64,
+    now: SystemTime,
+) -> Vec<UsageSample> {
+    assert!(count >= 2);
+    let intervals = u64::try_from(count - 1).unwrap();
+    (0..count)
+        .map(|index| {
+            let index = u64::try_from(index).unwrap();
+            sample(
+                UsageProfileId::System,
+                WindowKind::Primary,
+                10.0 + rise * index as f64 / intervals as f64,
+                None,
+                now - Duration::from_secs(
+                    observation_span.as_secs() * (intervals - index) / intervals,
+                ),
+            )
+        })
+        .collect()
+}
+
+fn forecast_quality(
+    samples: &[UsageSample],
+    current_used_percent: f64,
+    now: SystemTime,
+) -> ForecastQuality {
+    match calculate(samples, &window(current_used_percent, None), now) {
+        ForecastResult::ForecastAvailable(forecast) => forecast.quality,
+        result => panic!("expected available forecast, got {result:?}"),
+    }
+}
+
 #[test]
 fn steady_usage_produces_a_low_quality_exhaustion_forecast() {
     let now = at(1_000_000);
@@ -882,4 +917,128 @@ fn exhaustion_timestamp_overflow_returns_invalid() {
         calculate(&samples, &window(12.0, None), now),
         ForecastResult::Invalid
     );
+}
+
+#[test]
+fn samples_with_resets_before_the_observation_are_rejected_at_the_public_boundary() {
+    let now = at(3_000_000);
+
+    assert_eq!(
+        UsageSample::new(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(now - Duration::from_secs(1)),
+            now,
+            now,
+        ),
+        Err(codex_usage_monitor::UsageHistoryError::ReversedTimestamps)
+    );
+}
+
+#[test]
+fn quality_boundaries_distinguish_just_below_and_exact_v1_thresholds() {
+    let now = at(3_100_000);
+    let thirty_minutes = Duration::from_secs(30 * 60);
+    let one_hour = Duration::from_secs(60 * 60);
+    let two_hours = Duration::from_secs(2 * 60 * 60);
+
+    let low = evenly_spaced_samples(3, thirty_minutes, 1.0, now);
+    assert!(matches!(
+        calculate(&low[..2], &window(10.5, None), now),
+        ForecastResult::Collecting { .. }
+    ));
+    assert!(matches!(
+        calculate(
+            &evenly_spaced_samples(3, thirty_minutes - Duration::from_secs(1), 1.0, now),
+            &window(11.0, None),
+            now
+        ),
+        ForecastResult::Collecting { .. }
+    ));
+    assert_eq!(
+        calculate(
+            &evenly_spaced_samples(3, thirty_minutes, 0.999, now),
+            &window(10.999, None),
+            now
+        ),
+        ForecastResult::InsufficientActivity
+    );
+    assert_eq!(forecast_quality(&low, 11.0, now), ForecastQuality::Low);
+
+    assert_eq!(
+        forecast_quality(&evenly_spaced_samples(4, one_hour, 2.0, now), 12.0, now),
+        ForecastQuality::Low
+    );
+    assert_eq!(
+        forecast_quality(
+            &evenly_spaced_samples(5, one_hour - Duration::from_secs(1), 2.0, now),
+            12.0,
+            now
+        ),
+        ForecastQuality::Low
+    );
+    assert_eq!(
+        forecast_quality(&evenly_spaced_samples(5, one_hour, 1.999, now), 11.999, now),
+        ForecastQuality::Low
+    );
+    assert_eq!(
+        forecast_quality(&evenly_spaced_samples(5, one_hour, 2.0, now), 12.0, now),
+        ForecastQuality::Medium
+    );
+
+    assert_eq!(
+        forecast_quality(&evenly_spaced_samples(7, two_hours, 5.0, now), 15.0, now),
+        ForecastQuality::Medium
+    );
+    assert_eq!(
+        forecast_quality(
+            &evenly_spaced_samples(8, two_hours - Duration::from_secs(1), 5.0, now),
+            15.0,
+            now
+        ),
+        ForecastQuality::Medium
+    );
+    assert_eq!(
+        forecast_quality(
+            &evenly_spaced_samples(8, two_hours, 4.999, now),
+            14.999,
+            now
+        ),
+        ForecastQuality::Medium
+    );
+    assert_eq!(
+        forecast_quality(&evenly_spaced_samples(8, two_hours, 5.0, now), 15.0, now),
+        ForecastQuality::High
+    );
+}
+
+#[test]
+fn long_history_uses_only_the_recent_thirty_two_samples_for_theil_sen_pairs() {
+    let now = at(3_200_000);
+    let samples: Vec<_> = (0..100_u64)
+        .map(|index| {
+            let used_percent = if index < 68 {
+                index as f64
+            } else {
+                67.0 + (index - 67) as f64 * 0.1
+            };
+            sample(
+                UsageProfileId::System,
+                WindowKind::Primary,
+                used_percent,
+                None,
+                now - Duration::from_secs((99 - index) * 60 * 60),
+            )
+        })
+        .collect();
+
+    match calculate(&samples, &window(70.2, None), now) {
+        ForecastResult::ForecastAvailable(forecast) => {
+            assert_eq!(forecast.sample_count, 32);
+            assert_eq!(forecast.sample_count * (forecast.sample_count - 1) / 2, 496);
+            assert!((forecast.hourly_rate - 0.1).abs() < 0.000_001);
+        }
+        result => panic!("expected available forecast, got {result:?}"),
+    }
 }
