@@ -4,6 +4,7 @@ mod config;
 mod diagnostics;
 mod domain;
 mod errors;
+mod forecast;
 mod localization;
 mod poller;
 mod profile_poller;
@@ -23,6 +24,10 @@ pub use diagnostics::{
 };
 pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
+pub use forecast::{
+    Forecast, ForecastCollectionReason, ForecastEngine, ForecastPolicy, ForecastQuality,
+    ForecastResult,
+};
 pub use localization::{localized_text, Language, LocalizationKey};
 pub use poller::{PollSnapshot, PollState, PollTrigger, PollingService};
 pub use profile_poller::{ProfilePollEvent, ProfilePollingService};
