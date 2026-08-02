@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{mpsc, Arc, Mutex, MutexGuard},
     thread::{self, JoinHandle},
     time::{Duration, SystemTime},
@@ -19,7 +19,8 @@ const CONTROL_WAKE_INTERVAL: Duration = Duration::from_millis(50);
 ///
 /// 표본 전달과 UI 조회는 파일 I/O를 수행하지 않습니다. 이력 읽기·저장은 전용 worker에서
 /// 실행하며, 저장 실패는 다음 dirty 저장 시도까지 보존되고 폴링 또는 마지막 정상 표시에 영향을
-/// 주지 않습니다.
+/// 주지 않습니다. 종료 시 저장 완료와 worker join이 필요하면 반드시 [`Self::stop`]을 호출해야
+/// 하며, `Drop`은 UI 종료를 막지 않도록 종료 요청만 전달합니다.
 pub struct UsageForecastService {
     samples: mpsc::SyncSender<ForecastSample>,
     controls: mpsc::Sender<ForecastControl>,
@@ -50,10 +51,19 @@ struct ForecastSample {
 }
 
 enum ForecastControl {
-    Add,
-    Remove { profile_id: UsageProfileId },
-    Clear,
-    SetEnabled,
+    Add {
+        active: HashMap<UsageProfileId, u64>,
+    },
+    Remove {
+        profile_id: UsageProfileId,
+        active: HashMap<UsageProfileId, u64>,
+    },
+    Clear {
+        active: HashMap<UsageProfileId, u64>,
+    },
+    SetEnabled {
+        active: HashMap<UsageProfileId, u64>,
+    },
     Stop,
 }
 
@@ -122,17 +132,18 @@ impl UsageForecastService {
 
     /// 새 프로필을 이력 수집·예측 대상으로 등록합니다.
     pub fn add_profile(&self, profile_id: UsageProfileId) {
-        {
+        let active = {
             let mut shared = lock(&self.shared);
             let generation = *shared.generations.entry(profile_id).or_insert(0);
             shared.active.insert(profile_id, generation);
-        }
-        let _ = self.controls.send(ForecastControl::Add);
+            shared.active.clone()
+        };
+        let _ = self.controls.send(ForecastControl::Add { active });
     }
 
     /// 지정 프로필의 표본과 캐시를 제거하고 늦게 도착한 표본을 무효화합니다.
     pub fn remove_profile(&self, profile_id: UsageProfileId) {
-        {
+        let active = {
             let mut shared = lock(&self.shared);
             let _generation = *shared
                 .generations
@@ -141,13 +152,16 @@ impl UsageForecastService {
                 .or_insert(1);
             shared.active.remove(&profile_id);
             shared.cache.retain(|(id, _), _| *id != profile_id);
-        }
-        let _ = self.controls.send(ForecastControl::Remove { profile_id });
+            shared.active.clone()
+        };
+        let _ = self
+            .controls
+            .send(ForecastControl::Remove { profile_id, active });
     }
 
     /// 모든 이력과 캐시를 제거하고 이미 큐에 있던 표본을 무효화합니다.
     pub fn clear_all(&self) {
-        {
+        let active = {
             let mut shared = lock(&self.shared);
             for generation in shared.active.values_mut() {
                 *generation = generation.saturating_add(1);
@@ -156,8 +170,9 @@ impl UsageForecastService {
                 shared.generations.insert(profile_id, generation);
             }
             shared.cache.clear();
-        }
-        let _ = self.controls.send(ForecastControl::Clear);
+            shared.active.clone()
+        };
+        let _ = self.controls.send(ForecastControl::Clear { active });
     }
 
     /// 예측 수집과 표시를 함께 켜거나 끕니다.
@@ -165,7 +180,7 @@ impl UsageForecastService {
     /// 비활성화하면 기존 캐시를 즉시 숨기며, 다시 켜도 새 성공 표본이 도착하기 전에는 오래된
     /// 캐시를 재사용하지 않습니다.
     pub fn set_enabled(&self, enabled: bool) {
-        {
+        let active = {
             let mut shared = lock(&self.shared);
             if shared.enabled == enabled {
                 return;
@@ -178,8 +193,9 @@ impl UsageForecastService {
                 shared.generations.insert(profile_id, generation);
             }
             shared.cache.clear();
-        }
-        let _ = self.controls.send(ForecastControl::SetEnabled);
+            shared.active.clone()
+        };
+        let _ = self.controls.send(ForecastControl::SetEnabled { active });
     }
 
     /// 지정 시각에서 여전히 신선한 프로필·창 예측을 복사합니다.
@@ -244,6 +260,8 @@ fn worker_loop(
             UsageHistory::default()
         }
     };
+    let mut active = lock(&shared).active.clone();
+    let mut pending = VecDeque::with_capacity(COMMAND_CAPACITY);
     let mut dirty = false;
     let mut save_due: Option<SystemTime> = None;
 
@@ -251,27 +269,49 @@ fn worker_loop(
         let mut stop = false;
         while let Ok(control) = control_receiver.try_recv() {
             match control {
-                ForecastControl::Add => {}
-                ForecastControl::Remove { profile_id } => {
+                ForecastControl::Add {
+                    active: next_active,
+                } => active = next_active,
+                ForecastControl::Remove {
+                    profile_id,
+                    active: next_active,
+                } => {
+                    active = next_active;
                     history.remove_profile(profile_id);
                     dirty = true;
                     save_due = Some(SystemTime::now());
                     remove_cache(&shared, profile_id);
                 }
-                ForecastControl::Clear => {
+                ForecastControl::Clear {
+                    active: next_active,
+                } => {
+                    active = next_active;
                     history.clear();
                     dirty = true;
                     save_due = Some(SystemTime::now());
                     lock(&shared).cache.clear();
                 }
-                ForecastControl::SetEnabled => {}
+                ForecastControl::SetEnabled {
+                    active: next_active,
+                } => active = next_active,
                 ForecastControl::Stop => stop = true,
             }
         }
+        drain_pending_samples(
+            &mut pending,
+            &active,
+            &mut history,
+            &mut dirty,
+            &mut save_due,
+            policy,
+            &shared,
+        );
         if stop {
             while let Ok(sample) = sample_receiver.try_recv() {
-                process_sample(
+                defer_or_process_sample(
                     sample,
+                    &active,
+                    &mut pending,
                     &mut history,
                     &mut dirty,
                     &mut save_due,
@@ -279,6 +319,15 @@ fn worker_loop(
                     &shared,
                 );
             }
+            drain_pending_samples(
+                &mut pending,
+                &active,
+                &mut history,
+                &mut dirty,
+                &mut save_due,
+                policy,
+                &shared,
+            );
             save_on_shutdown(&store, &history, dirty, &shared);
             break;
         }
@@ -288,8 +337,10 @@ fn worker_loop(
             .unwrap_or(CONTROL_WAKE_INTERVAL)
             .min(CONTROL_WAKE_INTERVAL);
         match sample_receiver.recv_timeout(timeout) {
-            Ok(sample) => process_sample(
+            Ok(sample) => defer_or_process_sample(
                 sample,
+                &active,
+                &mut pending,
                 &mut history,
                 &mut dirty,
                 &mut save_due,
@@ -316,8 +367,10 @@ fn worker_loop(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn process_sample(
+fn defer_or_process_sample(
     sample: ForecastSample,
+    active: &HashMap<UsageProfileId, u64>,
+    pending: &mut VecDeque<ForecastSample>,
     history: &mut UsageHistory,
     dirty: &mut bool,
     save_due: &mut Option<SystemTime>,
@@ -327,6 +380,47 @@ fn process_sample(
     if !sample_is_current(shared, sample.profile_id, sample.generation) {
         return;
     }
+    if active.get(&sample.profile_id) != Some(&sample.generation) {
+        if pending.len() < COMMAND_CAPACITY {
+            pending.push_back(sample);
+        }
+        return;
+    }
+    process_current_sample(sample, history, dirty, save_due, policy, shared);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn drain_pending_samples(
+    pending: &mut VecDeque<ForecastSample>,
+    active: &HashMap<UsageProfileId, u64>,
+    history: &mut UsageHistory,
+    dirty: &mut bool,
+    save_due: &mut Option<SystemTime>,
+    policy: ForecastPolicy,
+    shared: &Arc<Mutex<ForecastShared>>,
+) {
+    let mut deferred = VecDeque::with_capacity(pending.len());
+    while let Some(sample) = pending.pop_front() {
+        if !sample_is_current(shared, sample.profile_id, sample.generation) {
+            continue;
+        }
+        if active.get(&sample.profile_id) == Some(&sample.generation) {
+            process_current_sample(sample, history, dirty, save_due, policy, shared);
+        } else {
+            deferred.push_back(sample);
+        }
+    }
+    *pending = deferred;
+}
+
+fn process_current_sample(
+    sample: ForecastSample,
+    history: &mut UsageHistory,
+    dirty: &mut bool,
+    save_due: &mut Option<SystemTime>,
+    policy: ForecastPolicy,
+    shared: &Arc<Mutex<ForecastShared>>,
+) {
     if record_usage(
         history,
         sample.profile_id,

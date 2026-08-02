@@ -447,3 +447,66 @@ fn first_sample_after_profile_registration_is_not_dropped_by_channel_ordering() 
         1
     );
 }
+
+#[test]
+fn sample_after_clear_waits_until_the_clear_lifecycle_boundary_is_applied() {
+    let root = TestRoot::new("clear-sample-ordering");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let service = UsageForecastService::start(
+        store.clone(),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    );
+    let now = SystemTime::now();
+    let reset = now + Duration::from_secs(60 * 60);
+
+    thread::sleep(Duration::from_millis(75));
+    service.clear_all();
+    service.record_success(
+        UsageProfileId::System,
+        &usage(WindowKind::Primary, 10.0, reset, now),
+        now,
+    );
+    service.stop();
+
+    assert_eq!(
+        store
+            .load(SystemTime::now())
+            .unwrap()
+            .samples_for(UsageProfileId::System, WindowKind::Primary)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn sample_after_remove_and_reregistration_waits_for_both_lifecycle_controls() {
+    let root = TestRoot::new("remove-add-sample-ordering");
+    let store = UsageHistoryStore::for_root(&root.0);
+    let service = UsageForecastService::start(
+        store.clone(),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    );
+    let now = SystemTime::now();
+    let reset = now + Duration::from_secs(60 * 60);
+
+    thread::sleep(Duration::from_millis(75));
+    service.remove_profile(UsageProfileId::System);
+    service.add_profile(UsageProfileId::System);
+    service.record_success(
+        UsageProfileId::System,
+        &usage(WindowKind::Primary, 10.0, reset, now),
+        now,
+    );
+    service.stop();
+
+    assert_eq!(
+        store
+            .load(SystemTime::now())
+            .unwrap()
+            .samples_for(UsageProfileId::System, WindowKind::Primary)
+            .count(),
+        1
+    );
+}
