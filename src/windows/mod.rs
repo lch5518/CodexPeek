@@ -575,6 +575,13 @@ pub trait UiBackend {
     fn snapshot(&self) -> WidgetViewModel;
     /// 현재 메뉴 및 창 설정 복사본을 반환합니다.
     fn settings(&self) -> UiSettings;
+    /// UI 스레드가 사용자에게 표시할 수동 업데이트 결과를 한 번 꺼냅니다.
+    ///
+    /// 백엔드는 네트워크 작업을 수행하지 않으며, 반환된 알림은 네이티브 소유 창에서 대화상자로
+    /// 표시한 뒤 다시 반환하지 않아야 합니다.
+    fn take_update_notice(&self) -> Option<crate::UpdateCheckNotice> {
+        None
+    }
     /// UI 동작을 처리하고 갱신된 설정을 반환합니다.
     fn dispatch(&mut self, action: UiAction) -> UiSettings;
     /// 사용자가 선택 프로필을 확인한 로그인 동작을 처리하고 갱신된 설정을 반환합니다.

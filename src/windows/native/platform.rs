@@ -59,6 +59,7 @@ use windows::{
 };
 
 use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
+use crate::{localized_text, Language, LocalizationKey, UpdateCheckNotice};
 
 use super::super::{
     is_exact_github_tag_page,
@@ -378,6 +379,7 @@ unsafe extern "system" fn owner_proc(
             let language_changed =
                 settings.resolved_language != (*pointer).settings.resolved_language;
             (*pointer).settings = settings;
+            show_pending_update_notice_if_ready(pointer);
             if language_changed {
                 update_window_titles(pointer);
             }
@@ -636,6 +638,7 @@ unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction)
         (*state_pointer).backend.dispatch(action)
     };
     (*state_pointer).settings = settings;
+    show_pending_update_notice_if_ready(state_pointer);
     update_window_titles(state_pointer);
     let _ = apply_window_policy(state_pointer);
     let _ = refresh_tray(state_pointer, false);
@@ -677,6 +680,7 @@ trait NativeMessagePresenter {
 
     fn present_application(
         &mut self,
+        owner: HWND,
         message: &str,
         title: &str,
         style: MESSAGEBOX_STYLE,
@@ -701,17 +705,19 @@ impl NativeMessagePresenter for WindowsNativeMessagePresenter {
 
     fn present_application(
         &mut self,
+        owner: HWND,
         message: &str,
         title: &str,
         style: MESSAGEBOX_STYLE,
     ) -> io::Result<MESSAGEBOX_RESULT> {
         let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
         let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        let owner = (owner != HWND::default()).then_some(owner);
         // SAFETY: 두 버퍼는 NUL 종료되어 있고 동기 `MessageBoxW` 호출이 반환될 때까지 살아
-        // 있습니다. 소유자를 전달하지 않아 기존 애플리케이션 메시지 동작을 유지합니다.
+        // 있습니다. 유효한 숨은 소유 창을 전달해 대화상자가 트레이 앱과 함께 표시됩니다.
         let result = unsafe {
             MessageBoxW(
-                None,
+                owner,
                 PCWSTR(message.as_ptr()),
                 PCWSTR(title.as_ptr()),
                 style,
@@ -1815,41 +1821,91 @@ fn show_diagnostic_summary_with_presenter<P: NativeMessagePresenter>(
     presenter: &mut P,
 ) -> io::Result<()> {
     presenter
-        .present_application(message, title, MB_OK | MB_ICONINFORMATION)
+        .present_application(HWND::default(), message, title, MB_OK | MB_ICONINFORMATION)
         .map(|_| ())
 }
 
-pub(super) unsafe fn show_update_dialog(
-    title: &str,
-    message: &str,
-    confirm_open: bool,
-    warning: bool,
-) -> io::Result<bool> {
+unsafe fn show_pending_update_notice_if_ready(state_pointer: *mut NativeState<'_>) {
     let Some(_guard) = UpdateDialogGuard::acquire() else {
-        return Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "update dialog already in progress",
-        ));
+        return;
     };
-    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
-    let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    let Some(notice) = (*state_pointer).backend.take_update_notice() else {
+        return;
+    };
+    let mut presenter = WindowsNativeMessagePresenter;
+    let _ = show_update_notice_with_presenter(
+        (*state_pointer).owner,
+        &notice,
+        (*state_pointer).settings.resolved_language,
+        &mut presenter,
+        |url| open_validated_tag_page(url),
+    );
+}
+
+/// 사용자 업데이트 결과를 소유 창에 표시하고 명시적 확인 뒤에만 릴리스 페이지를 엽니다.
+///
+/// `notice`는 이미 제한된 GitHub 릴리스 응답에서 검증된 값이며, `open_release`는 검증된 URL만
+/// 처리해야 합니다. 네트워크 작업은 수행하지 않고 대화상자 결과와 브라우저 열기 오류만 처리합니다.
+fn show_update_notice_with_presenter<P, F>(
+    owner: HWND,
+    notice: &UpdateCheckNotice,
+    language: Language,
+    presenter: &mut P,
+    mut open_release: F,
+) -> io::Result<()>
+where
+    P: NativeMessagePresenter,
+    F: FnMut(&str) -> io::Result<()>,
+{
+    let (message, confirm_open, warning, release_url) = match notice {
+        UpdateCheckNotice::Current => (
+            localized_text(LocalizationKey::UpdateCurrent, language).to_owned(),
+            false,
+            false,
+            None,
+        ),
+        UpdateCheckNotice::Available(update) => (
+            localized_text(LocalizationKey::UpdateAvailablePrompt, language)
+                .replace("{version}", &update.version.to_string()),
+            true,
+            false,
+            Some(update.release_url.as_str()),
+        ),
+        UpdateCheckNotice::Failed => (
+            localized_text(LocalizationKey::UpdateFailedHelp, language).to_owned(),
+            false,
+            true,
+            None,
+        ),
+    };
     let buttons = if confirm_open { MB_YESNO } else { MB_OK };
     let icon = if warning {
         MB_ICONWARNING
     } else {
         MB_ICONINFORMATION
     };
-    let result = MessageBoxW(
-        None,
-        PCWSTR(message.as_ptr()),
-        PCWSTR(title.as_ptr()),
-        update_dialog_style(buttons, icon),
-    );
-    if result.0 == 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(confirm_open && update_dialog_opens_release(result))
+    let style = update_dialog_style(buttons, icon);
+    let result = presenter.present_application(
+        owner,
+        &message,
+        localized_text(LocalizationKey::WindowTitle, language),
+        style,
+    )?;
+    let Some(release_url) = release_url else {
+        return Ok(());
+    };
+    if !confirm_open || !update_dialog_opens_release(result) {
+        return Ok(());
     }
+    if open_release(release_url).is_err() {
+        let _ = presenter.present_application(
+            owner,
+            localized_text(LocalizationKey::UpdateOpenFailed, language),
+            localized_text(LocalizationKey::WindowTitle, language),
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TASKMODAL,
+        );
+    }
+    Ok(())
 }
 
 fn update_dialog_opens_release(result: MESSAGEBOX_RESULT) -> bool {
@@ -1867,28 +1923,36 @@ mod tests {
     use super::{
         compact_percent_text, glass_noise, rounded_material_alpha, should_open_tray_menu,
         show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
-        taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
-        update_dialog_style, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
-        TaskbarRisk, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
+        show_update_notice_with_presenter, taskbar_palette, update_dialog_in_progress,
+        update_dialog_opens_release, update_dialog_style, NativeMessagePresenter,
+        TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, UpdateDialogGuard, NIN_SELECT,
+        WM_CONTEXTMENU,
     };
-    use crate::{windows::profile_dialog::ProfileMessageRoute, Language};
+    use crate::{
+        windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
+    };
     use windows::Win32::{
         Foundation::HWND,
         UI::WindowsAndMessaging::{
-            IDNO, IDOK, IDYES, MB_ICONINFORMATION, MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT,
-            MESSAGEBOX_STYLE, WM_LBUTTONUP, WM_RBUTTONUP,
+            IDNO, IDOK, IDYES, MB_ICONINFORMATION, MB_OK, MB_TASKMODAL, MB_YESNO,
+            MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, WM_LBUTTONUP, WM_RBUTTONUP,
         },
     };
 
     #[derive(Debug, PartialEq, Eq)]
     enum PresentedNativeMessage {
         Profile(ProfileMessageRoute),
-        Application,
+        Application {
+            owner: HWND,
+            message: String,
+            title: String,
+            style: MESSAGEBOX_STYLE,
+        },
     }
 
-    #[derive(Default)]
     struct RecordingNativeMessagePresenter {
         messages: Vec<PresentedNativeMessage>,
+        response: MESSAGEBOX_RESULT,
     }
 
     impl NativeMessagePresenter for RecordingNativeMessagePresenter {
@@ -1906,18 +1970,27 @@ mod tests {
 
         fn present_application(
             &mut self,
-            _message: &str,
-            _title: &str,
-            _style: MESSAGEBOX_STYLE,
+            owner: HWND,
+            message: &str,
+            title: &str,
+            style: MESSAGEBOX_STYLE,
         ) -> io::Result<MESSAGEBOX_RESULT> {
-            self.messages.push(PresentedNativeMessage::Application);
-            Ok(IDOK)
+            self.messages.push(PresentedNativeMessage::Application {
+                owner,
+                message: message.to_owned(),
+                title: title.to_owned(),
+                style,
+            });
+            Ok(self.response)
         }
     }
 
     #[test]
     fn native_profile_operation_error_uses_the_profile_message_boundary() {
-        let mut presenter = RecordingNativeMessagePresenter::default();
+        let mut presenter = RecordingNativeMessagePresenter {
+            messages: Vec::new(),
+            response: IDOK,
+        };
 
         show_profile_dialog_error_with_presenter(
             HWND(201_usize as _),
@@ -1935,14 +2008,114 @@ mod tests {
 
     #[test]
     fn diagnostic_summary_stays_outside_the_profile_message_boundary() {
-        let mut presenter = RecordingNativeMessagePresenter::default();
+        let mut presenter = RecordingNativeMessagePresenter {
+            messages: Vec::new(),
+            response: IDOK,
+        };
 
         show_diagnostic_summary_with_presenter("Diagnostics", "Ready", &mut presenter).unwrap();
 
         assert_eq!(
             presenter.messages,
-            vec![PresentedNativeMessage::Application]
+            vec![PresentedNativeMessage::Application {
+                owner: HWND::default(),
+                message: "Ready".to_owned(),
+                title: "Diagnostics".to_owned(),
+                style: MB_OK | MB_ICONINFORMATION,
+            }]
         );
+    }
+
+    #[test]
+    fn update_notice_uses_the_owner_and_requires_explicit_confirmation() {
+        let owner = HWND(201_usize as _);
+        let update = UpdateCheckNotice::Available(AvailableUpdate {
+            version: semver::Version::parse("2.0.0").unwrap(),
+            release_url: "https://github.com/owner/repo/releases/tag/v2.0.0".to_owned(),
+        });
+        let mut presenter = RecordingNativeMessagePresenter {
+            messages: Vec::new(),
+            response: IDNO,
+        };
+        let mut opened = None;
+        show_update_notice_with_presenter(
+            owner,
+            &update,
+            Language::English,
+            &mut presenter,
+            |url| {
+                opened = Some(url.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(opened, None);
+        assert_eq!(presenter.messages.len(), 1);
+        assert_eq!(presenter.messages[0].owner(), owner);
+
+        presenter.messages.clear();
+        presenter.response = IDYES;
+        show_update_notice_with_presenter(
+            owner,
+            &update,
+            Language::English,
+            &mut presenter,
+            |url| {
+                opened = Some(url.to_owned());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            opened,
+            Some("https://github.com/owner/repo/releases/tag/v2.0.0".to_owned())
+        );
+    }
+
+    #[test]
+    fn update_notice_current_and_failed_results_use_localized_information() {
+        for (notice, warning) in [
+            (UpdateCheckNotice::Current, false),
+            (UpdateCheckNotice::Failed, true),
+        ] {
+            let mut presenter = RecordingNativeMessagePresenter {
+                messages: Vec::new(),
+                response: IDOK,
+            };
+            show_update_notice_with_presenter(
+                HWND(201_usize as _),
+                &notice,
+                Language::English,
+                &mut presenter,
+                |_| Ok(()),
+            )
+            .unwrap();
+
+            assert_eq!(presenter.messages.len(), 1);
+            let PresentedNativeMessage::Application { message, style, .. } = &presenter.messages[0]
+            else {
+                panic!("update result must use the application message boundary");
+            };
+            assert!(!message.is_empty());
+            assert_eq!(style.0 & MB_YESNO.0, 0);
+            if warning {
+                assert_eq!(
+                    style.0 & windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING.0,
+                    windows::Win32::UI::WindowsAndMessaging::MB_ICONWARNING.0
+                );
+            }
+        }
+    }
+
+    impl PresentedNativeMessage {
+        fn owner(&self) -> HWND {
+            match self {
+                Self::Profile(_) => HWND::default(),
+                Self::Application { owner, .. } => *owner,
+            }
+        }
     }
 
     #[test]

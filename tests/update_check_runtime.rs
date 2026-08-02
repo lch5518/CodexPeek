@@ -195,6 +195,19 @@ fn user_initiated_results_create_exactly_one_open_request() {
 }
 
 #[test]
+fn queued_user_notice_is_consumed_once_by_the_ui_boundary() {
+    let presentation = UpdatePresentation::default();
+
+    presentation.queue_user_notice(UpdateCheckNotice::Current);
+
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Current)
+    );
+    assert!(presentation.take_user_notice().is_none());
+}
+
+#[test]
 fn explicit_open_actions_use_only_the_stored_validated_result() {
     let presentation = UpdatePresentation::default();
     assert_eq!(
