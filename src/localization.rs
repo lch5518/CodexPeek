@@ -204,6 +204,36 @@ pub enum LocalizationKey {
     MenuUsageForecastClearHistory,
     /// 사용량 소진 예측 기록 삭제 확인 문구입니다.
     UsageForecastClearConfirm,
+    /// 예측 표본을 수집 중인 상태입니다.
+    UsageForecastCollecting,
+    /// 사용량 변화가 작아 예측하지 못하는 상태입니다.
+    UsageForecastInsufficientActivity,
+    /// 현재 속도로 소진까지 걸리는 시간을 나타내는 문구입니다.
+    UsageForecastEstimate,
+    /// 초기화 전에 소진할 가능성을 나타내는 문구입니다.
+    UsageForecastBeforeReset,
+    /// 초기화 시 예상 잔여 사용량을 나타내는 문구입니다.
+    UsageForecastAtReset,
+    /// 소진 시점이 먼 경우의 문구입니다.
+    UsageForecastLongTerm,
+    /// 현재 한도가 이미 소진된 상태입니다.
+    UsageForecastExhausted,
+    /// 예측 표본이 오래된 상태입니다.
+    UsageForecastStale,
+    /// 예측 입력이 유효하지 않은 상태입니다.
+    UsageForecastInvalid,
+    /// 1분을 나타내는 단수 단위입니다.
+    UsageForecastMinuteOne,
+    /// 2분 이상을 나타내는 복수 단위입니다.
+    UsageForecastMinuteOther,
+    /// 1시간을 나타내는 단수 단위입니다.
+    UsageForecastHourOne,
+    /// 2시간 이상을 나타내는 복수 단위입니다.
+    UsageForecastHourOther,
+    /// 1일을 나타내는 단수 단위입니다.
+    UsageForecastDayOne,
+    /// 2일 이상을 나타내는 복수 단위입니다.
+    UsageForecastDayOther,
 }
 
 impl LocalizationKey {
@@ -287,6 +317,21 @@ impl LocalizationKey {
         Self::MenuUsageForecastToggle,
         Self::MenuUsageForecastClearHistory,
         Self::UsageForecastClearConfirm,
+        Self::UsageForecastCollecting,
+        Self::UsageForecastInsufficientActivity,
+        Self::UsageForecastEstimate,
+        Self::UsageForecastBeforeReset,
+        Self::UsageForecastAtReset,
+        Self::UsageForecastLongTerm,
+        Self::UsageForecastExhausted,
+        Self::UsageForecastStale,
+        Self::UsageForecastInvalid,
+        Self::UsageForecastMinuteOne,
+        Self::UsageForecastMinuteOther,
+        Self::UsageForecastHourOne,
+        Self::UsageForecastHourOther,
+        Self::UsageForecastDayOne,
+        Self::UsageForecastDayOther,
     ];
 
     const fn index(self) -> usize {
@@ -369,11 +414,26 @@ impl LocalizationKey {
             Self::MenuUsageForecastToggle => 75,
             Self::MenuUsageForecastClearHistory => 76,
             Self::UsageForecastClearConfirm => 77,
+            Self::UsageForecastCollecting => 78,
+            Self::UsageForecastInsufficientActivity => 79,
+            Self::UsageForecastEstimate => 80,
+            Self::UsageForecastBeforeReset => 81,
+            Self::UsageForecastAtReset => 82,
+            Self::UsageForecastLongTerm => 83,
+            Self::UsageForecastExhausted => 84,
+            Self::UsageForecastStale => 85,
+            Self::UsageForecastInvalid => 86,
+            Self::UsageForecastMinuteOne => 87,
+            Self::UsageForecastMinuteOther => 88,
+            Self::UsageForecastHourOne => 89,
+            Self::UsageForecastHourOther => 90,
+            Self::UsageForecastDayOne => 91,
+            Self::UsageForecastDayOther => 92,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 78;
+const LOCALIZATION_KEY_COUNT: usize = 93;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -454,6 +514,21 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "사용량 소진 예측",
     "사용량 예측 기록 삭제",
     "사용량 소진 예측 기록을 삭제할까요?",
+    "예측 데이터 수집 중 · {count}/{required}",
+    "사용량 변화가 적어 소진 시점을 예측할 수 없음",
+    "현재 속도면 약 {duration} 후 소진",
+    "초기화 전에 소진할 가능성이 높음 · 약 {duration} 후",
+    "초기화 시 약 {percent}% 남을 것으로 예상",
+    "소진 시점은 7일 이상 후로 예상됨",
+    "한도 소진됨",
+    "예측 데이터가 오래되어 표시하지 않음",
+    "예측 데이터를 사용할 수 없음",
+    "분",
+    "분",
+    "시간",
+    "시간",
+    "일",
+    "일",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -535,6 +610,21 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Usage forecasting",
     "Clear usage forecast history",
     "Clear the usage forecast history?",
+    "Collecting forecast data · {count}/{required}",
+    "Usage change is too small to estimate exhaustion",
+    "At the current rate, exhaustion in about {duration}",
+    "Likely exhausted before reset · in about {duration}",
+    "About {percent}% remaining at reset",
+    "Exhaustion is estimated to be at least 7 days away",
+    "Limit exhausted",
+    "Forecast is hidden because the data is stale",
+    "Forecast data is unavailable",
+    "minute",
+    "minutes",
+    "hour",
+    "hours",
+    "day",
+    "days",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -616,6 +706,21 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Predicción de uso",
     "Borrar el historial de predicción de uso",
     "¿Borrar el historial de predicción de uso?",
+    "Recopilando datos de predicción · {count}/{required}",
+    "El cambio de uso es demasiado pequeño para estimar el agotamiento",
+    "Al ritmo actual, se agotará en aproximadamente {duration}",
+    "Probablemente se agotará antes del reinicio · en aproximadamente {duration}",
+    "Aproximadamente {percent}% restante al reiniciarse",
+    "Se estima que el agotamiento tardará al menos 7 días",
+    "Límite agotado",
+    "La predicción está oculta porque los datos son antiguos",
+    "Datos de predicción no disponibles",
+    "minuto",
+    "minutos",
+    "hora",
+    "horas",
+    "día",
+    "días",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -697,6 +802,21 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Previsão de uso",
     "Limpar histórico de previsão de uso",
     "Limpar o histórico de previsão de uso?",
+    "Coletando dados de previsão · {count}/{required}",
+    "A mudança de uso é pequena demais para estimar o esgotamento",
+    "No ritmo atual, o limite acaba em cerca de {duration}",
+    "Provavelmente esgotará antes da redefinição · em cerca de {duration}",
+    "Cerca de {percent}% restantes na redefinição",
+    "O esgotamento é estimado para daqui a pelo menos 7 dias",
+    "Limite esgotado",
+    "A previsão está oculta porque os dados estão desatualizados",
+    "Dados de previsão indisponíveis",
+    "minuto",
+    "minutos",
+    "hora",
+    "horas",
+    "dia",
+    "dias",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -778,6 +898,21 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Prediksi penggunaan",
     "Hapus riwayat prediksi penggunaan",
     "Hapus riwayat prediksi penggunaan?",
+    "Mengumpulkan data prediksi · {count}/{required}",
+    "Perubahan penggunaan terlalu kecil untuk memperkirakan habisnya batas",
+    "Dengan laju saat ini, habis dalam sekitar {duration}",
+    "Kemungkinan habis sebelum reset · sekitar {duration} lagi",
+    "Sekitar {percent}% tersisa saat reset",
+    "Kehabisan diperkirakan setidaknya 7 hari lagi",
+    "Batas habis",
+    "Prediksi disembunyikan karena data sudah lama",
+    "Data prediksi tidak tersedia",
+    "menit",
+    "menit",
+    "jam",
+    "jam",
+    "hari",
+    "hari",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -859,6 +994,21 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "使用量の予測",
     "使用量予測の履歴を消去",
     "使用量予測の履歴を消去しますか？",
+    "予測データを収集中 · {count}/{required}",
+    "使用量の変化が小さいため消尽時刻を予測できません",
+    "現在の速度では約{duration}後に上限に達します",
+    "リセット前に上限に達する可能性が高い · 約{duration}後",
+    "リセット時の残りは約{percent}%と予測",
+    "上限に達するのは7日以上先と予測",
+    "上限に達しました",
+    "データが古いため予測を非表示",
+    "予測データを利用できません",
+    "分",
+    "分",
+    "時間",
+    "時間",
+    "日",
+    "日",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -940,6 +1090,21 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "उपयोग पूर्वानुमान",
     "उपयोग पूर्वानुमान इतिहास साफ़ करें",
     "उपयोग पूर्वानुमान इतिहास साफ़ करें?",
+    "पूर्वानुमान डेटा एकत्रित हो रहा है · {count}/{required}",
+    "उपयोग में बदलाव बहुत कम है, समाप्ति का अनुमान नहीं लगाया जा सकता",
+    "वर्तमान दर पर लगभग {duration} में सीमा समाप्त होगी",
+    "रीसेट से पहले समाप्त होने की संभावना अधिक · लगभग {duration} में",
+    "रीसेट पर लगभग {percent}% शेष रहने का अनुमान",
+    "समाप्ति का अनुमान कम से कम 7 दिन बाद है",
+    "सीमा समाप्त",
+    "पुराने डेटा के कारण पूर्वानुमान छिपाया गया",
+    "पूर्वानुमान डेटा उपलब्ध नहीं है",
+    "मिनट",
+    "मिनट",
+    "घंटा",
+    "घंटे",
+    "दिन",
+    "दिन",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1021,6 +1186,21 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Nutzungsprognose",
     "Nutzungsprognoseverlauf löschen",
     "Nutzungsprognoseverlauf löschen?",
+    "Prognosedaten werden gesammelt · {count}/{required}",
+    "Die Nutzungsänderung ist zu gering für eine Erschöpfungsprognose",
+    "Bei der aktuellen Rate ist das Limit in etwa {duration} erschöpft",
+    "Wahrscheinlich vor dem Zurücksetzen erschöpft · in etwa {duration}",
+    "Beim Zurücksetzen verbleiben voraussichtlich etwa {percent}%",
+    "Die Erschöpfung wird frühestens in 7 Tagen erwartet",
+    "Limit erschöpft",
+    "Prognose wegen veralteter Daten ausgeblendet",
+    "Prognosedaten nicht verfügbar",
+    "Minute",
+    "Minuten",
+    "Stunde",
+    "Stunden",
+    "Tag",
+    "Tagen",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1102,6 +1282,21 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Prévision d'utilisation",
     "Effacer l'historique des prévisions d'utilisation",
     "Effacer l'historique des prévisions d'utilisation ?",
+    "Collecte des données de prévision · {count}/{required}",
+    "La variation d'utilisation est trop faible pour estimer l'épuisement",
+    "Au rythme actuel, épuisement dans environ {duration}",
+    "Épuisement probable avant la réinitialisation · dans environ {duration}",
+    "Environ {percent}% restants lors de la réinitialisation",
+    "L'épuisement est prévu dans au moins 7 jours",
+    "Limite épuisée",
+    "Prévision masquée car les données sont obsolètes",
+    "Données de prévision indisponibles",
+    "minute",
+    "minutes",
+    "heure",
+    "heures",
+    "jour",
+    "jours",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1183,6 +1378,21 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Dự báo sử dụng",
     "Xóa lịch sử dự báo sử dụng",
     "Xóa lịch sử dự báo sử dụng?",
+    "Đang thu thập dữ liệu dự báo · {count}/{required}",
+    "Mức thay đổi sử dụng quá nhỏ để ước tính hết hạn",
+    "Với tốc độ hiện tại, sẽ hết trong khoảng {duration}",
+    "Có khả năng hết trước khi đặt lại · trong khoảng {duration}",
+    "Dự kiến còn khoảng {percent}% khi đặt lại",
+    "Dự kiến hết sau ít nhất 7 ngày",
+    "Đã hết giới hạn",
+    "Ẩn dự báo vì dữ liệu đã cũ",
+    "Dữ liệu dự báo không khả dụng",
+    "phút",
+    "phút",
+    "giờ",
+    "giờ",
+    "ngày",
+    "ngày",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1264,6 +1474,21 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Kullanım tahmini",
     "Kullanım tahmin geçmişini temizle",
     "Kullanım tahmin geçmişi temizlensin mi?",
+    "Tahmin verileri toplanıyor · {count}/{required}",
+    "Kullanım değişimi tükenmeyi tahmin etmek için çok küçük",
+    "Mevcut hızla yaklaşık {duration} içinde tükenir",
+    "Sıfırlanmadan önce tükenme olasılığı yüksek · yaklaşık {duration} içinde",
+    "Sıfırlamada yaklaşık {percent}% kalması bekleniyor",
+    "Tükenmenin en az 7 gün sonra olması bekleniyor",
+    "Limit tükendi",
+    "Veriler eski olduğu için tahmin gizlendi",
+    "Tahmin verileri kullanılamıyor",
+    "dakika",
+    "dakika",
+    "saat",
+    "saat",
+    "gün",
+    "gün",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1345,6 +1570,21 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "توقع الاستخدام",
     "مسح سجل توقع الاستخدام",
     "هل تريد مسح سجل توقع الاستخدام؟",
+    "جارٍ جمع بيانات التوقع · {count}/{required}",
+    "تغير الاستخدام صغير جدًا لتعذر تقدير النفاد",
+    "بالمعدل الحالي، ينفد الحد خلال نحو {duration}",
+    "يُرجح نفاد الحد قبل إعادة التعيين · خلال نحو {duration}",
+    "من المتوقع بقاء نحو {percent}% عند إعادة التعيين",
+    "من المتوقع النفاد بعد 7 أيام على الأقل",
+    "تم استنفاد الحد",
+    "تم إخفاء التوقع لأن البيانات قديمة",
+    "بيانات التوقع غير متاحة",
+    "دقيقة",
+    "دقائق",
+    "ساعة",
+    "ساعات",
+    "يوم",
+    "أيام",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.

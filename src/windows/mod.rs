@@ -377,6 +377,45 @@ pub struct UsageRowView {
     pub reset_text: String,
     /// 색상 외 형태 선택에 쓰는 수준입니다.
     pub level: crate::UsageLevel,
+    /// 계산 세부사항을 해석하지 않고 한 줄로 표시할 수 있는 소진 예측 상태입니다.
+    pub forecast: ForecastView,
+}
+
+/// 사용량 행에 표시할 소진 예측의 지역화된 상태입니다.
+///
+/// 계산 엔진의 결과를 UI 렌더러에 노출하지 않고, 애플리케이션 계층이 만든 안전한 한 줄
+/// 문구와 상태만 전달합니다. `line`은 작업 표시줄 상세 툴팁에 추가할 때 사용합니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ForecastView {
+    /// 예측을 표시하지 않는 상태입니다.
+    Hidden,
+    /// 아직 표본을 수집 중인 상태입니다.
+    Collecting { line: String },
+    /// 관측 활동이 부족해 소진 시각을 계산할 수 없는 상태입니다.
+    InsufficientActivity { line: String },
+    /// 소진 예측을 표시할 수 있는 상태입니다.
+    ForecastAvailable { line: String },
+    /// 현재 사용량이 한도에 도달한 상태입니다.
+    AlreadyExhausted { line: String },
+    /// 마지막 표본이 오래되어 예측을 숨기거나 상태만 표시하는 상태입니다.
+    Stale { line: String },
+    /// 표본 검증에 실패해 예측할 수 없는 상태입니다.
+    Invalid { line: String },
+}
+
+impl ForecastView {
+    /// 툴팁에 추가할 지역화 문구를 반환합니다.
+    pub fn line(&self) -> Option<&str> {
+        match self {
+            Self::Hidden => None,
+            Self::Collecting { line }
+            | Self::InsufficientActivity { line }
+            | Self::ForecastAvailable { line }
+            | Self::AlreadyExhausted { line }
+            | Self::Stale { line }
+            | Self::Invalid { line } => Some(line),
+        }
+    }
 }
 
 /// 프로필 목록에서 사용량 진행 상태의 표시 색상을 선택하는 기준입니다.

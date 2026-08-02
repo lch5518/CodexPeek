@@ -7,7 +7,7 @@ use std::{
     path::PathBuf,
     sync::Arc,
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::{
@@ -20,18 +20,18 @@ use crate::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, profile_taskbar_tooltip, resolve_windows_language, taskbar,
         time::local_reset_time,
-        LaunchMode, ProfileUsageStatus, UiAction, UiBackend, UiSettings, UsageProfileView,
-        UsageRowView, WidgetDataState, WidgetViewModel,
+        ForecastView, LaunchMode, ProfileUsageStatus, UiAction, UiBackend, UiSettings,
+        UsageProfileView, UsageRowView, WidgetDataState, WidgetViewModel,
     },
     AsyncDiagnosticWriter, CorrelatedProfileSettingsEvent, DiagnosticCode, DiagnosticLogger,
-    Language, LanguagePreference, LocalizationKey, NativeProfileFileSystem, PollSnapshot,
-    PollTrigger, ProfileDiagnosticRun, ProfileDiagnosticSnapshot, ProfileExecutionContext,
-    ProfilePollEvent, ProfilePollingService, ProfileSettingsMutation, ProfileSettingsOperation,
-    ProfileSettingsRequestId, ProfileSettingsService, ProfileValidationError, ResetCredits,
-    SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckNotice,
-    UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
-    UpdateUserAction, UreqHttpClient, UsageError, UsageForecastService, UsageHistoryStore,
-    UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
+    ForecastResult, Language, LanguagePreference, LocalizationKey, NativeProfileFileSystem,
+    PollSnapshot, PollTrigger, ProfileDiagnosticRun, ProfileDiagnosticSnapshot,
+    ProfileExecutionContext, ProfilePollEvent, ProfilePollingService, ProfileSettingsMutation,
+    ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService,
+    ProfileValidationError, ResetCredits, SafeDiagnostic, Settings, SettingsStore,
+    UpdateCheckIntent, UpdateCheckNotice, UpdateCheckStart, UpdateChecker, UpdatePresentation,
+    UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError, UsageForecastService,
+    UsageHistoryStore, UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -884,16 +884,44 @@ impl UiBackend for AppRuntime {
             .and_then(|time| now.duration_since(time).ok())
             .map(|duration| last_success_text(duration.as_secs(), language))
             .unwrap_or_default();
+        let primary_forecast = forecast_view(
+            self.usage_forecast()
+                .forecast_at(selected, WindowKind::Primary, now),
+            settings.usage_forecast_enabled,
+            now,
+            language,
+        );
+        let secondary_forecast = forecast_view(
+            self.usage_forecast()
+                .forecast_at(selected, WindowKind::Secondary, now),
+            settings.usage_forecast_enabled,
+            now,
+            language,
+        );
         let primary = snapshot
             .usage
             .as_ref()
             .and_then(|usage| usage.primary.as_ref())
-            .map(|window| row_view(window, language, settings.show_remaining_percent));
+            .map(|window| {
+                row_view_with_forecast(
+                    window,
+                    language,
+                    settings.show_remaining_percent,
+                    primary_forecast.clone(),
+                )
+            });
         let secondary = snapshot
             .usage
             .as_ref()
             .and_then(|usage| usage.secondary.as_ref())
-            .map(|window| row_view(window, language, settings.show_remaining_percent));
+            .map(|window| {
+                row_view_with_forecast(
+                    window,
+                    language,
+                    settings.show_remaining_percent,
+                    secondary_forecast.clone(),
+                )
+            });
         let weekly = secondary.as_ref().or(primary.as_ref());
         let reset_credits_text = snapshot
             .usage
@@ -907,8 +935,16 @@ impl UiBackend for AppRuntime {
             reset_credits_text.as_deref(),
         );
         let usage_profile_label = selected_usage_profile_label(&settings, language);
-        let taskbar_tooltip =
-            profile_taskbar_tooltip(&usage_profile_label, &taskbar.tooltip, language);
+        let taskbar_tooltip = profile_taskbar_tooltip(
+            &usage_profile_label,
+            &append_forecast_tooltip(
+                &taskbar.tooltip,
+                primary.as_ref(),
+                secondary.as_ref(),
+                language,
+            ),
+            language,
+        );
         let data_state = data_state_for_snapshot(&snapshot, runtime_login_required);
         WidgetViewModel {
             usage_profile_label,
@@ -1367,6 +1403,7 @@ fn status_with_update(
     usage_status
 }
 
+#[allow(dead_code)]
 fn row_view(window: &UsageWindow, language: Language, show_remaining: bool) -> UsageRowView {
     let reset_time = window
         .resets_at
@@ -1374,11 +1411,40 @@ fn row_view(window: &UsageWindow, language: Language, show_remaining: bool) -> U
     row_view_with_reset_time(window, language, show_remaining, reset_time)
 }
 
+#[allow(dead_code)]
 fn row_view_with_reset_time(
     window: &UsageWindow,
     language: Language,
     show_remaining: bool,
     reset_time: Option<ResetDateTime>,
+) -> UsageRowView {
+    row_view_with_reset_time_and_forecast(
+        window,
+        language,
+        show_remaining,
+        reset_time,
+        ForecastView::Hidden,
+    )
+}
+
+fn row_view_with_forecast(
+    window: &UsageWindow,
+    language: Language,
+    show_remaining: bool,
+    forecast: ForecastView,
+) -> UsageRowView {
+    let reset_time = window
+        .resets_at
+        .and_then(|reset_at| local_reset_time(reset_at).ok());
+    row_view_with_reset_time_and_forecast(window, language, show_remaining, reset_time, forecast)
+}
+
+fn row_view_with_reset_time_and_forecast(
+    window: &UsageWindow,
+    language: Language,
+    show_remaining: bool,
+    reset_time: Option<ResetDateTime>,
+    forecast: ForecastView,
 ) -> UsageRowView {
     let display_percent = if show_remaining {
         (100.0 - window.used_percent).max(0.0)
@@ -1394,7 +1460,177 @@ fn row_view_with_reset_time(
             .map(|value| value.localized_label(language))
             .unwrap_or_else(|| reset_unavailable_label(language).to_owned()),
         level: window.level(),
+        forecast,
     }
+}
+
+/// 순수 예측 결과를 UI가 그대로 렌더링할 수 있는 지역화 상태로 변환합니다.
+///
+/// `enabled`가 거짓이면 저장된 결과와 무관하게 숨김 상태를 반환합니다. 시간은 호출자가
+/// 주입한 `now`와 계산된 소진 시각의 차이만 사용하며, 소수 단위는 사용자에게 노출하지
+/// 않습니다.
+fn forecast_view(
+    result: Option<ForecastResult>,
+    enabled: bool,
+    now: SystemTime,
+    language: Language,
+) -> ForecastView {
+    if !enabled {
+        return ForecastView::Hidden;
+    }
+    match result {
+        None => collecting_forecast_view(0, language),
+        Some(ForecastResult::Collecting { sample_count, .. }) => {
+            collecting_forecast_view(sample_count, language)
+        }
+        Some(ForecastResult::InsufficientActivity) => ForecastView::InsufficientActivity {
+            line: localized_text(LocalizationKey::UsageForecastInsufficientActivity, language)
+                .to_owned(),
+        },
+        Some(ForecastResult::AlreadyExhausted) => ForecastView::AlreadyExhausted {
+            line: localized_text(LocalizationKey::UsageForecastExhausted, language).to_owned(),
+        },
+        Some(ForecastResult::Stale) => ForecastView::Stale {
+            line: localized_text(LocalizationKey::UsageForecastStale, language).to_owned(),
+        },
+        Some(ForecastResult::Invalid) => ForecastView::Invalid {
+            line: localized_text(LocalizationKey::UsageForecastInvalid, language).to_owned(),
+        },
+        Some(ForecastResult::ForecastAvailable(forecast)) => {
+            available_forecast_view(&forecast, now, language)
+        }
+    }
+}
+
+fn collecting_forecast_view(sample_count: usize, language: Language) -> ForecastView {
+    let line = localized_text(LocalizationKey::UsageForecastCollecting, language)
+        .replace("{count}", &sample_count.to_string())
+        .replace(
+            "{required}",
+            &crate::ForecastPolicy::MINIMUM_SAMPLES.to_string(),
+        );
+    ForecastView::Collecting { line }
+}
+
+fn available_forecast_view(
+    forecast: &crate::Forecast,
+    now: SystemTime,
+    language: Language,
+) -> ForecastView {
+    let Some(remaining) = forecast.exhaustion_at.duration_since(now).ok() else {
+        return ForecastView::Stale {
+            line: localized_text(LocalizationKey::UsageForecastStale, language).to_owned(),
+        };
+    };
+    let duration = forecast_duration_text(remaining, language);
+    let Some(duration) = duration else {
+        let long_term = localized_text(LocalizationKey::UsageForecastLongTerm, language).to_owned();
+        let line = if forecast.exhausts_before_reset == Some(false) {
+            forecast
+                .expected_remaining_percent_at_reset
+                .filter(|value| value.is_finite())
+                .map(|value| {
+                    let reset = localized_text(LocalizationKey::UsageForecastAtReset, language)
+                        .replace("{percent}", &format_percent(value));
+                    format!("{long_term} · {reset}")
+                })
+                .unwrap_or(long_term)
+        } else {
+            long_term
+        };
+        return ForecastView::ForecastAvailable { line };
+    };
+    let estimate = match forecast.exhausts_before_reset {
+        Some(true) => localized_text(LocalizationKey::UsageForecastBeforeReset, language)
+            .replace("{duration}", &duration),
+        _ => localized_text(LocalizationKey::UsageForecastEstimate, language)
+            .replace("{duration}", &duration),
+    };
+    let line = if forecast.exhausts_before_reset == Some(false) {
+        forecast
+            .expected_remaining_percent_at_reset
+            .filter(|value| value.is_finite())
+            .map(|value| {
+                let reset = localized_text(LocalizationKey::UsageForecastAtReset, language)
+                    .replace("{percent}", &format_percent(value));
+                format!("{estimate} · {reset}")
+            })
+            .unwrap_or(estimate)
+    } else {
+        estimate
+    };
+    ForecastView::ForecastAvailable { line }
+}
+
+fn format_percent(value: f64) -> String {
+    format!("{:.0}", value.clamp(0.0, 100.0))
+}
+
+/// 사용자에게 의미 있는 정밀도로 남은 기간을 반올림합니다.
+///
+/// 7일 이상은 숫자 대신 장기 예측 상태를 반환합니다. 그 외 단위는 가장 가까운 정수로
+/// 반올림하고 0보다 큰 기간이 0으로 보이지 않도록 최소 1을 적용합니다.
+fn forecast_duration_text(duration: Duration, language: Language) -> Option<String> {
+    let seconds = duration.as_secs();
+    if seconds >= 7 * 24 * 60 * 60 {
+        return None;
+    }
+    let (value, key) = if seconds < 60 * 60 {
+        (
+            ((seconds + 30) / 60).max(1),
+            if ((seconds + 30) / 60).max(1) == 1 {
+                LocalizationKey::UsageForecastMinuteOne
+            } else {
+                LocalizationKey::UsageForecastMinuteOther
+            },
+        )
+    } else if seconds < 24 * 60 * 60 {
+        (
+            ((seconds + 1_800) / 3_600).max(1),
+            if ((seconds + 1_800) / 3_600).max(1) == 1 {
+                LocalizationKey::UsageForecastHourOne
+            } else {
+                LocalizationKey::UsageForecastHourOther
+            },
+        )
+    } else {
+        (
+            ((seconds + 43_200) / 86_400).max(1),
+            if ((seconds + 43_200) / 86_400).max(1) == 1 {
+                LocalizationKey::UsageForecastDayOne
+            } else {
+                LocalizationKey::UsageForecastDayOther
+            },
+        )
+    };
+    Some(format!("{value} {}", localized_text(key, language)))
+}
+
+fn append_forecast_tooltip(
+    tooltip: &str,
+    primary: Option<&UsageRowView>,
+    secondary: Option<&UsageRowView>,
+    language: Language,
+) -> String {
+    let mut result = tooltip.to_owned();
+    let mut lines = Vec::new();
+    if let Some(line) = primary.and_then(|row| row.forecast.line()) {
+        lines.push(format!(
+            "{}: {line}",
+            localized_text(LocalizationKey::PrimaryWindowLabel, language)
+        ));
+    }
+    if let Some(line) = secondary.and_then(|row| row.forecast.line()) {
+        lines.push(format!(
+            "{}: {line}",
+            localized_text(LocalizationKey::SecondaryWindowLabel, language)
+        ));
+    }
+    if !lines.is_empty() {
+        result.push('\n');
+        result.push_str(&lines.join("\n"));
+    }
+    result
 }
 
 struct TaskbarCopy {
@@ -2221,24 +2457,29 @@ fn safe_path_text(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
 
     use super::{
-        data_state_for_snapshot, diagnostic_status, last_success_text, pass_fail,
+        append_forecast_tooltip, data_state_for_snapshot, diagnostic_status,
+        forecast_duration_text, forecast_view, last_success_text, pass_fail,
         profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
         proxy_presence, row_view, row_view_with_reset_time, status_with_update, taskbar_copy,
         taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
-    use crate::windows::{ProfileUsageStatus, UiAction, UiBackend, WidgetDataState};
+    use crate::windows::{ForecastView, ProfileUsageStatus, UiAction, UiBackend, WidgetDataState};
     use crate::{
         domain::ResetDateTime, windows::UsageRowView, AsyncDiagnosticWriter, AvailableUpdate,
-        CodexUsage, CorrelatedProfileSettingsEvent, DiagnosticLogger, Language, LanguagePreference,
-        NativeProfileFileSystem, PollSnapshot, ProfileExecutionContext, ProfilePollingService,
-        ProfileRuntimeState, ProfileSettingsOperation, ProfileSettingsRequestId,
-        ProfileSettingsService, ResetCredits, Settings, SettingsStore, UpdateCheckNotice,
-        UpdatePresentation, UpdatePresentationStatus, UsageError, UsageForecastService,
-        UsageHistoryStore, UsageLevel, UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
+        CodexUsage, CorrelatedProfileSettingsEvent, DiagnosticLogger, Forecast, ForecastQuality,
+        ForecastResult, Language, LanguagePreference, NativeProfileFileSystem, PollSnapshot,
+        ProfileExecutionContext, ProfilePollingService, ProfileRuntimeState,
+        ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService, ResetCredits,
+        Settings, SettingsStore, UpdateCheckNotice, UpdatePresentation, UpdatePresentationStatus,
+        UsageError, UsageForecastService, UsageHistoryStore, UsageLevel, UsageProfileId,
+        UsageProfileRoot, UsageWindow, WindowKind,
     };
     const ALL_LANGUAGES: [Language; 12] = [
         Language::Korean,
@@ -2605,6 +2846,7 @@ mod tests {
             percent_text: "73%".to_owned(),
             reset_text: "2026-07-27 03:00".to_owned(),
             level: UsageLevel::Caution,
+            forecast: ForecastView::Hidden,
         };
         let summary = DiagnosticSummary {
             settings_valid: true,
@@ -2695,6 +2937,7 @@ mod tests {
             percent_text: "8%".to_owned(),
             reset_text: "2026-07-27 (월) 03:00".to_owned(),
             level: UsageLevel::Stable,
+            forecast: ForecastView::Hidden,
         };
 
         let korean = taskbar_copy(
@@ -2758,6 +3001,7 @@ mod tests {
             percent_text: "8%".to_owned(),
             reset_text: "2026-07-27 (Mon) 03:00".to_owned(),
             level: UsageLevel::Stable,
+            forecast: ForecastView::Hidden,
         };
 
         let korean = taskbar_copy(
@@ -2794,6 +3038,7 @@ mod tests {
             percent_text: "125%".to_owned(),
             reset_text: "1d".to_owned(),
             level: UsageLevel::Limited,
+            forecast: ForecastView::Hidden,
         };
 
         let copy = taskbar_copy(Some(&row), Language::English, "Critical", true, None);
@@ -2842,5 +3087,157 @@ mod tests {
 
         let unavailable = row_view_with_reset_time(&window, Language::English, false, None);
         assert_eq!(unavailable.reset_text, "Reset unavailable");
+    }
+
+    fn sample_forecast(
+        now: SystemTime,
+        seconds_until_exhaustion: u64,
+        before_reset: Option<bool>,
+        remaining_at_reset: Option<f64>,
+    ) -> Forecast {
+        Forecast {
+            hourly_rate: 4.0,
+            exhaustion_at: now + Duration::from_secs(seconds_until_exhaustion),
+            exhausts_before_reset: before_reset,
+            expected_used_percent_at_reset: remaining_at_reset.map(|value| 100.0 - value),
+            expected_remaining_percent_at_reset: remaining_at_reset,
+            sample_count: 8,
+            observation_span: Duration::from_secs(2 * 60 * 60),
+            quality: ForecastQuality::High,
+        }
+    }
+
+    #[test]
+    fn forecast_view_rounds_duration_and_localizes_state() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let result = forecast_view(
+            Some(ForecastResult::ForecastAvailable(sample_forecast(
+                now,
+                14 * 60 * 60 + 20 * 60,
+                None,
+                None,
+            ))),
+            true,
+            now,
+            Language::English,
+        );
+        let ForecastView::ForecastAvailable { line } = result else {
+            panic!("expected available forecast");
+        };
+        assert!(line.contains("about 14 hours"), "{line}");
+
+        let long_term = forecast_view(
+            Some(ForecastResult::ForecastAvailable(sample_forecast(
+                now,
+                7 * 24 * 60 * 60,
+                None,
+                None,
+            ))),
+            true,
+            now,
+            Language::English,
+        );
+        assert_eq!(
+            long_term.line(),
+            Some("Exhaustion is estimated to be at least 7 days away")
+        );
+    }
+
+    #[test]
+    fn forecast_view_shows_collecting_reset_risk_and_remaining_states() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let collecting = forecast_view(None, true, now, Language::Korean);
+        assert_eq!(collecting.line(), Some("예측 데이터 수집 중 · 0/3"));
+
+        let risk = forecast_view(
+            Some(ForecastResult::ForecastAvailable(sample_forecast(
+                now,
+                2 * 60 * 60,
+                Some(true),
+                Some(0.0),
+            ))),
+            true,
+            now,
+            Language::English,
+        );
+        assert!(risk
+            .line()
+            .is_some_and(|line| line.contains("Likely exhausted before reset")));
+
+        let remaining = forecast_view(
+            Some(ForecastResult::ForecastAvailable(sample_forecast(
+                now,
+                2 * 24 * 60 * 60,
+                Some(false),
+                Some(21.4),
+            ))),
+            true,
+            now,
+            Language::English,
+        );
+        assert!(remaining
+            .line()
+            .is_some_and(|line| line.contains("About 21% remaining at reset")));
+
+        assert!(matches!(
+            forecast_view(Some(ForecastResult::Stale), true, now, Language::English),
+            ForecastView::Stale { .. }
+        ));
+        assert_eq!(
+            forecast_view(Some(ForecastResult::Invalid), true, now, Language::English).line(),
+            Some("Forecast data is unavailable")
+        );
+        assert_eq!(
+            forecast_view(
+                Some(ForecastResult::AlreadyExhausted),
+                true,
+                now,
+                Language::English
+            )
+            .line(),
+            Some("Limit exhausted")
+        );
+    }
+
+    #[test]
+    fn forecast_tooltip_lines_keep_primary_before_secondary() {
+        let primary = UsageRowView {
+            label: "5h".to_owned(),
+            used_percent: 50.0,
+            display_percent: 50.0,
+            percent_text: "50%".to_owned(),
+            reset_text: "tomorrow".to_owned(),
+            level: UsageLevel::Normal,
+            forecast: ForecastView::ForecastAvailable {
+                line: "primary estimate".to_owned(),
+            },
+        };
+        let secondary = UsageRowView {
+            forecast: ForecastView::Collecting {
+                line: "secondary collecting".to_owned(),
+            },
+            ..primary.clone()
+        };
+        let tooltip = append_forecast_tooltip(
+            "Codex usage\nStatus: Polling",
+            Some(&primary),
+            Some(&secondary),
+            Language::English,
+        );
+        assert!(tooltip
+            .ends_with("Primary window: primary estimate\nSecondary window: secondary collecting"));
+        assert!(
+            tooltip.find("Primary window").unwrap() < tooltip.find("Secondary window").unwrap()
+        );
+    }
+
+    #[test]
+    fn forecast_duration_uses_localized_plural_units() {
+        for language in ALL_LANGUAGES {
+            let singular = forecast_duration_text(Duration::from_secs(60), language).unwrap();
+            let plural = forecast_duration_text(Duration::from_secs(2 * 60), language).unwrap();
+            assert!(singular.contains('1'), "{language:?}: {singular}");
+            assert!(plural.contains('2'), "{language:?}: {plural}");
+        }
     }
 }
