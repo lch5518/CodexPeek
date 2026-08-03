@@ -10,7 +10,7 @@ use windows::{
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND,
-            LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
+            LPARAM, LRESULT, POINT, RECT, RPC_E_CHANGED_MODE, SIZE, WPARAM,
         },
         Globalization::{GetUserDefaultLocaleName, GetUserDefaultUILanguage},
         Graphics::Gdi::{
@@ -24,6 +24,9 @@ use windows::{
             PAINTSTRUCT, PROOF_QUALITY, TRANSPARENT,
         },
         System::{
+            Com::{
+                CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+            },
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
             LibraryLoader::GetModuleHandleW,
             Threading::CreateMutexW,
@@ -1835,18 +1838,64 @@ pub(super) unsafe fn open_validated_login_page(url: &str) -> io::Result<()> {
 
 unsafe fn open_browser_url(url: &str) -> io::Result<()> {
     let url: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
-    let result = ShellExecuteW(
-        None,
-        w!("open"),
-        PCWSTR(url.as_ptr()),
-        PCWSTR::null(),
-        PCWSTR::null(),
-        SW_SHOWNORMAL,
-    );
-    if result.0 as isize <= 32 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(())
+    run_with_shell_com(|| {
+        let result = ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(url.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+        if result.0 as isize <= 32 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    })
+}
+
+/// 셸 URL 실행 전에 호출 스레드의 COM 아파트를 준비합니다.
+///
+/// 로그인 URL은 프로필 폴링 워커에서 실행되므로 UI 스레드의 COM 초기화 상태를 기대할 수
+/// 없습니다. 이미 다른 모델로 초기화된 스레드는 `RPC_E_CHANGED_MODE`를 허용하고, 이 함수가
+/// 직접 초기화한 경우에만 반환 시 `CoUninitialize`를 호출합니다.
+fn run_with_shell_com<F, T>(operation: F) -> io::Result<T>
+where
+    F: FnOnce() -> io::Result<T>,
+{
+    let _apartment = ShellComApartment::initialize()?;
+    operation()
+}
+
+struct ShellComApartment {
+    uninitialize: bool,
+}
+
+impl ShellComApartment {
+    fn initialize() -> io::Result<Self> {
+        // SAFETY: COM initialization is scoped to the current caller thread and balanced by Drop
+        // when this instance owns the initialization reference.
+        let initialized =
+            unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+        if initialized.is_ok() {
+            Ok(Self { uninitialize: true })
+        } else if initialized == RPC_E_CHANGED_MODE {
+            Ok(Self {
+                uninitialize: false,
+            })
+        } else {
+            Err(io::Error::other("Windows shell initialization failed"))
+        }
+    }
+}
+
+impl Drop for ShellComApartment {
+    fn drop(&mut self) {
+        if self.uninitialize {
+            // SAFETY: this instance only sets `uninitialize` after a successful matching init.
+            unsafe { CoUninitialize() };
+        }
     }
 }
 
@@ -1963,11 +2012,12 @@ mod tests {
 
     use super::{
         compact_percent_text, confirm_usage_forecast_clear_with_presenter, glass_noise,
-        rounded_material_alpha, should_open_tray_menu, show_diagnostic_summary_with_presenter,
-        show_profile_dialog_error_with_presenter, show_update_notice_with_presenter,
-        taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
-        update_dialog_style, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
-        TaskbarRisk, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
+        rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
+        show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
+        show_update_notice_with_presenter, taskbar_palette, update_dialog_in_progress,
+        update_dialog_opens_release, update_dialog_style, NativeMessagePresenter,
+        TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, UpdateDialogGuard, NIN_SELECT,
+        WM_CONTEXTMENU,
     };
     use crate::{
         windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
@@ -2180,6 +2230,11 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn browser_shell_operation_runs_inside_a_com_apartment() {
+        assert!(run_with_shell_com(|| Ok::<_, io::Error>(true)).unwrap());
     }
 
     impl PresentedNativeMessage {
