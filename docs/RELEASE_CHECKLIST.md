@@ -74,7 +74,11 @@ instead of overwriting an existing release or asset.
 
 ### User-facing release note
 
-This release adds an optional local usage-exhaustion estimate. When enabled (the default),
+This release fixes two Windows integration failures: update checks now use the configured native
+TLS provider instead of terminating the app, and browser sign-in initializes COM before opening
+the authorization page, including when the default account is logged out.
+
+It also includes the optional local usage-exhaustion estimate. When enabled (the default),
 CodexPeek keeps only successful usage percentages and reset/observation timestamps for each
 internal profile and rate-limit window in `%APPDATA%\CodexPeek\usage-history.json`. The estimate
 is rounded and is not a guarantee of OpenAI's limit policy; it is never uploaded or synchronized.
@@ -209,6 +213,8 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
       verify CodexPeek makes no identity claim and the UI remains safe and understandable
 - [ ] With a different ChatGPT account already active in the browser, start profile login and
       verify the account-confirmation notice appears before the browser opens
+- [ ] With the default system profile logged out, start login from the tray and verify the
+      authorization page opens in the browser, authentication completes, and polling resumes
 - [ ] Complete browser login and verify the new profile is polled and selected
 - [ ] Cancel browser login, retry it, and retry after an offline failure; verify the profile
       remains in **Login required** state until login succeeds or the user deletes it
