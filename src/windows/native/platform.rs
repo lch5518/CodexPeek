@@ -1433,6 +1433,20 @@ fn glass_noise(x: i32, y: i32) -> i32 {
     hash.rem_euclid(5) - 2
 }
 
+const MATERIAL_HIT_TEST_ALPHA: u8 = 1;
+
+fn material_surface_alpha(hover: u8, coverage: u8) -> u8 {
+    if coverage == 0 {
+        return 0;
+    }
+
+    // Layered-window pixels with zero alpha are excluded from hit testing. Keep the visually
+    // transparent material at one alpha step so its complete rounded surface receives hover.
+    let hover_alpha = ((u16::from(hover) * 28) / 255) as u8;
+    ((u16::from(hover_alpha) * u16::from(coverage)) / 255).max(u16::from(MATERIAL_HIT_TEST_ALPHA))
+        as u8
+}
+
 fn apply_glass_alpha(
     pixels: &mut [u32],
     width: i32,
@@ -1443,7 +1457,6 @@ fn apply_glass_alpha(
 ) {
     // 투명한 기본 재질은 실제 작업표시줄 색과 배경 효과를 그대로 통과시킵니다.
     // 마우스를 올렸을 때만 매우 옅은 표면을 추가해 클릭 영역을 드러냅니다.
-    let base_alpha = ((u16::from(hover) * 28) / 255) as u8;
     let radius = logical_to_physical(10, dpi).min(width.min(height) / 2);
     for y in 0..height {
         for x in 0..width {
@@ -1456,7 +1469,7 @@ fn apply_glass_alpha(
             }
             let rgb = pixel & 0x00ff_ffff;
             let alpha = if rgb == material_rgb {
-                ((u16::from(base_alpha) * u16::from(coverage)) / 255) as u8
+                material_surface_alpha(hover, coverage)
             } else {
                 ((235_u16 * u16::from(coverage)) / 255) as u8
             };
@@ -2012,7 +2025,7 @@ mod tests {
 
     use super::{
         compact_percent_text, confirm_usage_forecast_clear_with_presenter, glass_noise,
-        rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
+        material_surface_alpha, rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
         show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
         show_update_notice_with_presenter, taskbar_palette, update_dialog_in_progress,
         update_dialog_opens_release, update_dialog_style, NativeMessagePresenter,
@@ -2320,6 +2333,14 @@ mod tests {
                 assert!((-2..=2).contains(&first));
             }
         }
+    }
+
+    #[test]
+    fn transparent_material_keeps_the_whole_widget_hit_testable() {
+        assert_eq!(material_surface_alpha(0, 0), 0);
+        assert_eq!(material_surface_alpha(0, 1), 1);
+        assert_eq!(material_surface_alpha(0, 255), 1);
+        assert_eq!(material_surface_alpha(255, 255), 28);
     }
 
     #[test]
