@@ -426,18 +426,7 @@ unsafe extern "system" fn owner_proc(
         TRAY_CALLBACK => {
             let event = lparam.0 as u32 & 0xffff;
             if should_open_tray_menu(event) {
-                let snapshot = (*pointer).backend.snapshot();
-                let current_settings = (*pointer).backend.settings();
-                (*pointer).settings = current_settings;
-                let (owner, settings) = {
-                    let state = &*pointer;
-                    (state.owner, state.settings.clone())
-                };
-                let action =
-                    TrayIcon::show_menu(owner, &settings, snapshot.reset_credits_text.as_deref());
-                if let Some(action) = action {
-                    dispatch_action(pointer, action);
-                }
+                show_settings_menu(pointer);
             }
             LRESULT(0)
         }
@@ -455,6 +444,27 @@ unsafe extern "system" fn owner_proc(
 
 const fn should_open_tray_menu(event: u32) -> bool {
     matches!(event, WM_CONTEXTMENU | NIN_SELECT)
+}
+
+unsafe fn show_settings_menu(pointer: *mut NativeState<'_>) {
+    if update_dialog_in_progress() {
+        return;
+    }
+
+    let snapshot = (*pointer).backend.snapshot();
+    (*pointer).settings = (*pointer).backend.settings();
+    let (owner, settings) = {
+        let state = &*pointer;
+        (state.owner, state.settings.clone())
+    };
+    let action = TrayIcon::show_menu(owner, &settings, snapshot.reset_credits_text.as_deref());
+    if let Some(action) = action {
+        dispatch_action(pointer, action);
+    }
+}
+
+const fn should_open_widget_menu(message: u32) -> bool {
+    message == WM_CONTEXTMENU
 }
 
 unsafe extern "system" fn widget_proc(
@@ -485,13 +495,18 @@ unsafe extern "system" fn widget_proc(
     if !matches!(
         message,
         WM_PAINT | WM_DPICHANGED | WM_CLOSE | WM_MOUSEMOVE | WM_MOUSELEAVE | WM_TIMER
-    ) {
+    ) && !should_open_widget_menu(message)
+    {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     if pointer.is_null() {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
     match message {
+        WM_CONTEXTMENU => {
+            show_settings_menu(pointer);
+            LRESULT(0)
+        }
         WM_MOUSEMOVE => {
             let Some(widget) = widget_slot(pointer, hwnd) else {
                 return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -2026,11 +2041,11 @@ mod tests {
     use super::{
         compact_percent_text, confirm_usage_forecast_clear_with_presenter, glass_noise,
         material_surface_alpha, rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
-        show_diagnostic_summary_with_presenter, show_profile_dialog_error_with_presenter,
-        show_update_notice_with_presenter, taskbar_palette, update_dialog_in_progress,
-        update_dialog_opens_release, update_dialog_style, NativeMessagePresenter,
-        TaskbarLayoutMode, TaskbarRefreshSchedule, TaskbarRisk, UpdateDialogGuard, NIN_SELECT,
-        WM_CONTEXTMENU,
+        should_open_widget_menu, show_diagnostic_summary_with_presenter,
+        show_profile_dialog_error_with_presenter, show_update_notice_with_presenter,
+        taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
+        update_dialog_style, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
+        TaskbarRisk, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
     use crate::{
         windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
@@ -2265,6 +2280,12 @@ mod tests {
         assert!(should_open_tray_menu(NIN_SELECT));
         assert!(!should_open_tray_menu(WM_RBUTTONUP));
         assert!(!should_open_tray_menu(WM_LBUTTONUP));
+    }
+
+    #[test]
+    fn widget_menu_uses_the_standard_context_menu_message() {
+        assert!(should_open_widget_menu(WM_CONTEXTMENU));
+        assert!(!should_open_widget_menu(NIN_SELECT));
     }
 
     #[test]
