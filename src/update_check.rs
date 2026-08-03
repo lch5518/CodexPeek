@@ -5,6 +5,7 @@ use std::{
 
 use semver::Version;
 use serde::Deserialize;
+use ureq::tls::{TlsConfig, TlsProvider};
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const USER_AGENT: &str = "CodexUsageMonitor/0.1 update-check";
@@ -57,11 +58,7 @@ impl ReleaseHttpClient for UreqHttpClient {
             return Err(UpdateCheckError::Network);
         }
         let max_bytes = u64::try_from(max_bytes).map_err(|_| UpdateCheckError::Network)?;
-        let config = ureq::Agent::config_builder()
-            .https_only(true)
-            .timeout_global(Some(timeout))
-            .user_agent(user_agent)
-            .build();
+        let config = release_agent_config(user_agent, timeout);
         let agent = ureq::Agent::new_with_config(config);
         let mut response = agent
             .get(url)
@@ -79,6 +76,19 @@ impl ReleaseHttpClient for UreqHttpClient {
         }
         Ok(HttpResponse { status, body })
     }
+}
+
+fn release_agent_config(user_agent: &str, timeout: Duration) -> ureq::config::Config {
+    ureq::Agent::config_builder()
+        .https_only(true)
+        .timeout_global(Some(timeout))
+        .user_agent(user_agent)
+        .tls_config(
+            TlsConfig::builder()
+                .provider(TlsProvider::NativeTls)
+                .build(),
+        )
+        .build()
 }
 
 /// 안전하게 표시할 새 버전 정보입니다.
@@ -418,4 +428,20 @@ fn valid_segment(value: &str) -> bool {
         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.')
         && value != "."
         && value != ".."
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use ureq::tls::TlsProvider;
+
+    use super::release_agent_config;
+
+    #[test]
+    fn release_agent_uses_the_compiled_native_tls_provider() {
+        let config = release_agent_config("CodexUsageMonitor/test", Duration::from_secs(1));
+
+        assert_eq!(config.tls_config().provider(), TlsProvider::NativeTls);
+    }
 }

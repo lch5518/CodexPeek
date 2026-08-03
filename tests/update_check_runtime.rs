@@ -1,5 +1,8 @@
 use std::{
+    io::{self, Write},
+    net::TcpListener,
     sync::Mutex,
+    thread,
     time::{Duration, SystemTime},
 };
 
@@ -429,4 +432,36 @@ fn production_http_client_refuses_non_https_before_network_io() {
         ),
         Err(UpdateCheckError::Network)
     );
+}
+
+#[test]
+fn production_http_client_maps_tls_handshake_failure_to_network_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let server = thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let _ = stream.write_all(b"not a TLS handshake");
+                    return;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::yield_now();
+                }
+                Err(_) => return,
+            }
+        }
+    });
+
+    let result = UreqHttpClient.get(
+        &format!("https://{address}/"),
+        "CodexUsageMonitor/test",
+        Duration::from_secs(1),
+        1024,
+    );
+    server.join().unwrap();
+
+    assert_eq!(result, Err(UpdateCheckError::Network));
 }
