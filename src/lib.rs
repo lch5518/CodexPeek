@@ -26,7 +26,8 @@ pub use diagnostics::{
 pub use domain::{CodexUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
 pub use errors::UsageError;
 pub use forecast::{
-    Forecast, ForecastCollectionReason, ForecastEngine, ForecastPolicy, ForecastQuality,
+    ConsumptionPaceAssessment, ConsumptionPaceLevel, ConsumptionPaceMetrics, Forecast,
+    ForecastAnalysis, ForecastCollectionReason, ForecastEngine, ForecastPolicy, ForecastQuality,
     ForecastResult,
 };
 pub use localization::{localized_text, Language, LocalizationKey};

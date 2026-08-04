@@ -79,6 +79,57 @@ pub enum ForecastQuality {
     High,
 }
 
+/// 다음 초기화까지 한도를 유지할 수 있는 속도와 비교한 소비 속도 단계입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConsumptionPaceLevel {
+    /// 현재 속도가 초기화 전 소진 속도의 절반보다 느립니다.
+    Comfortable,
+    /// 현재 속도로 초기화 전에는 버티지만 여유가 크지 않습니다.
+    Normal,
+    /// 현재 속도라면 초기화 전에 한도를 소진할 수 있습니다.
+    Fast,
+}
+
+/// 사용자가 소비 속도를 이해하는 데 필요한 검증된 관측 지표입니다.
+///
+/// 모든 비율은 app-server가 제공한 사용률에서 파생한 퍼센트 포인트이며 토큰 수나 계정 식별
+/// 정보는 포함하지 않습니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConsumptionPaceMetrics {
+    /// 초기화 전 소진 위험을 기준으로 한 소비 속도 단계입니다.
+    pub level: ConsumptionPaceLevel,
+    /// 현재 연속 관측 구간에서 계산에 사용한 표본 수입니다.
+    pub sample_count: usize,
+    /// 첫 표본부터 마지막 표본까지의 관측 시간입니다.
+    pub observation_span: Duration,
+    /// 관측 구간의 총 사용량 증가폭입니다.
+    pub total_rise: f64,
+    /// Theil-Sen 중앙 기울기로 계산한 시간당 소비율입니다.
+    pub hourly_rate: f64,
+    /// 현재 잔량을 다음 초기화까지 유지할 수 있는 최대 시간당 소비율입니다.
+    pub safe_hourly_rate: f64,
+    /// 현재 속도가 유지될 때 다음 초기화 시점에 남을 것으로 계산한 사용량입니다.
+    pub expected_remaining_percent_at_reset: f64,
+}
+
+/// 소비 속도 분석이 사용자에게 제공할 수 있는 상태입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConsumptionPaceAssessment {
+    /// 표본 수 또는 관측 시간이 부족해 속도를 더 측정해야 합니다.
+    Measuring {
+        /// 현재 연속 관측 구간의 표본 수입니다.
+        sample_count: usize,
+        /// 현재 연속 관측 구간의 관측 시간입니다.
+        observation_span: Duration,
+    },
+    /// 초기화 기준 소비 속도와 관측 지표를 계산했습니다.
+    Ready(ConsumptionPaceMetrics),
+    /// 현재 사용량이 이미 100% 이상입니다.
+    Exhausted,
+    /// 초기화 시각, 신선도 또는 입력 검증 문제로 속도를 판단할 수 없습니다.
+    Unavailable,
+}
+
 /// 계산 가능한 사용량 소진 예측입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Forecast {
@@ -124,6 +175,15 @@ pub enum ForecastResult {
     Invalid,
 }
 
+/// 동일한 정제 표본에서 계산한 소진 예측과 소비 속도 평가입니다.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForecastAnalysis {
+    /// 기존 정책을 그대로 적용한 소진 예측 결과입니다.
+    pub forecast: ForecastResult,
+    /// 다음 초기화 전 소진 위험을 기준으로 한 소비 속도 평가입니다.
+    pub pace: ConsumptionPaceAssessment,
+}
+
 /// 저장된 표본만으로 사용량 소진 시각을 계산하는 순수 엔진입니다.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ForecastEngine;
@@ -142,17 +202,45 @@ impl ForecastEngine {
         stale: bool,
         policy: &ForecastPolicy,
     ) -> ForecastResult {
+        Self::analyze(samples, current_window, last_success_at, now, stale, policy).forecast
+    }
+
+    /// 현재 창과 같은 프로필·창·초기화 구간의 표본에서 예측과 소비 속도를 함께 계산합니다.
+    ///
+    /// 표본 정제와 기울기 계산은 한 번만 수행합니다. 기존 소진 예측은 v1 최소 상승량과 속도
+    /// 기준을 유지하지만, 소비 속도 평가는 표본 3개와 30분 관측 후 낮은 활동도 `Comfortable`로
+    /// 분류합니다. 유효하지 않거나 오래된 입력은 두 결과 모두 안전한 비가용 상태로 반환합니다.
+    pub fn analyze(
+        samples: &[UsageSample],
+        current_window: &UsageWindow,
+        last_success_at: SystemTime,
+        now: SystemTime,
+        stale: bool,
+        policy: &ForecastPolicy,
+    ) -> ForecastAnalysis {
         if !valid_current_window(current_window) || after_epoch(now).is_none() {
-            return ForecastResult::Invalid;
+            return ForecastAnalysis {
+                forecast: ForecastResult::Invalid,
+                pace: ConsumptionPaceAssessment::Unavailable,
+            };
         }
         if stale || is_stale(last_success_at, now, *policy) {
-            return ForecastResult::Stale;
+            return ForecastAnalysis {
+                forecast: ForecastResult::Stale,
+                pace: ConsumptionPaceAssessment::Unavailable,
+            };
         }
         if current_window.used_percent >= 100.0 {
-            return ForecastResult::AlreadyExhausted;
+            return ForecastAnalysis {
+                forecast: ForecastResult::AlreadyExhausted,
+                pace: ConsumptionPaceAssessment::Exhausted,
+            };
         }
         if !single_stream(samples, current_window) {
-            return ForecastResult::Invalid;
+            return ForecastAnalysis {
+                forecast: ForecastResult::Invalid,
+                pace: ConsumptionPaceAssessment::Unavailable,
+            };
         }
 
         let mut selected: Vec<_> = samples
@@ -181,65 +269,156 @@ impl ForecastEngine {
         let segment = current_segment(selected);
         let sample_count = segment.len();
         let observation_span = span(&segment);
-        if sample_count < ForecastPolicy::MINIMUM_SAMPLES {
-            return ForecastResult::Collecting {
-                sample_count,
-                observation_span,
-                reason: ForecastCollectionReason::TooFewSamples,
-            };
-        }
-        if observation_span < ForecastPolicy::MINIMUM_OBSERVATION_SPAN {
-            return ForecastResult::Collecting {
-                sample_count,
-                observation_span,
-                reason: ForecastCollectionReason::ObservationSpanTooShort,
-            };
-        }
-
         let rise = segment
             .last()
             .map(|last| last.used_percent - segment[0].used_percent)
             .unwrap_or_default();
-        if !rise.is_finite() || rise < ForecastPolicy::MINIMUM_TOTAL_RISE {
-            return ForecastResult::InsufficientActivity;
-        }
-        let Some(hourly_rate) = theil_sen_hourly_rate(&segment) else {
-            return ForecastResult::InsufficientActivity;
+        let hourly_rate = if sample_count >= ForecastPolicy::MINIMUM_SAMPLES
+            && observation_span >= ForecastPolicy::MINIMUM_OBSERVATION_SPAN
+        {
+            theil_sen_hourly_rate(&segment)
+        } else {
+            None
         };
-        if !hourly_rate.is_finite() || hourly_rate < ForecastPolicy::MINIMUM_HOURLY_RATE {
-            return ForecastResult::InsufficientActivity;
-        }
-
-        let seconds_to_exhaustion = (100.0 - current_window.used_percent) * 3_600.0 / hourly_rate;
-        let Some(until_exhaustion) = duration_from_seconds(seconds_to_exhaustion) else {
-            return ForecastResult::Invalid;
-        };
-        let Some(exhaustion_at) = now.checked_add(until_exhaustion) else {
-            return ForecastResult::Invalid;
-        };
-        let (
-            exhausts_before_reset,
-            expected_used_percent_at_reset,
-            expected_remaining_percent_at_reset,
-        ) = reset_estimate(
+        let pace = consumption_pace(
             current_window.resets_at,
             now,
             current_window.used_percent,
-            hourly_rate,
-            exhaustion_at,
-        );
-
-        ForecastResult::ForecastAvailable(Forecast {
-            hourly_rate,
-            exhaustion_at,
-            exhausts_before_reset,
-            expected_used_percent_at_reset,
-            expected_remaining_percent_at_reset,
             sample_count,
             observation_span,
-            quality: quality(sample_count, observation_span, rise),
-        })
+            rise,
+            hourly_rate,
+        );
+        let forecast = forecast_result(
+            current_window,
+            now,
+            sample_count,
+            observation_span,
+            rise,
+            hourly_rate,
+        );
+
+        ForecastAnalysis { forecast, pace }
     }
+}
+
+fn consumption_pace(
+    reset: Option<SystemTime>,
+    now: SystemTime,
+    current_used_percent: f64,
+    sample_count: usize,
+    observation_span: Duration,
+    rise: f64,
+    hourly_rate: Option<f64>,
+) -> ConsumptionPaceAssessment {
+    let Some(reset) = reset.filter(|reset| *reset > now) else {
+        return ConsumptionPaceAssessment::Unavailable;
+    };
+    if sample_count < ForecastPolicy::MINIMUM_SAMPLES
+        || observation_span < ForecastPolicy::MINIMUM_OBSERVATION_SPAN
+    {
+        return ConsumptionPaceAssessment::Measuring {
+            sample_count,
+            observation_span,
+        };
+    }
+    let Some(hourly_rate) = hourly_rate.filter(|rate| rate.is_finite()) else {
+        return ConsumptionPaceAssessment::Unavailable;
+    };
+    if !rise.is_finite() {
+        return ConsumptionPaceAssessment::Unavailable;
+    }
+
+    let hourly_rate = hourly_rate.max(0.0);
+    let hours_until_reset = reset.duration_since(now).unwrap_or_default().as_secs_f64() / 3_600.0;
+    let remaining = (100.0 - current_used_percent).max(0.0);
+    let safe_hourly_rate = remaining / hours_until_reset;
+    if !safe_hourly_rate.is_finite() || safe_hourly_rate <= 0.0 {
+        return ConsumptionPaceAssessment::Exhausted;
+    }
+    let ratio = hourly_rate / safe_hourly_rate;
+    let level = if ratio >= 1.0 {
+        ConsumptionPaceLevel::Fast
+    } else if ratio >= 0.5 {
+        ConsumptionPaceLevel::Normal
+    } else {
+        ConsumptionPaceLevel::Comfortable
+    };
+    let expected_remaining_percent_at_reset =
+        (100.0 - (current_used_percent + hourly_rate * hours_until_reset)).clamp(0.0, 100.0);
+
+    ConsumptionPaceAssessment::Ready(ConsumptionPaceMetrics {
+        level,
+        sample_count,
+        observation_span,
+        total_rise: rise.max(0.0),
+        hourly_rate,
+        safe_hourly_rate,
+        expected_remaining_percent_at_reset,
+    })
+}
+
+fn forecast_result(
+    current_window: &UsageWindow,
+    now: SystemTime,
+    sample_count: usize,
+    observation_span: Duration,
+    rise: f64,
+    hourly_rate: Option<f64>,
+) -> ForecastResult {
+    if sample_count < ForecastPolicy::MINIMUM_SAMPLES {
+        return ForecastResult::Collecting {
+            sample_count,
+            observation_span,
+            reason: ForecastCollectionReason::TooFewSamples,
+        };
+    }
+    if observation_span < ForecastPolicy::MINIMUM_OBSERVATION_SPAN {
+        return ForecastResult::Collecting {
+            sample_count,
+            observation_span,
+            reason: ForecastCollectionReason::ObservationSpanTooShort,
+        };
+    }
+    if !rise.is_finite() || rise < ForecastPolicy::MINIMUM_TOTAL_RISE {
+        return ForecastResult::InsufficientActivity;
+    }
+    let Some(hourly_rate) = hourly_rate else {
+        return ForecastResult::InsufficientActivity;
+    };
+    if !hourly_rate.is_finite() || hourly_rate < ForecastPolicy::MINIMUM_HOURLY_RATE {
+        return ForecastResult::InsufficientActivity;
+    }
+
+    let seconds_to_exhaustion = (100.0 - current_window.used_percent) * 3_600.0 / hourly_rate;
+    let Some(until_exhaustion) = duration_from_seconds(seconds_to_exhaustion) else {
+        return ForecastResult::Invalid;
+    };
+    let Some(exhaustion_at) = now.checked_add(until_exhaustion) else {
+        return ForecastResult::Invalid;
+    };
+    let (
+        exhausts_before_reset,
+        expected_used_percent_at_reset,
+        expected_remaining_percent_at_reset,
+    ) = reset_estimate(
+        current_window.resets_at,
+        now,
+        current_window.used_percent,
+        hourly_rate,
+        exhaustion_at,
+    );
+
+    ForecastResult::ForecastAvailable(Forecast {
+        hourly_rate,
+        exhaustion_at,
+        exhausts_before_reset,
+        expected_used_percent_at_reset,
+        expected_remaining_percent_at_reset,
+        sample_count,
+        observation_span,
+        quality: quality(sample_count, observation_span, rise),
+    })
 }
 
 #[derive(Clone, Copy)]

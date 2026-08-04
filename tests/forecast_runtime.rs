@@ -1,6 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_usage_monitor::{
+    ConsumptionPaceAssessment, ConsumptionPaceLevel, ConsumptionPaceMetrics, ForecastAnalysis,
     ForecastEngine, ForecastPolicy, ForecastQuality, ForecastResult, UsageProfileId, UsageSample,
     UsageWindow, WindowKind,
 };
@@ -62,6 +63,58 @@ fn calculate(
         false,
         &ForecastPolicy::default(),
     )
+}
+
+fn analyze(
+    samples: &[UsageSample],
+    current_window: &UsageWindow,
+    now: SystemTime,
+) -> ForecastAnalysis {
+    ForecastEngine::analyze(
+        samples,
+        current_window,
+        now,
+        now,
+        false,
+        &ForecastPolicy::default(),
+    )
+}
+
+fn pace_for_rate(
+    current_used_percent: f64,
+    hourly_rate: f64,
+    reset: SystemTime,
+    now: SystemTime,
+) -> ConsumptionPaceMetrics {
+    let samples = [
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            current_used_percent - hourly_rate * 2.0,
+            Some(reset),
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            current_used_percent - hourly_rate,
+            Some(reset),
+            now - Duration::from_secs(60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            current_used_percent,
+            Some(reset),
+            now,
+        ),
+    ];
+    let ConsumptionPaceAssessment::Ready(metrics) =
+        analyze(&samples, &window(current_used_percent, Some(reset)), now).pace
+    else {
+        panic!("expected ready pace");
+    };
+    metrics
 }
 
 fn evenly_spaced_samples(
@@ -177,6 +230,131 @@ fn low_activity_is_not_presented_as_a_forecast() {
         calculate(&samples, &window(10.9, None), now),
         ForecastResult::InsufficientActivity
     );
+}
+
+#[test]
+fn low_activity_is_a_comfortable_pace_even_without_an_exhaustion_forecast() {
+    let now = at(1_150_000);
+    let reset = now + Duration::from_secs(10 * 60 * 60);
+    let samples = [
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(reset),
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.5,
+            Some(reset),
+            now - Duration::from_secs(60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.9,
+            Some(reset),
+            now,
+        ),
+    ];
+
+    let analysis = analyze(&samples, &window(10.9, Some(reset)), now);
+
+    assert_eq!(analysis.forecast, ForecastResult::InsufficientActivity);
+    let ConsumptionPaceAssessment::Ready(metrics) = analysis.pace else {
+        panic!("expected ready pace");
+    };
+    assert_eq!(metrics.level, ConsumptionPaceLevel::Comfortable);
+    assert_eq!(metrics.sample_count, 3);
+    assert_eq!(metrics.observation_span, Duration::from_secs(2 * 60 * 60));
+    assert!((metrics.total_rise - 0.9).abs() < 0.000_001);
+    assert!((metrics.hourly_rate - 0.45).abs() < 0.000_001);
+    assert!((metrics.expected_remaining_percent_at_reset - 84.6).abs() < 0.000_001);
+}
+
+#[test]
+fn pace_ratio_boundaries_are_normal_and_fast() {
+    let now = at(1_160_000);
+    let reset = now + Duration::from_secs(10 * 60 * 60);
+
+    let normal = pace_for_rate(50.0, 2.5, reset, now);
+    let fast = pace_for_rate(50.0, 5.0, reset, now);
+
+    assert!((normal.safe_hourly_rate - 5.0).abs() < 0.000_001);
+    assert_eq!(normal.level, ConsumptionPaceLevel::Normal);
+    assert_eq!(fast.level, ConsumptionPaceLevel::Fast);
+    assert_eq!(fast.expected_remaining_percent_at_reset, 0.0);
+}
+
+#[test]
+fn pace_measures_until_three_samples_and_thirty_minutes() {
+    let now = at(1_170_000);
+    let reset = now + Duration::from_secs(10 * 60 * 60);
+    let samples = [
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(reset),
+            now - Duration::from_secs(20 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.5,
+            Some(reset),
+            now - Duration::from_secs(10 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            11.0,
+            Some(reset),
+            now,
+        ),
+    ];
+
+    assert_eq!(
+        analyze(&samples[..2], &window(10.5, Some(reset)), now).pace,
+        ConsumptionPaceAssessment::Measuring {
+            sample_count: 2,
+            observation_span: Duration::from_secs(10 * 60),
+        }
+    );
+    assert_eq!(
+        analyze(&samples, &window(11.0, Some(reset)), now).pace,
+        ConsumptionPaceAssessment::Measuring {
+            sample_count: 3,
+            observation_span: Duration::from_secs(20 * 60),
+        }
+    );
+}
+
+#[test]
+fn pace_is_unavailable_without_a_future_reset() {
+    let now = at(1_180_000);
+    let past_reset = now - Duration::from_secs(1);
+
+    assert_eq!(
+        analyze(&[], &window(10.0, None), now).pace,
+        ConsumptionPaceAssessment::Unavailable
+    );
+    assert_eq!(
+        analyze(&[], &window(10.0, Some(past_reset)), now).pace,
+        ConsumptionPaceAssessment::Unavailable
+    );
+}
+
+#[test]
+fn pace_marks_an_exhausted_window_before_sample_requirements() {
+    let now = at(1_190_000);
+    let reset = now + Duration::from_secs(10 * 60 * 60);
+    let analysis = analyze(&[], &window(100.0, Some(reset)), now);
+
+    assert_eq!(analysis.forecast, ForecastResult::AlreadyExhausted);
+    assert_eq!(analysis.pace, ConsumptionPaceAssessment::Exhausted);
 }
 
 #[test]
