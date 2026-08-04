@@ -12,6 +12,10 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 - Shows primary and secondary Codex usage windows, including reset times.
 - Estimates when each window may be exhausted from recent successful observations and shows the
   estimate in the usage details and taskbar tooltip.
+- Keeps update checks inside the app: current, failed, and available-release results are shown in
+  an owned dialog, and a newer release opens only after confirmation.
+- Opens the Codex browser authorization flow reliably, including when the default account is
+  logged out.
 - Uses the installed Codex CLI's `app-server` interface instead of parsing authentication files.
 - Lets you manually choose among as many as eight isolated usage profiles.
 - Supports showing the widget on every taskbar or only on the primary monitor.
@@ -32,6 +36,14 @@ comfortable, amber means moderate, and red means the current pace may exhaust th
 reset. Hover details explain the rating using recent observation time, usage increase, and
 approximate hourly rate. Loading or unavailable measurements use gray; a refresh error keeps the
 red exclamation mark.
+
+### Release note: Windows integration fixes
+
+CodexPeek 0.3.6 fixes two Windows-specific issues. Update checks now initialize the configured
+native TLS provider and keep network failures in the normal localized error path instead of
+terminating the app. Browser sign-in now initializes COM on the shell worker before opening the
+authorization page, so the default account can start the normal login flow even when it is not
+currently signed in.
 
 ## How it works
 
@@ -252,8 +264,9 @@ For the full data-handling and vulnerability-reporting guidance, see [SECURITY.m
 | --- | --- |
 | Codex CLI is not found | Run `codex --version` and `where.exe codex`, then ensure Codex CLI is on `PATH`. |
 | The CLI is unsupported | Update Codex CLI. Required RPC support matters more than the displayed version number. |
-| Logged out or authentication expired | Complete the normal login flow in Codex CLI, then choose **Refresh authentication** in the tray menu. |
+| Logged out or authentication expired | Complete the normal login flow in Codex CLI, then choose **Refresh authentication** in the tray menu. On CodexPeek 0.3.6 and later, signing in from the tray opens the browser authorization flow even for the logged-out default account. |
 | A managed usage profile needs login | Open **Usage profiles**, choose the profile, and start login again. Confirm the intended account in the browser. Cancelling leaves the profile available for retry or explicit deletion. |
+| Update check closes or shows no result | Update to CodexPeek 0.3.6 or later, then use **Check for updates** again. The result appears in a single owned dialog; an available release opens only after you confirm. |
 | One profile cannot refresh | Select another profile if needed. Each profile keeps independent last-good usage and retry state, so one failure does not clear the others. |
 | The taskbar widget is on the wrong monitor | Choose **Widget: all monitors** or **Widget: primary monitor only** from the tray menu. |
 | The taskbar widget is missing | Use the floating widget or tray icon, restart Explorer if needed, and select the preferred widget monitor mode. |
