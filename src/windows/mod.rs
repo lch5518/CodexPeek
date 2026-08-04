@@ -525,6 +525,42 @@ pub enum WidgetDataState {
     Error,
 }
 
+/// 위젯 상태점과 호버 설명에 사용하는 소비 속도 표시 상태입니다.
+///
+/// 계산 엔진의 수치를 Win32 렌더러에 노출하지 않고, 렌더러가 점의 형태와 색상만 선택할 수
+/// 있도록 제한합니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConsumptionPaceState {
+    /// 초기화까지 사용할 수 있는 속도보다 충분히 느립니다.
+    Comfortable,
+    /// 초기화까지 사용할 수 있는 속도의 절반 이상입니다.
+    Normal,
+    /// 현재 속도가 초기화까지 사용할 수 있는 속도 이상입니다.
+    Fast,
+    /// 표본 수 또는 관측 시간이 아직 부족합니다.
+    Measuring,
+    /// 최신 사용량이나 초기화 시각이 없어 판단할 수 없습니다.
+    Unavailable,
+    /// 사용량 소진 예측 기능이 꺼져 있습니다.
+    Disabled,
+    /// 현재 사용량 창의 한도가 이미 소진되었습니다.
+    Exhausted,
+}
+
+/// 위젯이 소비 속도를 설명하는 지역화된 표시 모델입니다.
+///
+/// `summary`와 선택적 `detail`은 호버 툴팁에만 표시하며, `state`는 상태점 렌더링에만
+/// 사용합니다. 원본 표본이나 계정 정보는 포함하지 않습니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsumptionPaceView {
+    /// 상태점 렌더링에 사용할 소비 속도 상태입니다.
+    pub state: ConsumptionPaceState,
+    /// 호버 툴팁의 첫 줄에 표시할 짧은 설명입니다.
+    pub summary: String,
+    /// 준비된 측정치의 관측량과 초기화 시 예상 결과입니다.
+    pub detail: Option<String>,
+}
+
 /// Windows UI가 렌더링하는 불변 상태 복사본입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WidgetViewModel {
@@ -548,6 +584,8 @@ pub struct WidgetViewModel {
     pub reset_credits_text: Option<String>,
     /// 작업 표시줄의 로딩·정상·오류 표현 상태입니다.
     pub data_state: WidgetDataState,
+    /// 상태점과 호버 툴팁에 표시할 소비 속도입니다.
+    pub consumption_pace: ConsumptionPaceView,
 }
 
 /// Codex app-server가 제공한 ChatGPT 브라우저 로그인 URL인지 확인합니다.

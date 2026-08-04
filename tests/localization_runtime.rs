@@ -96,6 +96,15 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::UsageForecastHourOther,
         LocalizationKey::UsageForecastDayOne,
         LocalizationKey::UsageForecastDayOther,
+        LocalizationKey::UsagePaceComfortable,
+        LocalizationKey::UsagePaceNormal,
+        LocalizationKey::UsagePaceFast,
+        LocalizationKey::UsagePaceMeasuring,
+        LocalizationKey::UsagePaceUnavailable,
+        LocalizationKey::UsagePaceDisabled,
+        LocalizationKey::UsagePaceRecentActivity,
+        LocalizationKey::UsagePaceExpectedRemaining,
+        LocalizationKey::UsagePaceBeforeReset,
     ];
     let required_languages = [
         Language::Korean,
@@ -112,7 +121,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Arabic,
     ];
 
-    assert_eq!(LocalizationKey::ALL.len(), 93);
+    assert_eq!(LocalizationKey::ALL.len(), 102);
     assert_eq!(LocalizationKey::ALL.len(), required_keys.len());
     for required_key in required_keys {
         assert!(LocalizationKey::ALL.contains(&required_key));
@@ -212,4 +221,33 @@ fn korean_and_english_contracts_stay_stable() {
         localized_text(LocalizationKey::UsageProfileUsed, Language::English),
         "used"
     );
+    assert_eq!(
+        localized_text(LocalizationKey::UsagePaceComfortable, Language::Korean),
+        "소비 속도: 여유"
+    );
+    assert_eq!(
+        localized_text(LocalizationKey::UsagePaceFast, Language::English),
+        "Usage pace: Fast"
+    );
+}
+
+#[test]
+fn usage_pace_templates_keep_required_replacement_tokens() {
+    for language in Language::ALL {
+        let measuring = localized_text(LocalizationKey::UsagePaceMeasuring, *language);
+        for token in ["{count}", "{required}", "{minutes}", "{required_minutes}"] {
+            assert!(measuring.contains(token), "{language:?}: {token}");
+        }
+
+        let recent = localized_text(LocalizationKey::UsagePaceRecentActivity, *language);
+        for token in ["{duration}", "{rise}", "{rate}"] {
+            assert!(recent.contains(token), "{language:?}: {token}");
+        }
+
+        assert!(
+            localized_text(LocalizationKey::UsagePaceExpectedRemaining, *language)
+                .contains("{percent}"),
+            "{language:?}: {{percent}}"
+        );
+    }
 }

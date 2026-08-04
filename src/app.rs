@@ -20,18 +20,20 @@ use crate::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, profile_taskbar_tooltip, resolve_windows_language, taskbar,
         time::local_reset_time,
-        ForecastView, LaunchMode, ProfileUsageStatus, UiAction, UiBackend, UiSettings,
-        UsageProfileView, UsageRowView, WidgetDataState, WidgetViewModel,
+        ConsumptionPaceState, ConsumptionPaceView, ForecastView, LaunchMode, ProfileUsageStatus,
+        UiAction, UiBackend, UiSettings, UsageProfileView, UsageRowView, WidgetDataState,
+        WidgetViewModel,
     },
-    AsyncDiagnosticWriter, CorrelatedProfileSettingsEvent, DiagnosticCode, DiagnosticLogger,
-    ForecastResult, Language, LanguagePreference, LocalizationKey, NativeProfileFileSystem,
-    PollSnapshot, PollTrigger, ProfileDiagnosticRun, ProfileDiagnosticSnapshot,
-    ProfileExecutionContext, ProfilePollEvent, ProfilePollingService, ProfileSettingsMutation,
-    ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService,
-    ProfileValidationError, ResetCredits, SafeDiagnostic, Settings, SettingsStore,
-    UpdateCheckIntent, UpdateCheckNotice, UpdateCheckStart, UpdateChecker, UpdatePresentation,
-    UpdatePresentationStatus, UpdateUserAction, UreqHttpClient, UsageError, UsageForecastService,
-    UsageHistoryStore, UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
+    AsyncDiagnosticWriter, ConsumptionPaceAssessment, ConsumptionPaceLevel,
+    CorrelatedProfileSettingsEvent, DiagnosticCode, DiagnosticLogger, ForecastResult, Language,
+    LanguagePreference, LocalizationKey, NativeProfileFileSystem, PollSnapshot, PollTrigger,
+    ProfileDiagnosticRun, ProfileDiagnosticSnapshot, ProfileExecutionContext, ProfilePollEvent,
+    ProfilePollingService, ProfileSettingsMutation, ProfileSettingsOperation,
+    ProfileSettingsRequestId, ProfileSettingsService, ProfileValidationError, ResetCredits,
+    SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckNotice,
+    UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
+    UpdateUserAction, UreqHttpClient, UsageError, UsageForecastService, UsageHistoryStore,
+    UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
@@ -898,6 +900,18 @@ impl UiBackend for AppRuntime {
             now,
             language,
         );
+        let pace_window_kind = snapshot.usage.as_ref().and_then(|usage| {
+            if usage.secondary.is_some() {
+                Some(WindowKind::Secondary)
+            } else {
+                usage.primary.as_ref().map(|_| WindowKind::Primary)
+            }
+        });
+        let consumption_pace = consumption_pace_view(
+            pace_window_kind.and_then(|kind| self.usage_forecast().pace_at(selected, kind, now)),
+            settings.usage_forecast_enabled,
+            language,
+        );
         let primary = snapshot
             .usage
             .as_ref()
@@ -935,16 +949,10 @@ impl UiBackend for AppRuntime {
             reset_credits_text.as_deref(),
         );
         let usage_profile_label = selected_usage_profile_label(&settings, language);
-        let taskbar_tooltip = profile_taskbar_tooltip(
-            &usage_profile_label,
-            &append_forecast_tooltip(
-                &taskbar.tooltip,
-                primary.as_ref(),
-                secondary.as_ref(),
-                language,
-            ),
-            language,
-        );
+        let details = append_consumption_pace_tooltip(&taskbar.tooltip, &consumption_pace);
+        let details =
+            append_forecast_tooltip(&details, primary.as_ref(), secondary.as_ref(), language);
+        let taskbar_tooltip = profile_taskbar_tooltip(&usage_profile_label, &details, language);
         let data_state = data_state_for_snapshot(&snapshot, runtime_login_required);
         WidgetViewModel {
             usage_profile_label,
@@ -957,6 +965,7 @@ impl UiBackend for AppRuntime {
             taskbar_tooltip,
             reset_credits_text,
             data_state,
+            consumption_pace,
         }
     }
 
@@ -1512,6 +1521,124 @@ fn collecting_forecast_view(sample_count: usize, language: Language) -> Forecast
     ForecastView::Collecting { line }
 }
 
+fn consumption_pace_view(
+    assessment: Option<ConsumptionPaceAssessment>,
+    enabled: bool,
+    language: Language,
+) -> ConsumptionPaceView {
+    if !enabled {
+        return ConsumptionPaceView {
+            state: ConsumptionPaceState::Disabled,
+            summary: localized_text(LocalizationKey::UsagePaceDisabled, language).to_owned(),
+            detail: None,
+        };
+    }
+
+    match assessment {
+        None => measuring_pace_view(0, Duration::ZERO, language),
+        Some(ConsumptionPaceAssessment::Measuring {
+            sample_count,
+            observation_span,
+        }) => measuring_pace_view(sample_count, observation_span, language),
+        Some(ConsumptionPaceAssessment::Ready(metrics)) => {
+            let (state, key) = match metrics.level {
+                ConsumptionPaceLevel::Comfortable => (
+                    ConsumptionPaceState::Comfortable,
+                    LocalizationKey::UsagePaceComfortable,
+                ),
+                ConsumptionPaceLevel::Normal => (
+                    ConsumptionPaceState::Normal,
+                    LocalizationKey::UsagePaceNormal,
+                ),
+                ConsumptionPaceLevel::Fast => {
+                    (ConsumptionPaceState::Fast, LocalizationKey::UsagePaceFast)
+                }
+            };
+            let duration = pace_duration_text(metrics.observation_span, language);
+            let recent = localized_text(LocalizationKey::UsagePaceRecentActivity, language)
+                .replace("{duration}", &duration)
+                .replace("{rise}", &compact_decimal(metrics.total_rise))
+                .replace("{rate}", &compact_decimal(metrics.hourly_rate));
+            let outcome = if metrics.level == ConsumptionPaceLevel::Fast {
+                localized_text(LocalizationKey::UsagePaceBeforeReset, language).to_owned()
+            } else {
+                localized_text(LocalizationKey::UsagePaceExpectedRemaining, language).replace(
+                    "{percent}",
+                    &compact_decimal(metrics.expected_remaining_percent_at_reset),
+                )
+            };
+            ConsumptionPaceView {
+                state,
+                summary: localized_text(key, language).to_owned(),
+                detail: Some(format!("{recent}\n{outcome}")),
+            }
+        }
+        Some(ConsumptionPaceAssessment::Unavailable) => ConsumptionPaceView {
+            state: ConsumptionPaceState::Unavailable,
+            summary: localized_text(LocalizationKey::UsagePaceUnavailable, language).to_owned(),
+            detail: None,
+        },
+        Some(ConsumptionPaceAssessment::Exhausted) => ConsumptionPaceView {
+            state: ConsumptionPaceState::Exhausted,
+            summary: localized_text(LocalizationKey::UsageForecastExhausted, language).to_owned(),
+            detail: None,
+        },
+    }
+}
+
+fn measuring_pace_view(
+    sample_count: usize,
+    observation_span: Duration,
+    language: Language,
+) -> ConsumptionPaceView {
+    let summary = localized_text(LocalizationKey::UsagePaceMeasuring, language)
+        .replace(
+            "{count}",
+            &sample_count
+                .min(crate::ForecastPolicy::MINIMUM_SAMPLES)
+                .to_string(),
+        )
+        .replace(
+            "{required}",
+            &crate::ForecastPolicy::MINIMUM_SAMPLES.to_string(),
+        )
+        .replace(
+            "{minutes}",
+            &(observation_span.as_secs() / 60)
+                .min(crate::ForecastPolicy::MINIMUM_OBSERVATION_SPAN.as_secs() / 60)
+                .to_string(),
+        )
+        .replace(
+            "{required_minutes}",
+            &(crate::ForecastPolicy::MINIMUM_OBSERVATION_SPAN.as_secs() / 60).to_string(),
+        );
+    ConsumptionPaceView {
+        state: ConsumptionPaceState::Measuring,
+        summary,
+        detail: None,
+    }
+}
+
+fn compact_decimal(value: f64) -> String {
+    let rounded = (value.max(0.0) * 10.0).round() / 10.0;
+    if rounded.fract().abs() < f64::EPSILON {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded:.1}")
+    }
+}
+
+fn pace_duration_text(duration: Duration, language: Language) -> String {
+    forecast_duration_text(duration, language).unwrap_or_else(|| {
+        let days = ((duration.as_secs() + 43_200) / 86_400).max(1);
+        let unit = localized_text(LocalizationKey::UsageForecastDayOther, language);
+        match language {
+            Language::Korean | Language::Japanese => format!("{days}{unit}"),
+            _ => format!("{days} {unit}"),
+        }
+    })
+}
+
 fn available_forecast_view(
     forecast: &crate::Forecast,
     now: SystemTime,
@@ -1634,6 +1761,18 @@ fn append_forecast_tooltip(
     if !lines.is_empty() {
         result.push_str("\n\n");
         result.push_str(&lines.join("\n"));
+    }
+    result
+}
+
+fn append_consumption_pace_tooltip(
+    tooltip: &str,
+    consumption_pace: &ConsumptionPaceView,
+) -> String {
+    let mut result = format!("{tooltip}\n\n{}", consumption_pace.summary);
+    if let Some(detail) = &consumption_pace.detail {
+        result.push('\n');
+        result.push_str(detail);
     }
     result
 }
@@ -2468,17 +2607,21 @@ mod tests {
     };
 
     use super::{
-        append_forecast_tooltip, data_state_for_snapshot, diagnostic_status,
-        forecast_duration_text, forecast_view, last_success_text, pass_fail,
-        profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
-        proxy_presence, row_view, row_view_with_reset_time, status_with_update, taskbar_copy,
-        taskbar_risk_text, AppRuntime, DiagnosticSummary,
+        append_consumption_pace_tooltip, append_forecast_tooltip, consumption_pace_view,
+        data_state_for_snapshot, diagnostic_status, forecast_duration_text, forecast_view,
+        last_success_text, pass_fail, profile_usage_presentation_for_snapshot,
+        profile_usage_presentation_for_window, proxy_presence, row_view, row_view_with_reset_time,
+        status_with_update, taskbar_copy, taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
-    use crate::windows::{ForecastView, ProfileUsageStatus, UiAction, UiBackend, WidgetDataState};
+    use crate::windows::{
+        ConsumptionPaceState, ConsumptionPaceView, ForecastView, ProfileUsageStatus, UiAction,
+        UiBackend, WidgetDataState,
+    };
     use crate::{
         domain::ResetDateTime, windows::UsageRowView, AsyncDiagnosticWriter, AvailableUpdate,
-        CodexUsage, CorrelatedProfileSettingsEvent, DiagnosticLogger, Forecast, ForecastQuality,
+        CodexUsage, ConsumptionPaceAssessment, ConsumptionPaceLevel, ConsumptionPaceMetrics,
+        CorrelatedProfileSettingsEvent, DiagnosticLogger, Forecast, ForecastQuality,
         ForecastResult, Language, LanguagePreference, NativeProfileFileSystem, PollSnapshot,
         ProfileExecutionContext, ProfilePollingService, ProfileRuntimeState,
         ProfileSettingsOperation, ProfileSettingsRequestId, ProfileSettingsService, ResetCredits,
@@ -2619,6 +2762,11 @@ mod tests {
         assert!(snapshot
             .taskbar_tooltip
             .starts_with("Usage profiles: Main\n"));
+        assert_eq!(
+            snapshot.consumption_pace.state,
+            ConsumptionPaceState::Measuring
+        );
+        assert!(snapshot.taskbar_tooltip.contains("Measuring usage pace"));
         assert_eq!(
             ui_settings
                 .usage_profiles
@@ -3112,6 +3260,104 @@ mod tests {
             observation_span: Duration::from_secs(2 * 60 * 60),
             quality: ForecastQuality::High,
         }
+    }
+
+    #[test]
+    fn comfortable_pace_copy_explains_recent_activity_without_statistical_terms() {
+        let view = consumption_pace_view(
+            Some(ConsumptionPaceAssessment::Ready(ConsumptionPaceMetrics {
+                level: ConsumptionPaceLevel::Comfortable,
+                sample_count: 8,
+                observation_span: Duration::from_secs(2 * 60 * 60),
+                total_rise: 3.0,
+                hourly_rate: 1.5,
+                safe_hourly_rate: 4.0,
+                expected_remaining_percent_at_reset: 42.0,
+            })),
+            true,
+            Language::Korean,
+        );
+
+        assert_eq!(view.state, ConsumptionPaceState::Comfortable);
+        assert_eq!(view.summary, "소비 속도: 여유");
+        assert_eq!(
+            view.detail.as_deref(),
+            Some(
+                "최근 2시간 동안 3% 사용 · 시간당 약 1.5%\n\
+                 현재 속도면 초기화 시 약 42% 남아요"
+            )
+        );
+    }
+
+    #[test]
+    fn pace_copy_covers_measuring_unavailable_disabled_and_exhausted() {
+        let measuring = consumption_pace_view(
+            Some(ConsumptionPaceAssessment::Measuring {
+                sample_count: 2,
+                observation_span: Duration::from_secs(20 * 60),
+            }),
+            true,
+            Language::Korean,
+        );
+        assert_eq!(measuring.state, ConsumptionPaceState::Measuring);
+        assert_eq!(
+            measuring.summary,
+            "소비 속도 측정 중 · 데이터 2/3 · 관측 20/30분"
+        );
+
+        let unavailable = consumption_pace_view(
+            Some(ConsumptionPaceAssessment::Unavailable),
+            true,
+            Language::Korean,
+        );
+        assert_eq!(unavailable.state, ConsumptionPaceState::Unavailable);
+        assert!(unavailable.summary.contains("초기화 시각"));
+
+        let disabled = consumption_pace_view(None, false, Language::Korean);
+        assert_eq!(disabled.state, ConsumptionPaceState::Disabled);
+        assert_eq!(disabled.summary, "소비 속도 표시 꺼짐");
+
+        let exhausted = consumption_pace_view(
+            Some(ConsumptionPaceAssessment::Exhausted),
+            true,
+            Language::Korean,
+        );
+        assert_eq!(exhausted.state, ConsumptionPaceState::Exhausted);
+        assert_eq!(exhausted.summary, "한도 소진됨");
+    }
+
+    #[test]
+    fn pace_tooltip_precedes_per_window_forecasts() {
+        let pace = ConsumptionPaceView {
+            state: ConsumptionPaceState::Comfortable,
+            summary: "Usage pace: Comfortable".to_owned(),
+            detail: Some(
+                "Used 3% over the last 2 hours · about 1.5% per hour\n\
+                 At this pace, about 42% will remain at reset"
+                    .to_owned(),
+            ),
+        };
+        let primary = UsageRowView {
+            label: "5h".to_owned(),
+            used_percent: 20.0,
+            display_percent: 20.0,
+            percent_text: "20%".to_owned(),
+            reset_text: "tomorrow".to_owned(),
+            level: UsageLevel::Stable,
+            forecast: ForecastView::ForecastAvailable {
+                line: "primary estimate".to_owned(),
+            },
+        };
+        let tooltip = append_consumption_pace_tooltip("Codex usage\nStatus: Polling", &pace);
+        let tooltip = append_forecast_tooltip(&tooltip, Some(&primary), None, Language::English);
+
+        assert_eq!(
+            tooltip,
+            "Codex usage\nStatus: Polling\n\nUsage pace: Comfortable\n\
+             Used 3% over the last 2 hours · about 1.5% per hour\n\
+             At this pace, about 42% will remain at reset\n\n\
+             Primary window: primary estimate"
+        );
     }
 
     #[test]

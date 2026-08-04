@@ -46,16 +46,16 @@ use codex_usage_monitor::{
             TrayMenuEntry,
         },
         widget::{logical_to_physical, Rect},
-        LaunchMode, StartupStep, UiAction, UiSettings, UsageProfileView, WidgetDataState,
-        WidgetViewModel, MENU_ADD_USAGE_PROFILE, MENU_AUTH_REFRESH, MENU_AUTOSTART,
-        MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10,
-        MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC,
-        MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN,
-        MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE,
-        MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH,
-        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES,
-        MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
-        MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
+        ConsumptionPaceState, ConsumptionPaceView, LaunchMode, StartupStep, UiAction, UiSettings,
+        UsageProfileView, WidgetDataState, WidgetViewModel, MENU_ADD_USAGE_PROFILE,
+        MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT,
+        MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5,
+        MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH,
+        MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN,
+        MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL,
+        MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN,
+        MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY,
+        MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
         MENU_USAGE_FORECAST_CLEAR_HISTORY, MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, LocalizationKey, ProfileValidationError, StartupView,
@@ -74,6 +74,14 @@ fn system_profile_view() -> UsageProfileView {
         used_percent: None,
         usage_status: None,
         managed: false,
+    }
+}
+
+fn measuring_pace_view() -> ConsumptionPaceView {
+    ConsumptionPaceView {
+        state: ConsumptionPaceState::Measuring,
+        summary: String::new(),
+        detail: None,
     }
 }
 
@@ -1141,6 +1149,7 @@ fn detached_widget_persistently_consumes_the_selected_profile_label() {
         taskbar_tooltip: String::new(),
         reset_credits_text: None,
         data_state: WidgetDataState::Loading,
+        consumption_pace: measuring_pace_view(),
     };
     let attached = widget_surface_layout(208, 48, 96, true);
     let detached = widget_surface_layout(208, 48, 96, false);
@@ -1572,6 +1581,7 @@ fn attachment_failure_keeps_one_detached_widget_and_later_reuses_it() {
         taskbar_tooltip: String::new(),
         reset_credits_text: None,
         data_state: WidgetDataState::Loading,
+        consumption_pace: measuring_pace_view(),
     };
     let surface = widget_surface_layout(208, 72, 96, false);
     assert_eq!(profile_header_text(&view, surface), Some("Work"));
@@ -1638,6 +1648,7 @@ fn partial_multi_monitor_failure_keeps_one_fallback_and_reuses_every_live_window
         taskbar_tooltip: String::new(),
         reset_credits_text: None,
         data_state: WidgetDataState::Loading,
+        consumption_pace: measuring_pace_view(),
     };
     let detached = widget_surface_layout(208, 72, 96, false);
     assert_eq!(profile_header_text(&view, detached), Some("Work"));

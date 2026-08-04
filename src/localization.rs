@@ -234,6 +234,24 @@ pub enum LocalizationKey {
     UsageForecastDayOne,
     /// 2일 이상을 나타내는 복수 단위입니다.
     UsageForecastDayOther,
+    /// 여유로운 소비 속도를 나타내는 문구입니다.
+    UsagePaceComfortable,
+    /// 보통 소비 속도를 나타내는 문구입니다.
+    UsagePaceNormal,
+    /// 빠른 소비 속도를 나타내는 문구입니다.
+    UsagePaceFast,
+    /// 소비 속도 측정에 필요한 표본 진행 상태입니다.
+    UsagePaceMeasuring,
+    /// 소비 속도를 판단할 수 없는 상태입니다.
+    UsagePaceUnavailable,
+    /// 소비 속도 표시가 꺼진 상태입니다.
+    UsagePaceDisabled,
+    /// 최근 관측 기간의 사용량과 시간당 속도 설명입니다.
+    UsagePaceRecentActivity,
+    /// 현재 속도에서 초기화 시 예상 잔여 사용량입니다.
+    UsagePaceExpectedRemaining,
+    /// 현재 속도에서 초기화 전 소진 위험을 나타내는 문구입니다.
+    UsagePaceBeforeReset,
 }
 
 impl LocalizationKey {
@@ -332,6 +350,15 @@ impl LocalizationKey {
         Self::UsageForecastHourOther,
         Self::UsageForecastDayOne,
         Self::UsageForecastDayOther,
+        Self::UsagePaceComfortable,
+        Self::UsagePaceNormal,
+        Self::UsagePaceFast,
+        Self::UsagePaceMeasuring,
+        Self::UsagePaceUnavailable,
+        Self::UsagePaceDisabled,
+        Self::UsagePaceRecentActivity,
+        Self::UsagePaceExpectedRemaining,
+        Self::UsagePaceBeforeReset,
     ];
 
     const fn index(self) -> usize {
@@ -429,11 +456,20 @@ impl LocalizationKey {
             Self::UsageForecastHourOther => 90,
             Self::UsageForecastDayOne => 91,
             Self::UsageForecastDayOther => 92,
+            Self::UsagePaceComfortable => 93,
+            Self::UsagePaceNormal => 94,
+            Self::UsagePaceFast => 95,
+            Self::UsagePaceMeasuring => 96,
+            Self::UsagePaceUnavailable => 97,
+            Self::UsagePaceDisabled => 98,
+            Self::UsagePaceRecentActivity => 99,
+            Self::UsagePaceExpectedRemaining => 100,
+            Self::UsagePaceBeforeReset => 101,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 93;
+const LOCALIZATION_KEY_COUNT: usize = 102;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -529,6 +565,15 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "시간",
     "일",
     "일",
+    "소비 속도: 여유",
+    "소비 속도: 보통",
+    "소비 속도: 빠름",
+    "소비 속도 측정 중 · 데이터 {count}/{required} · 관측 {minutes}/{required_minutes}분",
+    "소비 속도를 판단할 수 없음 · 최신 사용량과 초기화 시각이 필요함",
+    "소비 속도 표시 꺼짐",
+    "최근 {duration} 동안 {rise}% 사용 · 시간당 약 {rate}%",
+    "현재 속도면 초기화 시 약 {percent}% 남아요",
+    "현재 속도면 초기화 전에 소진될 수 있어요",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -625,6 +670,15 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "hours",
     "day",
     "days",
+    "Usage pace: Comfortable",
+    "Usage pace: Moderate",
+    "Usage pace: Fast",
+    "Measuring usage pace · data {count}/{required} · observed {minutes}/{required_minutes} min",
+    "Usage pace unavailable · recent usage and a reset time are required",
+    "Usage pace display is off",
+    "Used {rise}% over the last {duration} · about {rate}% per hour",
+    "At this pace, about {percent}% will remain at reset",
+    "At this pace, the limit may be exhausted before reset",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -721,6 +775,15 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "horas",
     "día",
     "días",
+    "Ritmo de uso: Holgado",
+    "Ritmo de uso: Moderado",
+    "Ritmo de uso: Rápido",
+    "Midiendo el ritmo de uso · datos {count}/{required} · observación {minutes}/{required_minutes} min",
+    "Ritmo de uso no disponible · se requieren datos recientes y una hora de restablecimiento",
+    "La visualización del ritmo de uso está desactivada",
+    "Uso del {rise}% en las últimas {duration} · aprox. {rate}% por hora",
+    "A este ritmo, quedará cerca del {percent}% al restablecerse",
+    "A este ritmo, el límite puede agotarse antes del restablecimiento",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -817,6 +880,15 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "horas",
     "dia",
     "dias",
+    "Ritmo de uso: Tranquilo",
+    "Ritmo de uso: Moderado",
+    "Ritmo de uso: Rápido",
+    "Medindo o ritmo de uso · dados {count}/{required} · observação {minutes}/{required_minutes} min",
+    "Ritmo de uso indisponível · são necessários dados recentes e um horário de redefinição",
+    "A exibição do ritmo de uso está desativada",
+    "Uso de {rise}% nas últimas {duration} · cerca de {rate}% por hora",
+    "Neste ritmo, cerca de {percent}% restará na redefinição",
+    "Neste ritmo, o limite pode se esgotar antes da redefinição",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -913,6 +985,15 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "jam",
     "hari",
     "hari",
+    "Laju penggunaan: Longgar",
+    "Laju penggunaan: Sedang",
+    "Laju penggunaan: Cepat",
+    "Mengukur laju penggunaan · data {count}/{required} · diamati {minutes}/{required_minutes} mnt",
+    "Laju penggunaan tidak tersedia · penggunaan terbaru dan waktu reset diperlukan",
+    "Tampilan laju penggunaan nonaktif",
+    "Menggunakan {rise}% selama {duration} terakhir · sekitar {rate}% per jam",
+    "Dengan laju ini, sekitar {percent}% akan tersisa saat reset",
+    "Dengan laju ini, batas dapat habis sebelum reset",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1009,6 +1090,15 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "時間",
     "日",
     "日",
+    "消費ペース: 余裕",
+    "消費ペース: 標準",
+    "消費ペース: 速い",
+    "消費ペースを測定中 · データ {count}/{required} · 観測 {minutes}/{required_minutes}分",
+    "消費ペースを判定できません · 最新の使用量とリセット時刻が必要です",
+    "消費ペース表示はオフ",
+    "直近{duration}で{rise}%使用 · 1時間あたり約{rate}%",
+    "このペースではリセット時に約{percent}%残ります",
+    "このペースではリセット前に上限へ達する可能性があります",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1105,6 +1195,15 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "घंटे",
     "दिन",
     "दिन",
+    "उपयोग गति: सहज",
+    "उपयोग गति: सामान्य",
+    "उपयोग गति: तेज़",
+    "उपयोग गति मापी जा रही है · डेटा {count}/{required} · अवलोकन {minutes}/{required_minutes} मिनट",
+    "उपयोग गति उपलब्ध नहीं · हाल का उपयोग और रीसेट समय आवश्यक है",
+    "उपयोग गति प्रदर्शन बंद है",
+    "पिछले {duration} में {rise}% उपयोग · लगभग {rate}% प्रति घंटा",
+    "इस गति पर रीसेट के समय लगभग {percent}% शेष रहेगा",
+    "इस गति पर सीमा रीसेट से पहले समाप्त हो सकती है",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1201,6 +1300,15 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Stunden",
     "Tag",
     "Tagen",
+    "Nutzungstempo: Entspannt",
+    "Nutzungstempo: Normal",
+    "Nutzungstempo: Schnell",
+    "Nutzungstempo wird gemessen · Daten {count}/{required} · Beobachtung {minutes}/{required_minutes} Min.",
+    "Nutzungstempo nicht verfügbar · aktuelle Nutzung und Rücksetzzeit erforderlich",
+    "Anzeige des Nutzungstempos ist aus",
+    "In den letzten {duration} {rise}% genutzt · etwa {rate}% pro Stunde",
+    "Bei diesem Tempo bleiben beim Zurücksetzen etwa {percent}% übrig",
+    "Bei diesem Tempo kann das Limit vor dem Zurücksetzen aufgebraucht sein",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1297,6 +1405,15 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "heures",
     "jour",
     "jours",
+    "Rythme d’utilisation : confortable",
+    "Rythme d’utilisation : modéré",
+    "Rythme d’utilisation : rapide",
+    "Mesure du rythme d’utilisation · données {count}/{required} · observation {minutes}/{required_minutes} min",
+    "Rythme d’utilisation indisponible · utilisation récente et heure de réinitialisation requises",
+    "L’affichage du rythme d’utilisation est désactivé",
+    "{rise}% utilisés au cours des dernières {duration} · environ {rate}% par heure",
+    "À ce rythme, il restera environ {percent}% à la réinitialisation",
+    "À ce rythme, la limite peut être épuisée avant la réinitialisation",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1393,6 +1510,15 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "giờ",
     "ngày",
     "ngày",
+    "Tốc độ sử dụng: Dư dả",
+    "Tốc độ sử dụng: Bình thường",
+    "Tốc độ sử dụng: Nhanh",
+    "Đang đo tốc độ sử dụng · dữ liệu {count}/{required} · quan sát {minutes}/{required_minutes} phút",
+    "Không thể xác định tốc độ sử dụng · cần mức dùng gần đây và thời điểm đặt lại",
+    "Hiển thị tốc độ sử dụng đang tắt",
+    "Đã dùng {rise}% trong {duration} gần đây · khoảng {rate}% mỗi giờ",
+    "Với tốc độ này, khoảng {percent}% sẽ còn lại khi đặt lại",
+    "Với tốc độ này, giới hạn có thể hết trước khi đặt lại",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1489,6 +1615,15 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "saat",
     "gün",
     "gün",
+    "Kullanım hızı: Rahat",
+    "Kullanım hızı: Normal",
+    "Kullanım hızı: Hızlı",
+    "Kullanım hızı ölçülüyor · veri {count}/{required} · gözlem {minutes}/{required_minutes} dk",
+    "Kullanım hızı kullanılamıyor · güncel kullanım ve sıfırlama zamanı gerekli",
+    "Kullanım hızı göstergesi kapalı",
+    "Son {duration} içinde %{rise} kullanıldı · saatte yaklaşık %{rate}",
+    "Bu hızla sıfırlamada yaklaşık %{percent} kalır",
+    "Bu hızla sınır sıfırlamadan önce tükenebilir",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1585,6 +1720,15 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "ساعات",
     "يوم",
     "أيام",
+    "وتيرة الاستخدام: مريحة",
+    "وتيرة الاستخدام: معتدلة",
+    "وتيرة الاستخدام: سريعة",
+    "جارٍ قياس وتيرة الاستخدام · البيانات {count}/{required} · الرصد {minutes}/{required_minutes} دقيقة",
+    "وتيرة الاستخدام غير متاحة · يلزم استخدام حديث ووقت لإعادة التعيين",
+    "عرض وتيرة الاستخدام متوقف",
+    "تم استخدام {rise}% خلال آخر {duration} · نحو {rate}% في الساعة",
+    "بهذه الوتيرة، سيتبقى نحو {percent}% عند إعادة التعيين",
+    "بهذه الوتيرة، قد ينفد الحد قبل إعادة التعيين",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.
