@@ -735,14 +735,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
             .iter()
             .map(|submenu| submenu.label.as_str())
             .collect::<Vec<_>>(),
-        [
-            "Usage profiles",
-            "Refresh interval",
-            "Startup view",
-            "Language",
-            "Usage forecasting",
-            "Widget placement"
-        ]
+        ["Usage profiles", "Refresh", "Settings"]
     );
     assert_eq!(
         submenu_command_ids(submenus[0]),
@@ -751,19 +744,81 @@ fn tray_menu_groups_major_settings_into_submenus() {
     assert_eq!(
         submenu_command_ids(submenus[1]),
         [
+            MENU_REFRESH,
             MENU_INTERVAL_1,
             MENU_INTERVAL_5,
             MENU_INTERVAL_10,
             MENU_INTERVAL_15,
-            MENU_INTERVAL_30
+            MENU_INTERVAL_30,
+            MENU_AUTH_REFRESH,
+            MENU_AUTO_AUTH_REFRESH,
         ]
     );
     assert_eq!(
         submenu_command_ids(submenus[2]),
+        [MENU_WIDGET_VISIBLE, MENU_SHOW_REMAINING, MENU_AUTOSTART]
+    );
+    assert_eq!(
+        submenu_command_ids(
+            submenus[2]
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    TrayMenuEntry::Submenu(submenu) if submenu.label == "Widget placement" => {
+                        Some(submenu)
+                    }
+                    _ => None,
+                })
+                .expect("widget placement submenu is present"),
+        ),
+        [MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY]
+    );
+    assert_eq!(
+        submenu_command_ids(
+            submenus[2]
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    TrayMenuEntry::Submenu(submenu) if submenu.label == "Usage forecasting" => {
+                        Some(submenu)
+                    }
+                    _ => None,
+                })
+                .expect("usage forecasting submenu is present"),
+        ),
+        [
+            MENU_USAGE_FORECAST_TOGGLE,
+            MENU_USAGE_FORECAST_CLEAR_HISTORY
+        ]
+    );
+    assert_eq!(
+        submenu_command_ids(
+            submenus[2]
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    TrayMenuEntry::Submenu(submenu) if submenu.label == "Startup view" => {
+                        Some(submenu)
+                    }
+                    _ => None,
+                })
+                .expect("startup view submenu is present"),
+        ),
         [MENU_STARTUP_WIDGET, MENU_STARTUP_TRAY]
     );
     assert_eq!(
-        submenu_command_ids(submenus[3]),
+        submenu_command_ids(
+            submenus[2]
+                .entries
+                .iter()
+                .find_map(|entry| match entry {
+                    TrayMenuEntry::Submenu(submenu) if submenu.label == "Language" => {
+                        Some(submenu)
+                    }
+                    _ => None,
+                })
+                .expect("language submenu is present"),
+        ),
         [
             MENU_LANGUAGE_AUTO,
             MENU_LANGUAGE_KOREAN,
@@ -780,17 +835,6 @@ fn tray_menu_groups_major_settings_into_submenus() {
             MENU_LANGUAGE_ARABIC,
         ]
     );
-    assert_eq!(
-        submenu_command_ids(submenus[4]),
-        [
-            MENU_USAGE_FORECAST_TOGGLE,
-            MENU_USAGE_FORECAST_CLEAR_HISTORY
-        ]
-    );
-    assert_eq!(
-        submenu_command_ids(submenus[5]),
-        [MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY]
-    );
 }
 
 #[test]
@@ -798,7 +842,7 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
     let settings = tray_settings(Language::English);
     let commands = tray_commands(&settings);
 
-    assert_eq!(separator_count(&settings), 3);
+    assert_eq!(separator_count(&settings), 2);
     assert_eq!(
         commands,
         vec![
@@ -814,9 +858,6 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
             (MENU_INTERVAL_10, "10 min".to_string(), false),
             (MENU_INTERVAL_15, "15 min".to_string(), true),
             (MENU_INTERVAL_30, "30 min".to_string(), false),
-            (MENU_AUTOSTART, "Start with Windows".to_string(), true),
-            (MENU_STARTUP_WIDGET, "Show widget".to_string(), false),
-            (MENU_STARTUP_TRAY, "Tray only".to_string(), true),
             (
                 MENU_AUTH_REFRESH,
                 "Refresh authentication".to_string(),
@@ -827,6 +868,27 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
                 "Automatic authentication refresh".to_string(),
                 true,
             ),
+            (MENU_WIDGET_VISIBLE, "Show widget".to_string(), false),
+            (MENU_TASKBAR_ALL, "All monitors".to_string(), false),
+            (
+                MENU_TASKBAR_PRIMARY,
+                "Primary monitor only".to_string(),
+                true
+            ),
+            (MENU_SHOW_REMAINING, "Show weekly usage".to_string(), false),
+            (
+                MENU_USAGE_FORECAST_TOGGLE,
+                "Usage forecasting".to_string(),
+                true
+            ),
+            (
+                MENU_USAGE_FORECAST_CLEAR_HISTORY,
+                "Clear usage forecast history".to_string(),
+                false
+            ),
+            (MENU_AUTOSTART, "Start with Windows".to_string(), true),
+            (MENU_STARTUP_WIDGET, "Show widget".to_string(), false),
+            (MENU_STARTUP_TRAY, "Tray only".to_string(), true),
             (MENU_LANGUAGE_AUTO, "Automatic".to_string(), false),
             (MENU_LANGUAGE_KOREAN, "한국어".to_string(), false),
             (MENU_LANGUAGE_ENGLISH, "English".to_string(), true),
@@ -848,26 +910,8 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
             (MENU_LANGUAGE_VIETNAMESE, "Tiếng Việt".to_string(), false),
             (MENU_LANGUAGE_TURKISH, "Türkçe".to_string(), false),
             (MENU_LANGUAGE_ARABIC, "العربية".to_string(), false),
-            (MENU_SHOW_REMAINING, "Show weekly usage".to_string(), false),
-            (
-                MENU_USAGE_FORECAST_TOGGLE,
-                "Usage forecasting".to_string(),
-                true
-            ),
-            (
-                MENU_USAGE_FORECAST_CLEAR_HISTORY,
-                "Clear usage forecast history".to_string(),
-                false
-            ),
             (MENU_DIAGNOSTICS, "Diagnostics".to_string(), false),
             (MENU_UPDATE_CHECK, "Update check failed".to_string(), false),
-            (MENU_WIDGET_VISIBLE, "Show widget".to_string(), false),
-            (MENU_TASKBAR_ALL, "All monitors".to_string(), false),
-            (
-                MENU_TASKBAR_PRIMARY,
-                "Primary monitor only".to_string(),
-                true
-            ),
             (MENU_EXIT, "Exit".to_string(), false),
         ]
     );
@@ -891,7 +935,11 @@ fn tray_menu_entries_localize_korean_labels_and_preserve_endonyms() {
     assert!(commands.contains(&(MENU_LANGUAGE_AUTO, "자동".to_string(), true)));
     assert!(commands.contains(&(MENU_LANGUAGE_KOREAN, "한국어".to_string(), false)));
     assert!(commands.contains(&(MENU_LANGUAGE_ENGLISH, "English".to_string(), false)));
-    assert!(commands.contains(&(MENU_SHOW_REMAINING, "남은 사용량 표시".to_string(), false)));
+    assert!(commands.contains(&(
+        MENU_SHOW_REMAINING,
+        "남은 사용량으로 표시".to_string(),
+        false
+    )));
     assert!(commands.contains(&(MENU_WIDGET_VISIBLE, "위젯 숨기기".to_string(), true)));
     assert!(commands.contains(&(MENU_TASKBAR_ALL, "모든 모니터".to_string(), true)));
     assert!(commands.contains(&(MENU_EXIT, "종료".to_string(), false)));
@@ -1169,9 +1217,9 @@ fn submenu_command_ids(submenu: &codex_usage_monitor::windows::tray::TraySubmenu
     submenu
         .entries
         .iter()
-        .map(|entry| match entry {
-            TrayMenuEntry::Command(command) => command.id,
-            _ => panic!("settings submenus must contain commands only"),
+        .filter_map(|entry| match entry {
+            TrayMenuEntry::Command(command) => Some(command.id),
+            TrayMenuEntry::Submenu(_) | TrayMenuEntry::Separator => None,
         })
         .collect()
 }

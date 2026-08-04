@@ -109,26 +109,28 @@ pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
         crate::localized_text(crate::LocalizationKey::MenuManageUsageProfiles, language),
         false,
     );
-    push_submenu(
-        &mut entries,
-        crate::localized_text(crate::LocalizationKey::MenuUsageProfiles, language),
-        profile_entries,
-    );
     if settings.login_required {
+        profile_entries.push(TrayMenuEntry::Separator);
         push_command(
-            &mut entries,
+            &mut profile_entries,
             MENU_LOGIN,
             crate::localized_text(crate::LocalizationKey::MenuLogin, language),
             false,
         );
     }
-    push_command(
+    push_submenu(
         &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuUsageProfiles, language),
+        profile_entries,
+    );
+
+    let mut refresh_entries = Vec::new();
+    push_command(
+        &mut refresh_entries,
         MENU_REFRESH,
         crate::localized_text(crate::LocalizationKey::MenuRefreshNow, language),
         false,
     );
-    let mut refresh_interval_entries = Vec::new();
     for (id, minutes) in [
         (MENU_INTERVAL_1, 1),
         (MENU_INTERVAL_5, 5),
@@ -137,81 +139,65 @@ pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
         (MENU_INTERVAL_30, 30),
     ] {
         push_command(
-            &mut refresh_interval_entries,
+            &mut refresh_entries,
             id,
             crate::localization::localized_refresh_interval_choice_text(minutes, language),
             settings.refresh_interval_minutes == minutes,
         );
     }
-    push_submenu(
-        &mut entries,
-        crate::localized_text(crate::LocalizationKey::MenuRefreshInterval, language),
-        refresh_interval_entries,
-    );
-    entries.push(TrayMenuEntry::Separator);
-    push_command(
-        &mut entries,
-        MENU_AUTOSTART,
-        crate::localized_text(crate::LocalizationKey::MenuAutostart, language),
-        settings.start_with_windows,
-    );
-    let mut startup_view_entries = Vec::new();
-    push_command(
-        &mut startup_view_entries,
-        MENU_STARTUP_WIDGET,
-        crate::localized_text(crate::LocalizationKey::MenuStartupWidget, language),
-        settings.startup_view == StartupView::Widget,
-    );
-    push_command(
-        &mut startup_view_entries,
-        MENU_STARTUP_TRAY,
-        crate::localized_text(crate::LocalizationKey::MenuStartupTrayOnly, language),
-        settings.startup_view == StartupView::TrayOnly,
-    );
-    push_submenu(
-        &mut entries,
-        crate::localized_text(crate::LocalizationKey::MenuStartupView, language),
-        startup_view_entries,
-    );
+    refresh_entries.push(TrayMenuEntry::Separator);
     if !settings.login_required {
         push_command(
-            &mut entries,
+            &mut refresh_entries,
             MENU_AUTH_REFRESH,
             crate::localized_text(crate::LocalizationKey::MenuAuthRefreshNow, language),
             false,
         );
     }
     push_command(
-        &mut entries,
+        &mut refresh_entries,
         MENU_AUTO_AUTH_REFRESH,
         crate::localized_text(crate::LocalizationKey::MenuAuthRefresh, language),
         settings.auto_auth_refresh,
     );
-    let mut language_entries = Vec::new();
-    push_command(
-        &mut language_entries,
-        MENU_LANGUAGE_AUTO,
-        crate::localized_text(
-            crate::LocalizationKey::MenuLanguageAutomaticChoice,
-            language,
-        ),
-        settings.language == LanguagePreference::Auto,
-    );
-    for (id, preference) in LANGUAGE_MENU_OPTIONS {
-        push_command(
-            &mut language_entries,
-            *id,
-            language_menu_choice_label(*preference, language),
-            settings.language == *preference,
-        );
-    }
     push_submenu(
         &mut entries,
-        crate::localized_text(crate::LocalizationKey::MenuLanguage, language),
-        language_entries,
+        crate::localized_text(crate::LocalizationKey::MenuRefresh, language),
+        refresh_entries,
+    );
+
+    let mut settings_entries = Vec::new();
+    let widget_key = if settings.widget_visible {
+        crate::LocalizationKey::MenuHideWidget
+    } else {
+        crate::LocalizationKey::MenuShowWidget
+    };
+    push_command(
+        &mut settings_entries,
+        MENU_WIDGET_VISIBLE,
+        crate::localized_text(widget_key, language),
+        settings.widget_visible,
+    );
+    let mut widget_placement_entries = Vec::new();
+    push_command(
+        &mut widget_placement_entries,
+        MENU_TASKBAR_ALL,
+        crate::localized_text(crate::LocalizationKey::MenuTaskbarAllChoice, language),
+        settings.taskbar_display_mode == TaskbarDisplayMode::All,
     );
     push_command(
-        &mut entries,
+        &mut widget_placement_entries,
+        MENU_TASKBAR_PRIMARY,
+        crate::localized_text(crate::LocalizationKey::MenuTaskbarPrimaryChoice, language),
+        settings.taskbar_display_mode == TaskbarDisplayMode::Primary,
+    );
+    push_submenu(
+        &mut settings_entries,
+        crate::localized_text(crate::LocalizationKey::MenuWidgetPlacement, language),
+        widget_placement_entries,
+    );
+    push_command(
+        &mut settings_entries,
         MENU_SHOW_REMAINING,
         usage_mode_menu_text(settings.show_remaining_percent, language),
         false,
@@ -233,9 +219,62 @@ pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
         false,
     );
     push_submenu(
-        &mut entries,
+        &mut settings_entries,
         crate::localized_text(crate::LocalizationKey::MenuUsageForecast, language),
         forecast_entries,
+    );
+    settings_entries.push(TrayMenuEntry::Separator);
+    push_command(
+        &mut settings_entries,
+        MENU_AUTOSTART,
+        crate::localized_text(crate::LocalizationKey::MenuAutostart, language),
+        settings.start_with_windows,
+    );
+    let mut startup_view_entries = Vec::new();
+    push_command(
+        &mut startup_view_entries,
+        MENU_STARTUP_WIDGET,
+        crate::localized_text(crate::LocalizationKey::MenuStartupWidget, language),
+        settings.startup_view == StartupView::Widget,
+    );
+    push_command(
+        &mut startup_view_entries,
+        MENU_STARTUP_TRAY,
+        crate::localized_text(crate::LocalizationKey::MenuStartupTrayOnly, language),
+        settings.startup_view == StartupView::TrayOnly,
+    );
+    push_submenu(
+        &mut settings_entries,
+        crate::localized_text(crate::LocalizationKey::MenuStartupView, language),
+        startup_view_entries,
+    );
+    let mut language_entries = Vec::new();
+    push_command(
+        &mut language_entries,
+        MENU_LANGUAGE_AUTO,
+        crate::localized_text(
+            crate::LocalizationKey::MenuLanguageAutomaticChoice,
+            language,
+        ),
+        settings.language == LanguagePreference::Auto,
+    );
+    for (id, preference) in LANGUAGE_MENU_OPTIONS {
+        push_command(
+            &mut language_entries,
+            *id,
+            language_menu_choice_label(*preference, language),
+            settings.language == *preference,
+        );
+    }
+    push_submenu(
+        &mut settings_entries,
+        crate::localized_text(crate::LocalizationKey::MenuLanguage, language),
+        language_entries,
+    );
+    push_submenu(
+        &mut entries,
+        crate::localized_text(crate::LocalizationKey::MenuSettings, language),
+        settings_entries,
     );
     entries.push(TrayMenuEntry::Separator);
     push_command(
@@ -249,35 +288,6 @@ pub fn tray_menu_model(settings: &UiSettings) -> TrayMenuModel {
         MENU_UPDATE_CHECK,
         update_menu_text(settings.update_status, language),
         false,
-    );
-    let widget_key = if settings.widget_visible {
-        crate::LocalizationKey::MenuHideWidget
-    } else {
-        crate::LocalizationKey::MenuShowWidget
-    };
-    push_command(
-        &mut entries,
-        MENU_WIDGET_VISIBLE,
-        crate::localized_text(widget_key, language),
-        settings.widget_visible,
-    );
-    let mut widget_placement_entries = Vec::new();
-    push_command(
-        &mut widget_placement_entries,
-        MENU_TASKBAR_ALL,
-        crate::localized_text(crate::LocalizationKey::MenuTaskbarAllChoice, language),
-        settings.taskbar_display_mode == TaskbarDisplayMode::All,
-    );
-    push_command(
-        &mut widget_placement_entries,
-        MENU_TASKBAR_PRIMARY,
-        crate::localized_text(crate::LocalizationKey::MenuTaskbarPrimaryChoice, language),
-        settings.taskbar_display_mode == TaskbarDisplayMode::Primary,
-    );
-    push_submenu(
-        &mut entries,
-        crate::localized_text(crate::LocalizationKey::MenuWidgetPlacement, language),
-        widget_placement_entries,
     );
     entries.push(TrayMenuEntry::Separator);
     push_command(
@@ -489,7 +499,7 @@ mod tests {
     fn usage_mode_menu_describes_the_available_switch() {
         assert_eq!(
             usage_mode_menu_text(false, Language::Korean),
-            "남은 사용량 표시"
+            "남은 사용량으로 표시"
         );
         assert_eq!(
             usage_mode_menu_text(true, Language::Korean),

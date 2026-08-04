@@ -104,9 +104,33 @@ Menu shortcut or an uninstaller.
 ```powershell
 git clone https://github.com/lch5518/CodexPeek.git
 Set-Location .\CodexPeek
-cargo build --release
+.\scripts\build-release.ps1
 .\target\release\codex-peek.exe
 ```
+
+In PowerShell, run the script from the repository root. Use `-Clean` for a full rebuild or
+`-Run` to launch the freshly built executable:
+
+```powershell
+.\scripts\build-release.ps1
+.\scripts\build-release.ps1 -Clean -Run
+```
+
+If PowerShell blocks local scripts, invoke it explicitly:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
+```
+
+From Command Prompt, or by double-clicking from File Explorer, use the `.cmd` wrapper:
+
+```bat
+scripts\build-release.cmd
+scripts\build-release.cmd -Clean -Run
+```
+
+The wrapper builds `target\release\codex-peek.exe`; `-Run` starts that executable after a
+successful build. Close any running CodexPeek instance before using `-Clean`.
 
 To check the build and Codex CLI connection without opening the UI:
 

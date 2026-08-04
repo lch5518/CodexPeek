@@ -93,9 +93,33 @@ Rust 1.85 이상, Visual Studio 2022 C++ Build Tools, Windows SDK가 필요합�
 ```powershell
 git clone https://github.com/lch5518/CodexPeek.git
 Set-Location .\CodexPeek
-cargo build --release
+.\scripts\build-release.ps1
 .\target\release\codex-peek.exe
 ```
+
+PowerShell에서는 저장소 루트에서 스크립트를 실행합니다. 완전히 다시 빌드하려면
+`-Clean`을, 빌드 후 바로 실행하려면 `-Run`을 함께 사용하세요.
+
+```powershell
+.\scripts\build-release.ps1
+.\scripts\build-release.ps1 -Clean -Run
+```
+
+PowerShell 실행 정책으로 막히면 다음처럼 명시적으로 실행하세요.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
+```
+
+명령 프롬프트나 파일 탐색기에서는 `.cmd` 래퍼를 사용하세요.
+
+```bat
+scripts\build-release.cmd
+scripts\build-release.cmd -Clean -Run
+```
+
+래퍼는 `target\release\codex-peek.exe`를 빌드하며, `-Run`을 지정하면 빌드 성공 후
+해당 실행 파일을 시작합니다. `-Clean`을 사용하기 전에는 실행 중인 CodexPeek를 종료하세요.
 
 UI를 열지 않고 빌드 결과와 Codex CLI 연결을 확인하려면 다음을 실행합니다.
 

@@ -56,7 +56,7 @@ pub enum LocalizationKey {
     Stale,
     /// 사용량을 불러오지 못한 상태입니다.
     Unavailable,
-    /// 새로 고침 메뉴입니다.
+    /// 갱신 관련 동작을 묶은 메뉴입니다.
     MenuRefresh,
     /// 즉시 새로 고침 메뉴입니다.
     MenuRefreshNow,
@@ -136,7 +136,7 @@ pub enum LocalizationKey {
     DiagnosticProxy,
     /// 작업 표시줄 진단 문구입니다.
     DiagnosticTaskbar,
-    /// 남은 사용량 표시 전환 메뉴입니다.
+    /// 남은 사용량으로 표시하는 전환 메뉴입니다.
     MenuShowRemaining,
     /// 주간 사용량 표시 전환 메뉴입니다.
     MenuShowWeekly,
@@ -440,7 +440,7 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "새로 고치는 중",
     "정보가 오래되었습니다",
     "사용량 정보를 사용할 수 없습니다",
-    "새로 고침",
+    "갱신",
     "지금 갱신",
     "갱신 간격",
     "Windows 시작 시 실행",
@@ -480,7 +480,7 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "설정을 읽거나 검증할 수 없습니다",
     "프록시 사용 여부를 확인했습니다",
     "작업 표시줄 상태를 확인할 수 없습니다",
-    "남은 사용량 표시",
+    "남은 사용량으로 표시",
     "주간 사용량 표시",
     "버전 {version}을 사용할 수 있습니다.\n\nGitHub 릴리스 페이지를 여시겠습니까?",
     "업데이트 확인에 실패했습니다. 네트워크 또는 프록시 설정을 확인한 후 다시 시도하세요.",
