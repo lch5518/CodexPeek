@@ -76,13 +76,14 @@ use super::super::{
         TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
     },
     taskbar_widget::{
-        profile_header_text, progress_fill_width, select_weekly_row, widget_surface_layout,
-        HoverTransition, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
+        profile_header_text, progress_fill_width, select_weekly_row, taskbar_visual_state,
+        widget_surface_layout, HoverTransition, TaskbarIndicator, TaskbarLayout, TaskbarLayoutMode,
+        TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
     theme,
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
     widget::{logical_to_physical, Rect},
-    UiAction, UiBackend, UiSettings, WidgetDataState, WidgetViewModel,
+    UiAction, UiBackend, UiSettings, WidgetViewModel,
 };
 use super::{
     profile_dialog_ui_action, profile_login_confirmation_request,
@@ -1552,21 +1553,16 @@ unsafe fn paint_compact_taskbar_content(
         )
     };
     let row = select_weekly_row(view.primary.as_ref(), view.secondary.as_ref());
-    let risk = match view.data_state {
-        WidgetDataState::Loading => TaskbarRisk::Loading,
-        WidgetDataState::Error => TaskbarRisk::Error,
-        WidgetDataState::Ready => row
-            .map(|row| TaskbarRisk::from_percent(row.used_percent))
-            .unwrap_or(TaskbarRisk::Loading),
-    };
-    let accent = taskbar_risk_color(risk);
+    let visual = taskbar_visual_state(view);
+    let indicator_accent = taskbar_indicator_color(visual.indicator);
+    let progress_accent = taskbar_risk_color(visual.progress_risk);
 
     let background = CreateSolidBrush(COLORREF(palette.material));
     FillRect(dc, &client, background);
     let _ = DeleteObject(HGDIOBJ(background.0));
     let _ = SetBkMode(dc, TRANSPARENT);
 
-    if risk == TaskbarRisk::Error {
+    if visual.indicator == TaskbarIndicator::Error {
         if let Some(dot) = layout.dot {
             let font = CreateFontW(
                 -logical_to_physical(11, dpi),
@@ -1591,13 +1587,13 @@ unsafe fn paint_compact_taskbar_content(
                 "!",
                 &mut dot,
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-                accent,
+                indicator_accent,
             );
             SelectObject(dc, old);
             let _ = DeleteObject(HGDIOBJ(font.0));
         }
     } else if let Some(dot) = layout.dot {
-        let brush = CreateSolidBrush(accent);
+        let brush = CreateSolidBrush(indicator_accent);
         let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
         let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
         let dot = native_rect(positioned(dot));
@@ -1665,11 +1661,15 @@ unsafe fn paint_compact_taskbar_content(
     } else {
         DT_RIGHT
     };
-    let minimal_error = layout.mode == TaskbarLayoutMode::Minimal && risk == TaskbarRisk::Error;
-    let percent_text =
-        compact_percent_text(layout.mode, risk, row.map(|row| row.percent_text.as_str()));
+    let minimal_error =
+        layout.mode == TaskbarLayoutMode::Minimal && visual.indicator == TaskbarIndicator::Error;
+    let percent_text = compact_percent_text(
+        layout.mode,
+        visual.indicator,
+        row.map(|row| row.percent_text.as_str()),
+    );
     let percent_color = if minimal_error {
-        accent
+        indicator_accent
     } else {
         COLORREF(palette.percent)
     };
@@ -1690,7 +1690,7 @@ unsafe fn paint_compact_taskbar_content(
     if let Some(row) = row {
         let fill_width = progress_fill_width(layout.progress.width(), row.display_percent);
         if fill_width > 0 {
-            let fill = CreateSolidBrush(accent);
+            let fill = CreateSolidBrush(progress_accent);
             FillRect(
                 dc,
                 &RECT {
@@ -1752,11 +1752,24 @@ unsafe fn paint_profile_header(
     let _ = DeleteObject(HGDIOBJ(font.0));
 }
 
-fn compact_percent_text(mode: TaskbarLayoutMode, risk: TaskbarRisk, percent: Option<&str>) -> &str {
-    if mode == TaskbarLayoutMode::Minimal && risk == TaskbarRisk::Error {
+fn compact_percent_text(
+    mode: TaskbarLayoutMode,
+    indicator: TaskbarIndicator,
+    percent: Option<&str>,
+) -> &str {
+    if mode == TaskbarLayoutMode::Minimal && indicator == TaskbarIndicator::Error {
         "!"
     } else {
         percent.unwrap_or("--")
+    }
+}
+
+const fn taskbar_indicator_color(indicator: TaskbarIndicator) -> COLORREF {
+    match indicator {
+        TaskbarIndicator::Comfortable => COLORREF(0x0074_c748),
+        TaskbarIndicator::Normal => COLORREF(0x0023_a6f5),
+        TaskbarIndicator::Fast | TaskbarIndicator::Error => COLORREF(0x005c_5cff),
+        TaskbarIndicator::Neutral => COLORREF(0x0097_9797),
     }
 }
 
@@ -2043,15 +2056,15 @@ mod tests {
         material_surface_alpha, rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
         should_open_widget_menu, show_diagnostic_summary_with_presenter,
         show_profile_dialog_error_with_presenter, show_update_notice_with_presenter,
-        taskbar_palette, update_dialog_in_progress, update_dialog_opens_release,
-        update_dialog_style, NativeMessagePresenter, TaskbarLayoutMode, TaskbarRefreshSchedule,
-        TaskbarRisk, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
+        taskbar_indicator_color, taskbar_palette, update_dialog_in_progress,
+        update_dialog_opens_release, update_dialog_style, NativeMessagePresenter, TaskbarIndicator,
+        TaskbarLayoutMode, TaskbarRefreshSchedule, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
     use crate::{
         windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
     };
     use windows::Win32::{
-        Foundation::HWND,
+        Foundation::{COLORREF, HWND},
         UI::WindowsAndMessaging::{
             IDNO, IDOK, IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
             MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, WM_LBUTTONUP,
@@ -2328,12 +2341,44 @@ mod tests {
     #[test]
     fn minimal_layout_keeps_error_state_visible() {
         assert_eq!(
-            compact_percent_text(TaskbarLayoutMode::Minimal, TaskbarRisk::Error, Some("42%")),
+            compact_percent_text(
+                TaskbarLayoutMode::Minimal,
+                TaskbarIndicator::Error,
+                Some("42%")
+            ),
             "!"
         );
         assert_eq!(
-            compact_percent_text(TaskbarLayoutMode::Full, TaskbarRisk::Error, Some("42%")),
+            compact_percent_text(
+                TaskbarLayoutMode::Full,
+                TaskbarIndicator::Error,
+                Some("42%")
+            ),
             "42%"
+        );
+    }
+
+    #[test]
+    fn taskbar_indicator_colors_are_stable() {
+        assert_eq!(
+            taskbar_indicator_color(TaskbarIndicator::Comfortable),
+            COLORREF(0x0074_c748)
+        );
+        assert_eq!(
+            taskbar_indicator_color(TaskbarIndicator::Normal),
+            COLORREF(0x0023_a6f5)
+        );
+        assert_eq!(
+            taskbar_indicator_color(TaskbarIndicator::Fast),
+            COLORREF(0x005c_5cff)
+        );
+        assert_eq!(
+            taskbar_indicator_color(TaskbarIndicator::Neutral),
+            COLORREF(0x0097_9797)
+        );
+        assert_eq!(
+            taskbar_indicator_color(TaskbarIndicator::Error),
+            COLORREF(0x005c_5cff)
         );
     }
 

@@ -1,6 +1,9 @@
 //! 작업 표시줄 전용 주간 사용량 표현과 DPI 레이아웃입니다.
 
-use super::{widget::logical_to_physical, UsageRowView, WidgetViewModel};
+use super::{
+    widget::logical_to_physical, ConsumptionPaceState, UsageRowView, WidgetDataState,
+    WidgetViewModel,
+};
 use crate::windows::widget::Rect;
 
 /// 작업 표시줄에 여유 공간이 있을 때 사용하는 위젯의 기본 논리 너비입니다.
@@ -118,6 +121,56 @@ impl TaskbarRisk {
         } else {
             Self::Healthy
         }
+    }
+}
+
+/// 작업 표시줄 좌측 상단 상태점이 표현하는 소비 속도 또는 조회 상태입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskbarIndicator {
+    /// 초기화까지 여유 있는 소비 속도입니다.
+    Comfortable,
+    /// 초기화까지 보통인 소비 속도입니다.
+    Normal,
+    /// 초기화 전 소진 위험이 있는 빠른 소비 속도입니다.
+    Fast,
+    /// 측정 중이거나 판단할 수 없는 중립 상태입니다.
+    Neutral,
+    /// 최근 조회가 실패한 오류 상태입니다.
+    Error,
+}
+
+/// 상태점과 진행 막대가 서로 다른 의미를 유지하도록 분리한 시각 상태입니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TaskbarVisualState {
+    /// 좌측 상단 상태점 또는 오류 표시에 사용할 상태입니다.
+    pub indicator: TaskbarIndicator,
+    /// 현재 사용률 진행 막대에 사용할 위험 단계입니다.
+    pub progress_risk: TaskbarRisk,
+}
+
+/// 위젯 표시 모델을 상태점과 현재 사용률 진행 막대의 시각 상태로 변환합니다.
+///
+/// 조회 오류와 로딩은 상태점보다 우선하며, 진행 막대는 조회 상태와 무관하게 보조 사용량 창을
+/// 우선한 현재 사용률을 사용합니다. 표시 가능한 행이 없으면 로딩 색을 반환합니다.
+pub fn taskbar_visual_state(view: &WidgetViewModel) -> TaskbarVisualState {
+    let progress_risk = select_weekly_row(view.primary.as_ref(), view.secondary.as_ref())
+        .map(|row| TaskbarRisk::from_percent(row.used_percent))
+        .unwrap_or(TaskbarRisk::Loading);
+    let indicator = match view.data_state {
+        WidgetDataState::Error => TaskbarIndicator::Error,
+        WidgetDataState::Loading => TaskbarIndicator::Neutral,
+        WidgetDataState::Ready => match view.consumption_pace.state {
+            ConsumptionPaceState::Comfortable => TaskbarIndicator::Comfortable,
+            ConsumptionPaceState::Normal => TaskbarIndicator::Normal,
+            ConsumptionPaceState::Fast | ConsumptionPaceState::Exhausted => TaskbarIndicator::Fast,
+            ConsumptionPaceState::Measuring
+            | ConsumptionPaceState::Unavailable
+            | ConsumptionPaceState::Disabled => TaskbarIndicator::Neutral,
+        },
+    };
+    TaskbarVisualState {
+        indicator,
+        progress_risk,
     }
 }
 

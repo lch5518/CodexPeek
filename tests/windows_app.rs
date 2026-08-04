@@ -38,28 +38,30 @@ use codex_usage_monitor::{
             TaskbarPlacementError, WidgetSurface, WidgetSurfaceBackend,
         },
         taskbar_widget::{
-            profile_header_text, select_weekly_row, widget_surface_layout, HoverTransition,
-            TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
+            profile_header_text, select_weekly_row, taskbar_visual_state, widget_surface_layout,
+            HoverTransition, TaskbarIndicator, TaskbarLayout, TaskbarLayoutMode, TaskbarRisk,
+            TaskbarVisualState,
         },
         tray::{
             language_menu_label, tray_menu_entries, tray_menu_model, update_menu_text,
             TrayMenuEntry,
         },
         widget::{logical_to_physical, Rect},
-        ConsumptionPaceState, ConsumptionPaceView, LaunchMode, StartupStep, UiAction, UiSettings,
-        UsageProfileView, WidgetDataState, WidgetViewModel, MENU_ADD_USAGE_PROFILE,
-        MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH, MENU_DIAGNOSTICS, MENU_EXIT,
-        MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15, MENU_INTERVAL_30, MENU_INTERVAL_5,
-        MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO, MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH,
-        MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI, MENU_LANGUAGE_INDONESIAN,
-        MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN, MENU_LANGUAGE_PORTUGUESE_BRAZIL,
-        MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN,
-        MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY,
-        MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
-        MENU_USAGE_FORECAST_CLEAR_HISTORY, MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
+        ConsumptionPaceState, ConsumptionPaceView, ForecastView, LaunchMode, StartupStep, UiAction,
+        UiSettings, UsageProfileView, UsageRowView, WidgetDataState, WidgetViewModel,
+        MENU_ADD_USAGE_PROFILE, MENU_AUTH_REFRESH, MENU_AUTOSTART, MENU_AUTO_AUTH_REFRESH,
+        MENU_DIAGNOSTICS, MENU_EXIT, MENU_INTERVAL_1, MENU_INTERVAL_10, MENU_INTERVAL_15,
+        MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
+        MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
+        MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
+        MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
+        MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH,
+        MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
+        MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_USAGE_FORECAST_CLEAR_HISTORY,
+        MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, LocalizationKey, ProfileValidationError, StartupView,
-    TaskbarDisplayMode, UpdatePresentationStatus, UsageProfileId,
+    TaskbarDisplayMode, UpdatePresentationStatus, UsageLevel, UsageProfileId,
 };
 use windows::Win32::Foundation::HWND;
 
@@ -83,6 +85,77 @@ fn measuring_pace_view() -> ConsumptionPaceView {
         summary: String::new(),
         detail: None,
     }
+}
+
+fn taskbar_view(
+    data_state: WidgetDataState,
+    pace_state: ConsumptionPaceState,
+    used_percent: f64,
+) -> WidgetViewModel {
+    WidgetViewModel {
+        usage_profile_label: "Main".to_owned(),
+        primary: None,
+        secondary: Some(UsageRowView {
+            label: "7d".to_owned(),
+            used_percent,
+            display_percent: used_percent,
+            percent_text: format!("{used_percent:.0}%"),
+            reset_text: "tomorrow".to_owned(),
+            level: UsageLevel::Danger,
+            forecast: ForecastView::Hidden,
+        }),
+        status: "Polling".to_owned(),
+        last_success: String::new(),
+        is_stale: false,
+        taskbar_label: "Weekly usage".to_owned(),
+        taskbar_tooltip: String::new(),
+        reset_credits_text: None,
+        data_state,
+        consumption_pace: ConsumptionPaceView {
+            state: pace_state,
+            summary: String::new(),
+            detail: None,
+        },
+    }
+}
+
+#[test]
+fn taskbar_dot_uses_pace_while_progress_uses_current_usage_risk() {
+    let view = taskbar_view(
+        WidgetDataState::Ready,
+        ConsumptionPaceState::Comfortable,
+        95.0,
+    );
+
+    let visual = taskbar_visual_state(&view);
+
+    assert_eq!(visual.indicator, TaskbarIndicator::Comfortable);
+    assert_eq!(visual.progress_risk, TaskbarRisk::Critical);
+}
+
+#[test]
+fn loading_and_error_override_the_pace_dot() {
+    let loading = taskbar_view(WidgetDataState::Loading, ConsumptionPaceState::Fast, 95.0);
+    let error = taskbar_view(
+        WidgetDataState::Error,
+        ConsumptionPaceState::Comfortable,
+        95.0,
+    );
+
+    assert_eq!(
+        taskbar_visual_state(&loading),
+        TaskbarVisualState {
+            indicator: TaskbarIndicator::Neutral,
+            progress_risk: TaskbarRisk::Critical,
+        }
+    );
+    assert_eq!(
+        taskbar_visual_state(&error),
+        TaskbarVisualState {
+            indicator: TaskbarIndicator::Error,
+            progress_risk: TaskbarRisk::Critical,
+        }
+    );
 }
 
 #[test]
