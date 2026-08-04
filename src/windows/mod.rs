@@ -616,7 +616,7 @@ pub fn profile_taskbar_tooltip(
     language: Language,
 ) -> String {
     format!(
-        "{}: {usage_profile_label}\n{}\n{details}",
+        "{}: {usage_profile_label}\n{}\n\n{details}",
         crate::localized_text(crate::LocalizationKey::MenuUsageProfiles, language),
         crate::localized_text(crate::LocalizationKey::UsageProfileCliUnchanged, language),
     )

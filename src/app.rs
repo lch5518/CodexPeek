@@ -1632,7 +1632,7 @@ fn append_forecast_tooltip(
         ));
     }
     if !lines.is_empty() {
-        result.push('\n');
+        result.push_str("\n\n");
         result.push_str(&lines.join("\n"));
     }
     result
@@ -1669,7 +1669,7 @@ fn taskbar_copy(
         .unwrap_or_default();
     let tooltip = match (row, language) {
         (Some(row), Language::Korean) => format!(
-            "Codex {} 사용량\n현재 사용량: {:.0}%\n남은 사용량: {:.0}%\n초기화 시각: {}{reset_line}\n상태: {} · {status}",
+            "Codex {} 사용량\n현재 사용량: {:.0}% · 남은 사용량: {:.0}%\n초기화 시각: {}{reset_line}\n상태: {} · {status}",
             row.label,
             row.used_percent,
             (100.0 - row.used_percent).max(0.0),
@@ -1677,7 +1677,7 @@ fn taskbar_copy(
             taskbar_risk_text(row.used_percent, language),
         ),
         (Some(row), Language::English) => format!(
-            "Codex {} usage\nCurrent usage: {:.0}%\nRemaining: {:.0}%\nReset at: {}{reset_line}\nStatus: {} · {status}",
+            "Codex {} usage\nCurrent usage: {:.0}% · Remaining: {:.0}%\nReset at: {}{reset_line}\nStatus: {} · {status}",
             row.label,
             row.used_percent,
             (100.0 - row.used_percent).max(0.0),
@@ -1687,7 +1687,7 @@ fn taskbar_copy(
         (None, Language::Korean) => format!("Codex 사용량{reset_line}\n상태: {status}"),
         (None, Language::English) => format!("Codex usage{reset_line}\nStatus: {status}"),
         (Some(row), language) => format!(
-            "{} {}\n{}: {:.0}%\n{}: {:.0}%\n{}: {}{reset_line}\n{}: {} · {status}",
+            "{} {}\n{}: {:.0}% · {}: {:.0}%\n{}: {}{reset_line}\n{}: {} · {status}",
             taskbar_usage_title_prefix(language),
             row.label,
             current_usage_label(language),
@@ -2954,8 +2954,9 @@ mod tests {
         );
         assert_eq!(korean.label, "주간 사용량");
         assert!(korean.tooltip.starts_with("Codex 7일 사용량\n"));
-        assert!(korean.tooltip.contains("현재 사용량: 8%"));
-        assert!(korean.tooltip.contains("남은 사용량: 92%"));
+        assert!(korean
+            .tooltip
+            .contains("현재 사용량: 8% · 남은 사용량: 92%"));
         assert!(korean
             .tooltip
             .contains("초기화 시각: 2026-07-27 (월) 03:00"));
@@ -2975,8 +2976,9 @@ mod tests {
         );
         assert_eq!(english.label, "Weekly usage");
         assert!(english.tooltip.starts_with("Codex 7d usage\n"));
-        assert!(english.tooltip.contains("Current usage: 8%"));
-        assert!(english.tooltip.contains("Remaining: 92%"));
+        assert!(english
+            .tooltip
+            .contains("Current usage: 8% · Remaining: 92%"));
         assert!(english.tooltip.contains("Reset at: 2026-07-27 (Mon) 03:00"));
         assert!(english.tooltip.contains("Status: Healthy"));
 
@@ -3229,6 +3231,7 @@ mod tests {
             Some(&secondary),
             Language::English,
         );
+        assert!(tooltip.contains("Status: Polling\n\nPrimary window:"));
         assert!(tooltip
             .ends_with("Primary window: primary estimate\nSecondary window: secondary collecting"));
         assert!(
