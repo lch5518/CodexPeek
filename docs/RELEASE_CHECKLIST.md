@@ -165,6 +165,19 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Repeat forecast rendering in all 12 supported locales, including Arabic RTL and long
       strings, at 100%, 125%, 150%, and 200% DPI. Check the details/tooltip has no clipping and
       remains readable after Explorer restart, on a single monitor, and on multiple monitors.
+- [ ] After three samples spanning at least 30 minutes with flat or low activity, verify a green
+      dot and the localized **Comfortable** pace copy appear even when no exhaustion forecast is
+      shown.
+- [ ] Verify the pace-to-safe-rate ratios at exactly 0.5 and 1.0 switch the dot to amber and red,
+      respectively.
+- [ ] With current usage at 95% and a comfortable pace, verify the progress bar stays red while
+      the upper-left dot stays green.
+- [ ] Verify dot precedence: loading is gray, stale history or a missing reset time is gray, and a
+      refresh error uses the red `!` even when a pace was previously available.
+- [ ] Disable **Usage forecasting** and verify the dot is gray and the tooltip says the pace
+      display is off.
+- [ ] Repeat pace rendering in all 12 locales, light and dark themes, 100%, 125%, 150%, and 200%
+      DPI, the minimal layout, and after an Explorer restart.
 
 ### Usage-profile dialog and sign-in matrix
 

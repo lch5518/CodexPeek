@@ -27,6 +27,12 @@ or change OpenAI's actual limit policy. Forecasting is enabled by default. Use t
 **Usage forecasting** submenu to disable it or choose **Clear usage forecast history**. The clear
 action removes all stored samples; deleting a managed profile removes that profile's samples.
 
+The widget's upper-left dot summarizes the displayed window's current usage pace: green means
+comfortable, amber means moderate, and red means the current pace may exhaust the limit before
+reset. Hover details explain the rating using recent observation time, usage increase, and
+approximate hourly rate. Loading or unavailable measurements use gray; a refresh error keeps the
+red exclamation mark.
+
 ## How it works
 
 The monitor starts `codex app-server --stdio` as a local child process and exchanges JSONL messages over standard input and output.
