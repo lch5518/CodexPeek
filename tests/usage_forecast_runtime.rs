@@ -10,9 +10,9 @@ use std::{
 };
 
 use codex_usage_monitor::{
-    CodexUsage, ForecastPolicy, ForecastResult, SafeDiagnostic, UsageForecastService, UsageHistory,
-    UsageHistoryOperation, UsageHistoryStore, UsageProfileId, UsageSample, UsageSampleSink,
-    UsageWindow, WindowKind,
+    CodexUsage, ConsumptionPaceAssessment, ConsumptionPaceLevel, ForecastPolicy, ForecastResult,
+    SafeDiagnostic, UsageForecastService, UsageHistory, UsageHistoryOperation, UsageHistoryStore,
+    UsageProfileId, UsageSample, UsageSampleSink, UsageWindow, WindowKind,
 };
 
 static TEST_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -97,6 +97,54 @@ fn wait_for_forecast(
         assert!(Instant::now() < deadline, "forecast was not cached in time");
         thread::yield_now();
     }
+}
+
+fn wait_for_pace(
+    service: &UsageForecastService,
+    id: UsageProfileId,
+    kind: WindowKind,
+    now: SystemTime,
+) -> ConsumptionPaceAssessment {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(result @ ConsumptionPaceAssessment::Ready(_)) = service.pace_at(id, kind, now) {
+            return result;
+        }
+        assert!(Instant::now() < deadline, "pace was not cached in time");
+        thread::yield_now();
+    }
+}
+
+#[test]
+fn low_activity_pace_is_cached_even_without_an_exhaustion_forecast() {
+    let root = TestRoot::new("low-activity-pace");
+    let service = UsageForecastService::start(
+        UsageHistoryStore::for_root(&root.0),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    );
+    let now = SystemTime::now();
+    let reset = now + Duration::from_secs(10 * 60 * 60);
+    for (minutes_ago, percent) in [(120, 10.0), (60, 10.5), (0, 10.9)] {
+        let observed_at = now - Duration::from_secs(minutes_ago * 60);
+        service.record_success(
+            UsageProfileId::System,
+            &usage(WindowKind::Secondary, percent, reset, observed_at),
+            observed_at,
+        );
+    }
+
+    assert_eq!(
+        wait_for_forecast(&service, UsageProfileId::System, WindowKind::Secondary, now,),
+        ForecastResult::InsufficientActivity
+    );
+    let ConsumptionPaceAssessment::Ready(metrics) =
+        wait_for_pace(&service, UsageProfileId::System, WindowKind::Secondary, now)
+    else {
+        unreachable!();
+    };
+    assert_eq!(metrics.level, ConsumptionPaceLevel::Comfortable);
+    service.stop();
 }
 
 #[test]
@@ -223,16 +271,64 @@ fn disabled_cleared_and_removed_profiles_do_not_expose_cached_forecasts() {
         service.forecast_at(UsageProfileId::System, WindowKind::Primary, now),
         None
     );
+    assert_eq!(
+        service.pace_at(UsageProfileId::System, WindowKind::Primary, now),
+        None
+    );
     service.set_enabled(true);
     service.clear_all();
     assert_eq!(
         service.forecast_at(UsageProfileId::System, WindowKind::Primary, now),
         None
     );
+    assert_eq!(
+        service.pace_at(UsageProfileId::System, WindowKind::Primary, now),
+        None
+    );
     service.remove_profile(UsageProfileId::System);
     assert_eq!(
         service.forecast_at(UsageProfileId::System, WindowKind::Primary, now),
         None
+    );
+    assert_eq!(
+        service.pace_at(UsageProfileId::System, WindowKind::Primary, now),
+        None
+    );
+    service.stop();
+}
+
+#[test]
+fn stale_pace_does_not_expose_an_old_consumption_speed() {
+    let root = TestRoot::new("stale-pace");
+    let service = UsageForecastService::start(
+        UsageHistoryStore::for_root(&root.0),
+        [UsageProfileId::System],
+        ForecastPolicy::new(Duration::from_secs(60)),
+    );
+    let now = SystemTime::now();
+    service.record_success(
+        UsageProfileId::System,
+        &usage(
+            WindowKind::Primary,
+            10.0,
+            now + Duration::from_secs(60 * 60),
+            now,
+        ),
+        now,
+    );
+    let _ = wait_for_forecast(&service, UsageProfileId::System, WindowKind::Primary, now);
+
+    assert!(matches!(
+        service.pace_at(UsageProfileId::System, WindowKind::Primary, now),
+        Some(ConsumptionPaceAssessment::Measuring { .. })
+    ));
+    assert_eq!(
+        service.pace_at(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            now + Duration::from_secs(10 * 60 + 1),
+        ),
+        Some(ConsumptionPaceAssessment::Unavailable)
     );
     service.stop();
 }

@@ -6,9 +6,9 @@ use std::{
 };
 
 use crate::{
-    CodexUsage, ForecastEngine, ForecastPolicy, ForecastResult, SafeDiagnostic, UsageHistory,
-    UsageHistoryOperation, UsageHistoryStore, UsageProfileId, UsageSample, UsageSampleSink,
-    WindowKind,
+    CodexUsage, ConsumptionPaceAssessment, ForecastAnalysis, ForecastEngine, ForecastPolicy,
+    ForecastResult, SafeDiagnostic, UsageHistory, UsageHistoryOperation, UsageHistoryStore,
+    UsageProfileId, UsageSample, UsageSampleSink, WindowKind,
 };
 
 const COMMAND_CAPACITY: usize = 64;
@@ -34,14 +34,14 @@ struct ForecastShared {
     policy: ForecastPolicy,
     active: HashMap<UsageProfileId, u64>,
     generations: HashMap<UsageProfileId, u64>,
-    cache: HashMap<(UsageProfileId, WindowKind), CachedForecast>,
+    cache: HashMap<(UsageProfileId, WindowKind), CachedAnalysis>,
     diagnostics: Vec<SafeDiagnostic>,
 }
 
 #[derive(Clone)]
-struct CachedForecast {
+struct CachedAnalysis {
     observed_at: SystemTime,
-    result: ForecastResult,
+    analysis: ForecastAnalysis,
 }
 
 struct ForecastSample {
@@ -225,7 +225,34 @@ impl UsageForecastService {
             {
                 ForecastResult::Stale
             } else {
-                cached.result.clone()
+                cached.analysis.forecast.clone()
+            }
+        })
+    }
+
+    /// 지정한 사용량 창의 최근 소비 속도 평가를 복사합니다.
+    ///
+    /// `profile_id`와 `window_kind`가 활성 캐시에 없으면 `None`을 반환합니다. `now` 기준으로
+    /// 캐시가 오래되었으면 점 색상이 오래된 측정값을 나타내지 않도록 `Unavailable`을 반환합니다.
+    /// 파일 I/O는 수행하지 않습니다.
+    pub fn pace_at(
+        &self,
+        profile_id: UsageProfileId,
+        window_kind: WindowKind,
+        now: SystemTime,
+    ) -> Option<ConsumptionPaceAssessment> {
+        let shared = lock(&self.shared);
+        if !shared.enabled || !shared.active.contains_key(&profile_id) {
+            return None;
+        }
+        shared.cache.get(&(profile_id, window_kind)).map(|cached| {
+            if now
+                .duration_since(cached.observed_at)
+                .map_or(true, |age| age > shared.policy.stale_after())
+            {
+                ConsumptionPaceAssessment::Unavailable
+            } else {
+                cached.analysis.pace.clone()
             }
         })
     }
@@ -519,15 +546,15 @@ fn cache_usage(
             .samples_for(profile_id, window.kind)
             .cloned()
             .collect::<Vec<_>>();
-        let result =
-            ForecastEngine::calculate(&samples, window, observed_at, observed_at, false, &policy);
+        let analysis =
+            ForecastEngine::analyze(&samples, window, observed_at, observed_at, false, &policy);
         let mut state = lock(shared);
         if state.enabled && state.active.get(&profile_id) == Some(&generation) {
             state.cache.insert(
                 (profile_id, window.kind),
-                CachedForecast {
+                CachedAnalysis {
                     observed_at,
-                    result,
+                    analysis,
                 },
             );
         }
