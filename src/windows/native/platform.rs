@@ -77,8 +77,8 @@ use super::super::{
     },
     taskbar_widget::{
         profile_header_text, progress_fill_width, select_weekly_row, taskbar_visual_state,
-        widget_surface_layout, HoverTransition, TaskbarIndicator, TaskbarLayout, TaskbarLayoutMode,
-        TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
+        tooltip_text_needs_update, widget_surface_layout, HoverTransition, TaskbarIndicator,
+        TaskbarLayout, TaskbarLayoutMode, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
     theme,
     tray::{AsyncTrayIcon, TrayIcon, TRAY_CALLBACK},
@@ -1043,6 +1043,9 @@ unsafe fn update_tooltips(state_pointer: *mut NativeState<'_>) {
         .collect();
     let state = &mut *state_pointer;
     for widget in &mut state.widgets {
+        if !tooltip_text_needs_update(&widget.tooltip_text, &tooltip_text) {
+            continue;
+        }
         widget.tooltip_text = tooltip_text.clone();
         if widget.tooltip == HWND::default() {
             continue;

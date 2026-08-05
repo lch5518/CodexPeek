@@ -71,6 +71,14 @@ pub struct HoverTransition {
     target: u8,
 }
 
+/// 저장된 UTF-16 툴팁과 새 문자열이 달라 네이티브 갱신이 필요한지 판단합니다.
+///
+/// 동일한 문자열에는 `false`를 반환해, 표시 중인 Windows 툴팁에 불필요한 갱신 메시지를
+/// 보내지 않도록 합니다. 입력 버퍼의 소유권이나 문자열 종료 방식은 변경하지 않습니다.
+pub(crate) fn tooltip_text_needs_update(previous: &[u16], next: &[u16]) -> bool {
+    previous != next
+}
+
 impl HoverTransition {
     /// 마우스 진입 여부에 맞춰 새 목표를 설정하며 현재 값은 유지합니다.
     pub fn set_hovered(&mut self, hovered: bool) {
@@ -274,7 +282,7 @@ impl TaskbarLayout {
 
 #[cfg(test)]
 mod tests {
-    use super::progress_fill_width;
+    use super::{progress_fill_width, tooltip_text_needs_update};
 
     #[test]
     fn progress_fill_width_follows_the_display_percent_and_clamps_it() {
@@ -282,5 +290,24 @@ mod tests {
         assert_eq!(progress_fill_width(100, 80.0), 80);
         assert_eq!(progress_fill_width(100, -1.0), 0);
         assert_eq!(progress_fill_width(100, 125.0), 100);
+    }
+
+    #[test]
+    fn unchanged_tooltip_text_does_not_need_a_native_update() {
+        let text = "Codex usage\nStatus: Polling";
+        let encoded: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+
+        assert!(!tooltip_text_needs_update(&encoded, &encoded));
+    }
+
+    #[test]
+    fn changed_tooltip_text_needs_a_native_update() {
+        let previous: Vec<u16> = "Codex usage".encode_utf16().chain(Some(0)).collect();
+        let next: Vec<u16> = "Codex usage\nStatus: Polling"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+
+        assert!(tooltip_text_needs_update(&previous, &next));
     }
 }
