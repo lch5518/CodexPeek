@@ -68,7 +68,7 @@ use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
     profile_dialog::{
-        confirm_profile_login_owned, show_profile_manager_owned, show_profile_message,
+        confirm_profile_login_owned, show_profile_manager_owned_live, show_profile_message,
         ProfileMessageRoute,
     },
     taskbar::{
@@ -689,17 +689,25 @@ unsafe fn dispatch_action(state_pointer: *mut NativeState<'_>, action: UiAction)
 unsafe fn open_profile_dialog(state_pointer: *mut NativeState<'_>) {
     let settings = (*state_pointer).backend.settings();
     (*state_pointer).settings = settings;
-    let state = &*state_pointer;
-    let result = show_profile_manager_owned(
-        state.owner,
-        &state.settings.usage_profiles,
-        state.settings.usage_profile_mutation_pending,
-        state.settings.resolved_language,
-    );
+    let owner = (*state_pointer).owner;
+    let profiles = (*state_pointer).settings.usage_profiles.clone();
+    let mutation_pending = (*state_pointer).settings.usage_profile_mutation_pending;
+    let language = (*state_pointer).settings.resolved_language;
+    let mut refresh = || {
+        let settings = (*state_pointer).backend.settings();
+        let snapshot = (
+            settings.usage_profiles.clone(),
+            settings.usage_profile_mutation_pending,
+        );
+        (*state_pointer).settings = settings;
+        snapshot
+    };
+    let result =
+        show_profile_manager_owned_live(owner, &profiles, mutation_pending, language, &mut refresh);
     match result {
         Ok(Some(action)) => dispatch_action(state_pointer, profile_dialog_ui_action(action)),
         Ok(None) => {}
-        Err(_) => show_profile_dialog_error(state.owner, state.settings.resolved_language),
+        Err(_) => show_profile_dialog_error(owner, language),
     }
 }
 

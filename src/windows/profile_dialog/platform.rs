@@ -40,20 +40,20 @@ use windows::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
                 EnumChildWindows, GetClientRect, GetCursorPos, GetDlgItem, GetMessageW,
                 GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsWindow,
-                IsWindowVisible, LoadCursorW, MessageBoxW, PostQuitMessage, RegisterClassW,
-                SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-                SetWindowsHookExW, ShowWindow, TranslateMessage, UnhookWindowsHookEx,
-                BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-                GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL, IDC_ARROW, IDOK, IDYES,
-                LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
-                LBS_OWNERDRAWFIXED, LB_ADDSTRING, LB_GETCURSEL, LB_SETCURSEL, LB_SETITEMHEIGHT,
-                MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO, MESSAGEBOX_RESULT,
-                MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-                SW_SHOW, WH_CBT, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
+                IsWindowVisible, KillTimer, LoadCursorW, MessageBoxW, PostQuitMessage,
+                RegisterClassW, SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
+                SetWindowPos, SetWindowTextW, SetWindowsHookExW, ShowWindow, TranslateMessage,
+                UnhookWindowsHookEx, BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
+                CW_USEDEFAULT, GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL, IDC_ARROW,
+                IDOK, IDYES, LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
+                LBS_OWNERDRAWFIXED, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL,
+                LB_SETITEMHEIGHT, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_OKCANCEL, MB_YESNO,
+                MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                SWP_NOZORDER, SW_SHOW, WH_CBT, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND,
                 WM_CTLCOLORBTN, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
                 WM_DPICHANGED, WM_DRAWITEM, WM_ERASEBKGND, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY,
-                WM_SETFONT, WM_SETTINGCHANGE, WM_THEMECHANGED, WNDCLASSW, WS_BORDER, WS_CAPTION,
-                WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_LAYOUTRTL, WS_EX_NOINHERITLAYOUT,
+                WM_SETFONT, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_BORDER,
+                WS_CAPTION, WS_CHILD, WS_EX_DLGMODALFRAME, WS_EX_LAYOUTRTL, WS_EX_NOINHERITLAYOUT,
                 WS_EX_RTLREADING, WS_EX_TOOLWINDOW, WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
                 WS_VSCROLL,
             },
@@ -94,6 +94,8 @@ const LOGIN_ID: i32 = 4104;
 const LOGOUT_ID: i32 = 4105;
 const DELETE_ID: i32 = 4106;
 const ADD_PROFILE_NAME_ID: i32 = 4200;
+const PROFILE_REFRESH_TIMER_ID: usize = 1;
+const PROFILE_REFRESH_INTERVAL_MS: u32 = 250;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DialogFontFace {
@@ -2588,7 +2590,9 @@ pub(super) fn show_profile_manager(
     mutation_pending: bool,
     language: Language,
 ) -> io::Result<Option<ProfileDialogAction>> {
-    unsafe { show_profile_manager_owned(HWND::default(), profiles, mutation_pending, language) }
+    unsafe {
+        show_profile_manager_owned(HWND::default(), profiles, mutation_pending, language, None)
+    }
 }
 
 pub(super) unsafe fn show_profile_manager_owned(
@@ -2596,6 +2600,7 @@ pub(super) unsafe fn show_profile_manager_owned(
     profiles: &[UsageProfileView],
     mutation_pending: bool,
     language: Language,
+    mut refresh: Option<&mut dyn FnMut() -> (Vec<UsageProfileView>, bool)>,
 ) -> io::Result<Option<ProfileDialogAction>> {
     let module = GetModuleHandleW(None).map_err(win_error)?;
     let instance = HINSTANCE(module.0);
@@ -2657,7 +2662,34 @@ pub(super) unsafe fn show_profile_manager_owned(
     let _ = SetForegroundWindow(dialog);
     let _ = SetFocus(Some(state.edit));
 
-    run_modal_message_loop(dialog)?;
+    if refresh.is_some()
+        && SetTimer(
+            Some(dialog),
+            PROFILE_REFRESH_TIMER_ID,
+            PROFILE_REFRESH_INTERVAL_MS,
+            None,
+        ) == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let loop_result = run_modal_message_loop(dialog, |message| {
+        if message.hwnd == dialog
+            && message.message == WM_TIMER
+            && message.wParam.0 == PROFILE_REFRESH_TIMER_ID
+        {
+            if let Some(refresh) = refresh.as_mut() {
+                let (profiles, mutation_pending) = refresh();
+                refresh_profile_manager(dialog, &mut state, &profiles, mutation_pending);
+            }
+            true
+        } else {
+            false
+        }
+    });
+    if refresh.is_some() {
+        let _ = KillTimer(Some(dialog), PROFILE_REFRESH_TIMER_ID);
+    }
+    loop_result?;
     Ok(state.interaction.take_result())
 }
 
@@ -2736,7 +2768,7 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
     let _ = SetForegroundWindow(dialog);
     let _ = SetFocus(Some(state.edit));
 
-    run_modal_message_loop(dialog)?;
+    run_modal_message_loop(dialog, |_| false)?;
     Ok(state.result.take())
 }
 
@@ -2744,7 +2776,10 @@ pub(super) unsafe fn show_add_profile_prompt_owned(
 ///
 /// 스레드 종료 메시지를 소비하면 바깥 메시지 루프가 같은 종료 코드를 받을 수 있도록 다시
 /// 게시합니다. 창 수명과 소유자 복원은 호출자가 보유한 `ModalWindowGuard`가 담당합니다.
-unsafe fn run_modal_message_loop(dialog: HWND) -> io::Result<()> {
+unsafe fn run_modal_message_loop<F>(dialog: HWND, mut intercept: F) -> io::Result<()>
+where
+    F: FnMut(&MSG) -> bool,
+{
     let mut quit_code = None;
     while IsWindow(Some(dialog)).as_bool() {
         let mut message = MSG::default();
@@ -2755,6 +2790,9 @@ unsafe fn run_modal_message_loop(dialog: HWND) -> io::Result<()> {
         if status.0 == 0 {
             quit_code = Some(message.wParam.0 as i32);
             break;
+        }
+        if intercept(&message) {
+            continue;
         }
         if !IsDialogMessageW(dialog, &message).as_bool() {
             let _ = TranslateMessage(&message);
@@ -3715,6 +3753,67 @@ fn read_profile_label(edit: HWND) -> io::Result<String> {
 }
 
 unsafe fn update_controls(hwnd: HWND, state: &DialogState) {
+    update_control_enablement(hwnd, state);
+    update_selected_profile_label(state);
+}
+
+/// 백엔드 작업 완료 후 열린 관리자에 최신 프로필과 버튼 상태를 반영합니다.
+///
+/// 프로필 행이 바뀌지 않은 틱에는 편집 중인 이름을 덮어쓰지 않습니다. 행이 바뀌더라도 같은
+/// 프로필의 표시 이름이 유지되면 편집 내용을 보존하고, 선택 대상 또는 이름이 실제로 바뀐
+/// 경우에만 edit 컨트롤을 동기화합니다.
+unsafe fn refresh_profile_manager(
+    hwnd: HWND,
+    state: &mut DialogState,
+    profiles: &[UsageProfileView],
+    mutation_pending: bool,
+) {
+    let previous_selection = state
+        .controller
+        .selected_profile()
+        .map(|profile| (profile.id, profile.label.clone()));
+    let profiles_changed = state.controller.refresh(profiles, mutation_pending);
+    update_control_enablement(hwnd, state);
+    if !profiles_changed {
+        return;
+    }
+
+    let _ = SendMessageW(state.list, LB_RESETCONTENT, None, None);
+    for profile in profiles {
+        let line = wide(&profile_manager_accessible_row_text(
+            profile,
+            state.language,
+        ));
+        if SendMessageW(
+            state.list,
+            LB_ADDSTRING,
+            None,
+            Some(LPARAM(line.as_ptr() as isize)),
+        )
+        .0 < 0
+        {
+            break;
+        }
+    }
+    if let Some(selected) = state.controller.selected_profile() {
+        if let Some(index) = profiles
+            .iter()
+            .position(|profile| profile.id == selected.id)
+        {
+            let _ = SendMessageW(state.list, LB_SETCURSEL, Some(WPARAM(index)), None);
+        }
+    }
+    let current_selection = state
+        .controller
+        .selected_profile()
+        .map(|profile| (profile.id, profile.label.clone()));
+    if current_selection != previous_selection {
+        update_selected_profile_label(state);
+    }
+    let _ = InvalidateRect(Some(state.list), None, true);
+}
+
+unsafe fn update_control_enablement(hwnd: HWND, state: &DialogState) {
     for control in PROFILE_MANAGER_CONTROLS {
         set_enabled(
             hwnd,
@@ -3722,6 +3821,9 @@ unsafe fn update_controls(hwnd: HWND, state: &DialogState) {
             profile_manager_control_enabled(&state.controller, control),
         );
     }
+}
+
+unsafe fn update_selected_profile_label(state: &DialogState) {
     if let Some(profile) = state.controller.selected_profile() {
         let label = wide(&profile.label);
         let _ = SetWindowTextW(state.edit, PCWSTR(label.as_ptr()));
@@ -3848,18 +3950,27 @@ fn win_error(error: windows::core::Error) -> io::Error {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, collections::VecDeque, ffi::c_void, io, rc::Rc, thread};
+    use std::{
+        cell::RefCell,
+        collections::VecDeque,
+        ffi::c_void,
+        io,
+        rc::Rc,
+        thread,
+        time::{Duration, Instant},
+    };
 
     use windows::Win32::{
-        Foundation::{COLORREF, HWND, RECT},
+        Foundation::{COLORREF, HWND, LPARAM, RECT, WPARAM},
         Graphics::Gdi::{
             BACKGROUND_MODE, CLR_INVALID, DRAW_TEXT_FORMAT, DT_END_ELLIPSIS, DT_RIGHT,
             DT_RTLREADING, HBRUSH, HFONT, HGDIOBJ,
         },
         UI::Controls::{CDIS_DEFAULT, CDIS_FOCUS, TTF_IDISHWND, TTF_RTLREADING, TTF_SUBCLASS},
+        UI::Input::KeyboardAndMouse::IsWindowEnabled,
         UI::WindowsAndMessaging::{
-            IDCANCEL, IDOK, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT,
-            MESSAGEBOX_STYLE,
+            FindWindowW, GetDlgItem, PostMessageW, IDCANCEL, IDOK, IDYES, MB_ICONERROR,
+            MB_ICONWARNING, MB_OK, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, WM_CLOSE,
         },
     };
 
@@ -3880,14 +3991,15 @@ mod tests {
         handle_manager_rename_result_with_presenter, paint_primary_button,
         paint_profile_row_with_fallback, primary_button_paint_state, profile_row_content_padding,
         profile_row_first_line_layout, profile_row_surface_color, profile_row_visual_state,
-        show_add_dialog_warning_with_presenter, show_safe_error_with_presenter,
-        update_dialog_visual_resources, AddDialogState, AddProfilePromptCommand,
-        CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard, DialogFontFace,
-        DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome, DialogWindowSize,
-        DialogWorkArea, PrimaryButtonBrushBackend, PrimaryButtonCue, PrimaryButtonPaintBackend,
-        PrimaryButtonPaintStage, ProfileDialogController, ProfileMessagePresenter,
-        ProfileMessageRoute, ProfileRowFillStage, ProfileRowPaintBackend, ProfileRowPaintResources,
-        ProfileRowSurfaceRole, ProfileRowTextStage, UsageProfileView,
+        show_add_dialog_warning_with_presenter, show_profile_manager_owned,
+        show_safe_error_with_presenter, update_dialog_visual_resources, AddDialogState,
+        AddProfilePromptCommand, CenteredMessageBoxHookBackend, CenteredMessageBoxHookGuard,
+        DialogFontFace, DialogResourceBackend, DialogVisualResources, DialogVisualUpdateOutcome,
+        DialogWindowSize, DialogWorkArea, PrimaryButtonBrushBackend, PrimaryButtonCue,
+        PrimaryButtonPaintBackend, PrimaryButtonPaintStage, ProfileDialogController,
+        ProfileMessagePresenter, ProfileMessageRoute, ProfileRowFillStage, ProfileRowPaintBackend,
+        ProfileRowPaintResources, ProfileRowSurfaceRole, ProfileRowTextStage, UsageProfileView,
+        DELETE_ID, DIALOG_CLASS, LOGIN_ID, LOGOUT_ID, RENAME_ID,
     };
 
     fn mirrored_parent_physical_rect(
@@ -3900,6 +4012,78 @@ mod tests {
             width - rect.left,
             rect.bottom,
         )
+    }
+
+    #[test]
+    #[ignore = "requires a live Windows desktop"]
+    fn live_manager_reenables_native_profile_buttons_after_pending_refresh() {
+        let profile = UsageProfileView {
+            id: UsageProfileId::Managed(1),
+            label: "Work".to_string(),
+            summary: String::new(),
+            details: String::new(),
+            selected: true,
+            login_required: false,
+            used_percent: None,
+            usage_status: None,
+            managed: true,
+        };
+        let observer = thread::spawn(|| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut saw_disabled = false;
+            loop {
+                if let Ok(dialog) =
+                    unsafe { FindWindowW(DIALOG_CLASS, windows::core::PCWSTR::null()) }
+                {
+                    let enabled =
+                        [RENAME_ID, LOGIN_ID, LOGOUT_ID, DELETE_ID]
+                            .into_iter()
+                            .all(|id| {
+                                unsafe { GetDlgItem(Some(dialog), id) }
+                                    .map(|control| unsafe { IsWindowEnabled(control).as_bool() })
+                                    .unwrap_or(false)
+                            });
+                    if enabled {
+                        let _ =
+                            unsafe { PostMessageW(Some(dialog), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+                        return saw_disabled
+                            .then_some(())
+                            .ok_or("profile buttons never exposed their pending disabled state");
+                    }
+                    saw_disabled = true;
+                }
+                if Instant::now() >= deadline {
+                    if let Ok(dialog) =
+                        unsafe { FindWindowW(DIALOG_CLASS, windows::core::PCWSTR::null()) }
+                    {
+                        let _ =
+                            unsafe { PostMessageW(Some(dialog), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+                    }
+                    return Err("profile buttons were not re-enabled before the timeout");
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+        });
+
+        let refreshed_profile = profile.clone();
+        let mut refresh_count = 0;
+        let mut refresh = || {
+            refresh_count += 1;
+            (vec![refreshed_profile.clone()], refresh_count < 4)
+        };
+        let result = unsafe {
+            show_profile_manager_owned(
+                HWND::default(),
+                std::slice::from_ref(&profile),
+                true,
+                Language::English,
+                Some(&mut refresh),
+            )
+        };
+
+        assert_eq!(result.unwrap(), None);
+        observer.join().unwrap().unwrap();
+        assert!(refresh_count >= 4);
     }
 
     #[test]

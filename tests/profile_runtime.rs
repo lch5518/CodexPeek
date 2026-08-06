@@ -676,6 +676,7 @@ fn successful_login_selects_durably_before_forced_refresh() {
         runtime.poll_commands(),
         ["select:managed-1", "refresh:forced-auth"]
     );
+    assert!(!runtime.state.mutation_pending());
 }
 
 #[test]
@@ -700,6 +701,7 @@ fn cancelled_login_retains_login_required_without_selecting_profile() {
         runtime.state.settings().usage_profiles.selected(),
         UsageProfileId::System
     );
+    assert!(!runtime.state.mutation_pending());
 }
 
 #[test]

@@ -674,6 +674,23 @@ impl ProfileDialogController {
         true
     }
 
+    /// 열린 대화상자에 최신 표시 프로필과 변경 진행 상태를 반영합니다.
+    ///
+    /// 현재 사용자가 선택한 프로필 ID가 새 복사본에도 있으면 그 선택을 유지합니다. 프로필이
+    /// 삭제된 경우에는 백엔드가 선택한 항목, 그마저 없으면 첫 항목으로 안전하게 이동합니다.
+    /// 반환값은 목록 행이 바뀌어 네이티브 목록을 다시 채워야 하는지 나타냅니다.
+    pub fn refresh(&mut self, profiles: &[UsageProfileView], mutation_pending: bool) -> bool {
+        let selected_id = self.selected_profile().map(|profile| profile.id);
+        let profiles_changed = self.profiles != profiles;
+        self.profiles = profiles.to_vec();
+        self.selected_index = selected_id
+            .and_then(|id| self.profiles.iter().position(|profile| profile.id == id))
+            .or_else(|| self.profiles.iter().position(|profile| profile.selected))
+            .or_else(|| (!self.profiles.is_empty()).then_some(0));
+        self.mutation_pending = mutation_pending;
+        profiles_changed
+    }
+
     /// 현재 선택된 민감하지 않은 표시 프로필을 반환합니다.
     pub fn selected_profile(&self) -> Option<&UsageProfileView> {
         self.selected_index
@@ -938,18 +955,19 @@ pub fn show_profile_manager(
     }
 }
 
-/// 숨은 메시지 루프 창을 소유자로 사용해 프로필 관리 대화상자를 표시합니다.
+/// 열린 프로필 관리 창이 백엔드의 최신 비민감 표시 상태를 반영하도록 표시합니다.
 ///
-/// `owner`는 대화상자가 열린 동안만 비활성화되며 종료 시 복원됩니다. 반환된 작업은 검증된
-/// UI 의도일 뿐이며 이 함수는 Codex·파일·설정 I/O를 수행하지 않습니다.
+/// `refresh`는 UI 스레드의 짧은 타이머 틱에서 호출되며 파일 또는 Codex I/O를 수행하면 안 됩니다.
+/// 반환된 프로필 목록에는 `UsageProfileView`가 허용한 표시 정보만 포함되어야 합니다.
 #[cfg(windows)]
-pub(crate) unsafe fn show_profile_manager_owned(
+pub(crate) unsafe fn show_profile_manager_owned_live(
     owner: windows::Win32::Foundation::HWND,
     profiles: &[UsageProfileView],
     mutation_pending: bool,
     language: Language,
+    refresh: &mut dyn FnMut() -> (Vec<UsageProfileView>, bool),
 ) -> io::Result<Option<ProfileDialogAction>> {
-    platform::show_profile_manager_owned(owner, profiles, mutation_pending, language)
+    platform::show_profile_manager_owned(owner, profiles, mutation_pending, language, Some(refresh))
 }
 
 /// 숨은 메시지 루프 창을 소유자로 사용해 선택 프로필의 브라우저 로그인을 한 번 확인합니다.

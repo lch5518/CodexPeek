@@ -444,6 +444,44 @@ fn pending_profile_mutation_disables_every_mutating_control() {
 }
 
 #[test]
+fn profile_manager_reenables_selected_profile_actions_after_pending_operation_finishes() {
+    let profile = UsageProfileView {
+        id: UsageProfileId::Managed(1),
+        label: "Work".to_string(),
+        summary: String::new(),
+        details: String::new(),
+        selected: true,
+        login_required: true,
+        used_percent: None,
+        usage_status: None,
+        managed: true,
+    };
+    let mut controller = ProfileDialogController::new(std::slice::from_ref(&profile), true);
+
+    assert!(!controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Delete));
+
+    controller.refresh(std::slice::from_ref(&profile), false);
+
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(!controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(controller.command_enabled(ProfileDialogCommand::Delete));
+
+    let signed_in = UsageProfileView {
+        login_required: false,
+        ..profile
+    };
+    controller.refresh(std::slice::from_ref(&signed_in), false);
+
+    assert!(controller.command_enabled(ProfileDialogCommand::Rename));
+    assert!(controller.command_enabled(ProfileDialogCommand::Login));
+    assert!(controller.command_enabled(ProfileDialogCommand::Logout));
+    assert!(controller.command_enabled(ProfileDialogCommand::Delete));
+}
+
+#[test]
 fn modal_cleanup_destroys_live_window_and_restores_only_an_owner_it_disabled() {
     let mut active_owner = ModalDialogLifecycle::new(true, true);
     active_owner.window_created();
