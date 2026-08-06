@@ -172,6 +172,7 @@ pub fn taskbar_visual_state(view: &WidgetViewModel) -> TaskbarVisualState {
             ConsumptionPaceState::Normal => TaskbarIndicator::Normal,
             ConsumptionPaceState::Fast | ConsumptionPaceState::Exhausted => TaskbarIndicator::Fast,
             ConsumptionPaceState::Measuring
+            | ConsumptionPaceState::InsufficientActivity
             | ConsumptionPaceState::Unavailable
             | ConsumptionPaceState::Disabled => TaskbarIndicator::Neutral,
         },

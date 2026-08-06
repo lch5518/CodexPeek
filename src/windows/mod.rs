@@ -539,6 +539,8 @@ pub enum ConsumptionPaceState {
     Fast,
     /// 표본 수 또는 관측 시간이 아직 부족합니다.
     Measuring,
+    /// 사용량 변화가 작아 소비 속도를 계산할 수 없습니다.
+    InsufficientActivity,
     /// 최신 사용량이나 초기화 시각이 없어 판단할 수 없습니다.
     Unavailable,
     /// 사용량 소진 예측 기능이 꺼져 있습니다.

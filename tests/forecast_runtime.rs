@@ -275,6 +275,85 @@ fn low_activity_is_a_comfortable_pace_even_without_an_exhaustion_forecast() {
 }
 
 #[test]
+fn plateau_samples_do_not_make_active_rate_zero() {
+    let now = at(1_155_000);
+    let reset = now + Duration::from_secs(12 * 60 * 60);
+    let values = [
+        18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0,
+        18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 18.0, 24.0, 24.0, 25.0, 26.0, 27.0,
+        28.0, 28.0,
+    ];
+    let observed_at = (0..25)
+        .map(|index| {
+            now - Duration::from_secs(9 * 60 * 60 - u64::try_from(index).unwrap() * 5 * 60)
+        })
+        .chain([
+            now - Duration::from_secs(6 * 60 * 60),
+            now - Duration::from_secs(5 * 60 * 60),
+            now - Duration::from_secs(4 * 60 * 60),
+            now - Duration::from_secs(3 * 60 * 60),
+            now - Duration::from_secs(2 * 60 * 60),
+            now - Duration::from_secs(60 * 60),
+            now,
+        ])
+        .collect::<Vec<_>>();
+    let samples: Vec<_> = values
+        .into_iter()
+        .zip(observed_at)
+        .map(|(used_percent, observed_at)| {
+            sample(
+                UsageProfileId::System,
+                WindowKind::Primary,
+                used_percent,
+                Some(reset),
+                observed_at,
+            )
+        })
+        .collect();
+
+    let analysis = analyze(&samples, &window(28.0, Some(reset)), now);
+    let ForecastResult::ForecastAvailable(forecast) = analysis.forecast else {
+        panic!("expected an active forecast, got {:?}", analysis.forecast);
+    };
+    assert!(forecast.hourly_rate >= ForecastPolicy::MINIMUM_HOURLY_RATE);
+    assert!(matches!(analysis.pace, ConsumptionPaceAssessment::Ready(_)));
+}
+
+#[test]
+fn flat_usage_pace_is_explicitly_insufficient_activity() {
+    let now = at(1_156_000);
+    let reset = now + Duration::from_secs(12 * 60 * 60);
+    let samples = [
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(reset),
+            now - Duration::from_secs(2 * 60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(reset),
+            now - Duration::from_secs(60 * 60),
+        ),
+        sample(
+            UsageProfileId::System,
+            WindowKind::Primary,
+            10.0,
+            Some(reset),
+            now,
+        ),
+    ];
+
+    assert_eq!(
+        analyze(&samples, &window(10.0, Some(reset)), now).pace,
+        ConsumptionPaceAssessment::InsufficientActivity
+    );
+}
+
+#[test]
 fn pace_ratio_boundaries_are_normal_and_fast() {
     let now = at(1_160_000);
     let reset = now + Duration::from_secs(10 * 60 * 60);

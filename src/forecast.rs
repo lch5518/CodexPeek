@@ -27,6 +27,8 @@ impl ForecastPolicy {
     pub const MINIMUM_HOURLY_RATE: f64 = 0.05;
     /// Theil-Sen 기울기 계산에 사용하는 최대 최근 표본 수입니다.
     pub const MAX_SAMPLES: usize = 32;
+    /// 연속 표본이 기울기 중앙값을 지배하지 않도록 사용하는 최소 표본 간격입니다.
+    pub const MINIMUM_SLOPE_SPAN: Duration = Duration::from_secs(30 * 60);
 
     /// 지정한 폴링 간격을 이용해 v1 정책을 생성합니다.
     ///
@@ -122,6 +124,8 @@ pub enum ConsumptionPaceAssessment {
         /// 현재 연속 관측 구간의 관측 시간입니다.
         observation_span: Duration,
     },
+    /// 관측은 충분하지만 의미 있는 사용량 증가가 없어 속도를 계산할 수 없습니다.
+    InsufficientActivity,
     /// 초기화 기준 소비 속도와 관측 지표를 계산했습니다.
     Ready(ConsumptionPaceMetrics),
     /// 현재 사용량이 이미 100% 이상입니다.
@@ -323,13 +327,16 @@ fn consumption_pace(
         };
     }
     let Some(hourly_rate) = hourly_rate.filter(|rate| rate.is_finite()) else {
-        return ConsumptionPaceAssessment::Unavailable;
+        return ConsumptionPaceAssessment::InsufficientActivity;
     };
     if !rise.is_finite() {
         return ConsumptionPaceAssessment::Unavailable;
     }
 
     let hourly_rate = hourly_rate.max(0.0);
+    if hourly_rate < ForecastPolicy::MINIMUM_HOURLY_RATE {
+        return ConsumptionPaceAssessment::InsufficientActivity;
+    }
     let hours_until_reset = reset.duration_since(now).unwrap_or_default().as_secs_f64() / 3_600.0;
     let remaining = (100.0 - current_used_percent).max(0.0);
     let safe_hourly_rate = remaining / hours_until_reset;
@@ -508,7 +515,7 @@ fn theil_sen_hourly_rate(points: &[Point]) -> Option<f64> {
     for (index, earlier) in points.iter().enumerate() {
         for later in &points[index + 1..] {
             let elapsed = later.observed_at.duration_since(earlier.observed_at).ok()?;
-            if elapsed.is_zero() {
+            if elapsed < ForecastPolicy::MINIMUM_SLOPE_SPAN {
                 continue;
             }
             let slope =

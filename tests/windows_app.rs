@@ -134,6 +134,20 @@ fn taskbar_dot_uses_pace_while_progress_uses_current_usage_risk() {
 }
 
 #[test]
+fn insufficient_activity_keeps_taskbar_dot_neutral() {
+    let view = taskbar_view(
+        WidgetDataState::Ready,
+        ConsumptionPaceState::InsufficientActivity,
+        95.0,
+    );
+
+    assert_eq!(
+        taskbar_visual_state(&view).indicator,
+        TaskbarIndicator::Neutral
+    );
+}
+
+#[test]
 fn loading_and_error_override_the_pace_dot() {
     let loading = taskbar_view(WidgetDataState::Loading, ConsumptionPaceState::Fast, 95.0);
     let error = taskbar_view(

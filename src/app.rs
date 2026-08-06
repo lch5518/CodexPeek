@@ -1540,6 +1540,12 @@ fn consumption_pace_view(
             sample_count,
             observation_span,
         }) => measuring_pace_view(sample_count, observation_span, language),
+        Some(ConsumptionPaceAssessment::InsufficientActivity) => ConsumptionPaceView {
+            state: ConsumptionPaceState::InsufficientActivity,
+            summary: localized_text(LocalizationKey::UsageForecastInsufficientActivity, language)
+                .to_owned(),
+            detail: None,
+        },
         Some(ConsumptionPaceAssessment::Ready(metrics)) => {
             let (state, key) = match metrics.level {
                 ConsumptionPaceLevel::Comfortable => (
@@ -1620,7 +1626,11 @@ fn measuring_pace_view(
 }
 
 fn compact_decimal(value: f64) -> String {
-    let rounded = (value.max(0.0) * 10.0).round() / 10.0;
+    let value = value.max(0.0);
+    if value > 0.0 && value < 0.1 {
+        return "<0.1".to_owned();
+    }
+    let rounded = (value * 10.0).round() / 10.0;
     if rounded.fract().abs() < f64::EPSILON {
         format!("{rounded:.0}")
     } else {
@@ -2607,9 +2617,9 @@ mod tests {
     };
 
     use super::{
-        append_consumption_pace_tooltip, append_forecast_tooltip, consumption_pace_view,
-        data_state_for_snapshot, diagnostic_status, forecast_duration_text, forecast_view,
-        last_success_text, pass_fail, profile_usage_presentation_for_snapshot,
+        append_consumption_pace_tooltip, append_forecast_tooltip, compact_decimal,
+        consumption_pace_view, data_state_for_snapshot, diagnostic_status, forecast_duration_text,
+        forecast_view, last_success_text, pass_fail, profile_usage_presentation_for_snapshot,
         profile_usage_presentation_for_window, proxy_presence, row_view, row_view_with_reset_time,
         status_with_update, taskbar_copy, taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
@@ -3324,6 +3334,25 @@ mod tests {
         );
         assert_eq!(exhausted.state, ConsumptionPaceState::Exhausted);
         assert_eq!(exhausted.summary, "한도 소진됨");
+    }
+
+    #[test]
+    fn pace_copy_explains_insufficient_activity_and_small_rates_without_zeroing_them() {
+        let insufficient = consumption_pace_view(
+            Some(ConsumptionPaceAssessment::InsufficientActivity),
+            true,
+            Language::Korean,
+        );
+        assert_eq!(
+            insufficient.state,
+            ConsumptionPaceState::InsufficientActivity
+        );
+        assert_eq!(
+            insufficient.summary,
+            "사용량 변화가 적어 소진 시점을 예측할 수 없음"
+        );
+        assert_eq!(compact_decimal(0.04), "<0.1");
+        assert_eq!(compact_decimal(0.0), "0");
     }
 
     #[test]
