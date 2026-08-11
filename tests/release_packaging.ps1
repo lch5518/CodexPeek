@@ -46,9 +46,10 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
         -IsccPath $fakeIscc
 
     $portableName = "codex-peek-v1.2.3-windows-x86_64-portable.zip"
+    $rawExecutableName = "codex-peek-v1.2.3-windows-x86_64.exe"
     $installerName = "CodexPeek-Setup-v1.2.3-x64.exe"
     $checksumName = "SHA256SUMS.txt"
-    foreach ($name in @($portableName, $installerName, $checksumName)) {
+    foreach ($name in @($portableName, $rawExecutableName, $installerName, $checksumName)) {
         $path = Join-Path $outputDirectory $name
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "missing release artifact: $name"
@@ -71,6 +72,11 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
     if (Compare-Object $expectedArchiveFiles $archiveFiles) {
         throw "portable archive contents did not match the release contract"
     }
+    if ((Get-Content -LiteralPath (
+        Join-Path $outputDirectory $rawExecutableName
+    ) -Raw) -ne "fixture executable") {
+        throw "raw executable did not preserve the built release executable"
+    }
 
     $checksums = @{}
     foreach ($line in Get-Content -LiteralPath (Join-Path $outputDirectory $checksumName)) {
@@ -79,7 +85,7 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
         }
         $checksums[$Matches[2]] = $Matches[1]
     }
-    foreach ($name in @($portableName, $installerName)) {
+    foreach ($name in @($portableName, $rawExecutableName, $installerName)) {
         $expectedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath (
             Join-Path $outputDirectory $name
         )).Hash.ToLowerInvariant()
@@ -87,8 +93,8 @@ Set-Content -LiteralPath $installer -Value "fixture installer" -NoNewline
             throw "checksum mismatch for $name"
         }
     }
-    if ($checksums.Count -ne 2) {
-        throw "checksum manifest must contain exactly two release assets"
+    if ($checksums.Count -ne 3) {
+        throw "checksum manifest must contain exactly three release assets"
     }
 
     $installerText = Get-Content -LiteralPath $installerDefinition -Raw

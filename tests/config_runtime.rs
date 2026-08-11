@@ -274,6 +274,56 @@ fn settings_defaults_match_product_policy() {
     assert_eq!(settings.language, LanguagePreference::Auto);
     assert_eq!(settings.last_update_check_unix, None);
     assert!(settings.show_remaining_percent);
+    assert_eq!(settings.dismissed_update_version, None);
+    assert_eq!(settings.unofficial_build_warning_version, None);
+}
+
+#[test]
+fn update_prompt_versions_default_for_existing_v2_and_round_trip() {
+    let root = test_root("dismissed-update-version");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("settings.json"),
+        br#"{
+  "schema_version": 2,
+  "refresh_interval_minutes": 5,
+  "widget_visible": true,
+  "taskbar_offset": 0,
+  "taskbar_display_mode": "all",
+  "start_with_windows": false,
+  "startup_view": "widget",
+  "auto_auth_refresh": true,
+  "language": "auto",
+  "last_update_check_unix": null,
+  "show_remaining_percent": false,
+  "usage_profiles": {
+    "managed": [],
+    "selected": "system",
+    "next_sequence": 1
+  }
+}"#,
+    )
+    .unwrap();
+    let store = SettingsStore::for_root(&root);
+    let mut settings = store.load().unwrap();
+
+    assert_eq!(settings.dismissed_update_version, None);
+    assert_eq!(settings.unofficial_build_warning_version, None);
+    settings.dismissed_update_version = Some("2.0.0".to_owned());
+    settings.unofficial_build_warning_version = Some("1.9.0".to_owned());
+    store.save(&settings).unwrap();
+
+    assert_eq!(
+        store.load().unwrap().dismissed_update_version.as_deref(),
+        Some("2.0.0")
+    );
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+    assert_eq!(persisted["schema_version"], 2);
+    assert_eq!(persisted["dismissed_update_version"], "2.0.0");
+    assert_eq!(persisted["unofficial_build_warning_version"], "1.9.0");
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

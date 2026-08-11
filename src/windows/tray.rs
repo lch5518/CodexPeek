@@ -357,6 +357,8 @@ pub fn update_menu_text(
         crate::UpdatePresentationStatus::Available => crate::LocalizationKey::UpdateAvailable,
         crate::UpdatePresentationStatus::Current => crate::LocalizationKey::UpdateCurrent,
         crate::UpdatePresentationStatus::Failed => crate::LocalizationKey::UpdateFailed,
+        crate::UpdatePresentationStatus::Downloading => crate::LocalizationKey::UpdateDownloading,
+        crate::UpdatePresentationStatus::Installing => crate::LocalizationKey::UpdateInstalling,
     };
     crate::localized_text(key, language)
 }

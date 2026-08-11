@@ -105,6 +105,15 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         LocalizationKey::UsagePaceRecentActivity,
         LocalizationKey::UsagePaceExpectedRemaining,
         LocalizationKey::UsagePaceBeforeReset,
+        LocalizationKey::UpdateInstallPrompt,
+        LocalizationKey::UpdateActionInstall,
+        LocalizationKey::UpdateActionSkipVersion,
+        LocalizationKey::UpdateDownloading,
+        LocalizationKey::UpdateInstalling,
+        LocalizationKey::UpdateDownloadFailed,
+        LocalizationKey::UpdateVerificationFailed,
+        LocalizationKey::UpdateInstallFailed,
+        LocalizationKey::UpdateUnofficialBuildWarning,
     ];
     let required_languages = [
         Language::Korean,
@@ -121,7 +130,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Arabic,
     ];
 
-    assert_eq!(LocalizationKey::ALL.len(), 102);
+    assert_eq!(LocalizationKey::ALL.len(), 111);
     assert_eq!(LocalizationKey::ALL.len(), required_keys.len());
     for required_key in required_keys {
         assert!(LocalizationKey::ALL.contains(&required_key));
@@ -249,5 +258,24 @@ fn usage_pace_templates_keep_required_replacement_tokens() {
                 .contains("{percent}"),
             "{language:?}: {{percent}}"
         );
+    }
+}
+
+#[test]
+fn update_install_prompts_keep_exactly_one_version_token() {
+    for language in Language::ALL {
+        let prompt = localized_text(LocalizationKey::UpdateInstallPrompt, *language);
+        assert_eq!(prompt.matches("{version}").count(), 1, "{language:?}");
+    }
+}
+
+#[test]
+fn update_action_copy_is_nonempty_and_distinct() {
+    for language in Language::ALL {
+        let install = localized_text(LocalizationKey::UpdateActionInstall, *language);
+        let skip = localized_text(LocalizationKey::UpdateActionSkipVersion, *language);
+        assert!(!install.trim().is_empty(), "{language:?}: install");
+        assert!(!skip.trim().is_empty(), "{language:?}: skip");
+        assert_ne!(install, skip, "{language:?}");
     }
 }

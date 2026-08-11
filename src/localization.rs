@@ -252,6 +252,24 @@ pub enum LocalizationKey {
     UsagePaceExpectedRemaining,
     /// 현재 속도에서 초기화 전 소진 위험을 나타내는 문구입니다.
     UsagePaceBeforeReset,
+    /// 새 버전을 설치할지 확인하는 문구입니다.
+    UpdateInstallPrompt,
+    /// 업데이트를 즉시 설치하는 동작입니다.
+    UpdateActionInstall,
+    /// 발견한 버전을 건너뛰는 동작입니다.
+    UpdateActionSkipVersion,
+    /// 업데이트 다운로드 진행 상태입니다.
+    UpdateDownloading,
+    /// 업데이트 설치 및 재시작 진행 상태입니다.
+    UpdateInstalling,
+    /// 업데이트 다운로드 실패 안내입니다.
+    UpdateDownloadFailed,
+    /// 다운로드한 업데이트 검증 실패 안내입니다.
+    UpdateVerificationFailed,
+    /// 업데이트 설치 실패 안내입니다.
+    UpdateInstallFailed,
+    /// 공식 릴리스가 아닌 빌드의 자동 업데이트 제한 안내입니다.
+    UpdateUnofficialBuildWarning,
 }
 
 impl LocalizationKey {
@@ -359,6 +377,15 @@ impl LocalizationKey {
         Self::UsagePaceRecentActivity,
         Self::UsagePaceExpectedRemaining,
         Self::UsagePaceBeforeReset,
+        Self::UpdateInstallPrompt,
+        Self::UpdateActionInstall,
+        Self::UpdateActionSkipVersion,
+        Self::UpdateDownloading,
+        Self::UpdateInstalling,
+        Self::UpdateDownloadFailed,
+        Self::UpdateVerificationFailed,
+        Self::UpdateInstallFailed,
+        Self::UpdateUnofficialBuildWarning,
     ];
 
     const fn index(self) -> usize {
@@ -465,11 +492,20 @@ impl LocalizationKey {
             Self::UsagePaceRecentActivity => 99,
             Self::UsagePaceExpectedRemaining => 100,
             Self::UsagePaceBeforeReset => 101,
+            Self::UpdateInstallPrompt => 102,
+            Self::UpdateActionInstall => 103,
+            Self::UpdateActionSkipVersion => 104,
+            Self::UpdateDownloading => 105,
+            Self::UpdateInstalling => 106,
+            Self::UpdateDownloadFailed => 107,
+            Self::UpdateVerificationFailed => 108,
+            Self::UpdateInstallFailed => 109,
+            Self::UpdateUnofficialBuildWarning => 110,
         }
     }
 }
 
-const LOCALIZATION_KEY_COUNT: usize = 102;
+const LOCALIZATION_KEY_COUNT: usize = 111;
 
 const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "자동 갱신 중",
@@ -574,6 +610,15 @@ const KOREAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "최근 {duration} 동안 {rise}% 사용 · 시간당 약 {rate}%",
     "현재 속도면 초기화 시 약 {percent}% 남아요",
     "현재 속도면 초기화 전에 소진될 수 있어요",
+    "CodexPeek {version} 버전이 출시되었습니다.\n\n지금 업데이트할까요? 기존 설정은 그대로 유지됩니다.",
+    "지금 업데이트",
+    "이번 버전 건너뛰기",
+    "업데이트를 다운로드하는 중입니다",
+    "업데이트를 설치하고 다시 시작하는 중입니다",
+    "업데이트를 다운로드하지 못했습니다. 네트워크 또는 프록시 설정을 확인한 후 다시 시도하세요.",
+    "다운로드한 업데이트를 확인할 수 없어 설치하지 않았습니다. GitHub 릴리스 페이지에서 직접 업데이트하세요.",
+    "업데이트를 설치하지 못했습니다. CodexPeek를 종료한 뒤 다시 시도하거나 GitHub 릴리스 페이지에서 직접 업데이트하세요.",
+    "이 CodexPeek 실행 파일은 공식 GitHub 릴리스 빌드가 아닙니다.\n\n자동 업데이트가 비활성화되었습니다. 공식 릴리스로 교체하면 직접 수정해 빌드한 내용은 포함되지 않습니다. 업데이트하려면 소스를 다시 받아 빌드하거나 공식 릴리스를 수동으로 설치하세요.",
 ];
 
 const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -679,6 +724,15 @@ const ENGLISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Used {rise}% over the last {duration} · about {rate}% per hour",
     "At this pace, about {percent}% will remain at reset",
     "At this pace, the limit may be exhausted before reset",
+    "CodexPeek {version} is available.\n\nUpdate now? Your existing settings will be preserved.",
+    "Update now",
+    "Skip this version",
+    "Downloading update",
+    "Installing update and restarting",
+    "The update could not be downloaded. Check your network or proxy settings and try again.",
+    "The downloaded update could not be verified, so it was not installed. Update manually from the GitHub release page.",
+    "The update could not be installed. Close CodexPeek and try again, or update manually from the GitHub release page.",
+    "This CodexPeek executable is not an official GitHub release build.\n\nAutomatic updates are disabled. Replacing it with an official release will not include locally built changes. To update, pull and rebuild the source or install an official release manually.",
 ];
 
 const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -784,6 +838,15 @@ const SPANISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Uso del {rise}% en las últimas {duration} · aprox. {rate}% por hora",
     "A este ritmo, quedará cerca del {percent}% al restablecerse",
     "A este ritmo, el límite puede agotarse antes del restablecimiento",
+    "CodexPeek {version} está disponible.\n\n¿Actualizar ahora? Se conservará tu configuración.",
+    "Actualizar ahora",
+    "Omitir esta versión",
+    "Descargando actualización",
+    "Instalando la actualización y reiniciando",
+    "No se pudo descargar la actualización. Comprueba la red o la configuración del proxy e inténtalo de nuevo.",
+    "No se pudo verificar la actualización descargada, por lo que no se instaló. Actualiza manualmente desde la página de versiones de GitHub.",
+    "No se pudo instalar la actualización. Cierra CodexPeek e inténtalo de nuevo, o actualiza manualmente desde la página de versiones de GitHub.",
+    "Este ejecutable de CodexPeek no es una compilación oficial de GitHub.\n\nLas actualizaciones automáticas están desactivadas. Al reemplazarlo por una versión oficial no se incluirán los cambios compilados localmente. Para actualizar, descarga y recompila el código fuente o instala manualmente una versión oficial.",
 ];
 
 const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -889,6 +952,15 @@ const PORTUGUESE_BRAZIL_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Uso de {rise}% nas últimas {duration} · cerca de {rate}% por hora",
     "Neste ritmo, cerca de {percent}% restará na redefinição",
     "Neste ritmo, o limite pode se esgotar antes da redefinição",
+    "CodexPeek {version} está disponível.\n\nAtualizar agora? Suas configurações serão mantidas.",
+    "Atualizar agora",
+    "Ignorar esta versão",
+    "Baixando atualização",
+    "Instalando a atualização e reiniciando",
+    "Não foi possível baixar a atualização. Verifique a rede ou as configurações de proxy e tente novamente.",
+    "Não foi possível verificar a atualização baixada, então ela não foi instalada. Atualize manualmente pela página de lançamentos do GitHub.",
+    "Não foi possível instalar a atualização. Feche o CodexPeek e tente novamente ou atualize manualmente pela página de lançamentos do GitHub.",
+    "Este executável do CodexPeek não é uma compilação oficial do GitHub.\n\nAs atualizações automáticas estão desativadas. A substituição por uma versão oficial não incluirá alterações compiladas localmente. Para atualizar, baixe e compile novamente o código-fonte ou instale uma versão oficial manualmente.",
 ];
 
 const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -994,6 +1066,15 @@ const INDONESIAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Menggunakan {rise}% selama {duration} terakhir · sekitar {rate}% per jam",
     "Dengan laju ini, sekitar {percent}% akan tersisa saat reset",
     "Dengan laju ini, batas dapat habis sebelum reset",
+    "CodexPeek {version} tersedia.\n\nPerbarui sekarang? Pengaturan Anda akan tetap dipertahankan.",
+    "Perbarui sekarang",
+    "Lewati versi ini",
+    "Mengunduh pembaruan",
+    "Menginstal pembaruan dan memulai ulang",
+    "Pembaruan tidak dapat diunduh. Periksa pengaturan jaringan atau proksi, lalu coba lagi.",
+    "Pembaruan yang diunduh tidak dapat diverifikasi sehingga tidak diinstal. Perbarui secara manual dari halaman rilis GitHub.",
+    "Pembaruan tidak dapat diinstal. Tutup CodexPeek lalu coba lagi, atau perbarui secara manual dari halaman rilis GitHub.",
+    "Executable CodexPeek ini bukan build rilis GitHub resmi.\n\nPembaruan otomatis dinonaktifkan. Menggantinya dengan rilis resmi tidak akan menyertakan perubahan yang dibuat dalam build lokal. Untuk memperbarui, tarik dan build ulang kode sumber atau instal rilis resmi secara manual.",
 ];
 
 const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1099,6 +1180,15 @@ const JAPANESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "直近{duration}で{rise}%使用 · 1時間あたり約{rate}%",
     "このペースではリセット時に約{percent}%残ります",
     "このペースではリセット前に上限へ達する可能性があります",
+    "CodexPeek {version} を利用できます。\n\n今すぐ更新しますか？設定は保持されます。",
+    "今すぐ更新",
+    "このバージョンをスキップ",
+    "更新をダウンロードしています",
+    "更新をインストールして再起動しています",
+    "更新をダウンロードできませんでした。ネットワークまたはプロキシ設定を確認して、もう一度お試しください。",
+    "ダウンロードした更新を確認できなかったため、インストールしませんでした。GitHub のリリースページから手動で更新してください。",
+    "更新をインストールできませんでした。CodexPeek を終了してもう一度試すか、GitHub のリリースページから手動で更新してください。",
+    "この CodexPeek 実行ファイルは、GitHub の公式リリースビルドではありません。\n\n自動更新は無効です。公式リリースに置き換えると、ローカルでビルドした変更は含まれません。更新するには、ソースを取得して再ビルドするか、公式リリースを手動でインストールしてください。",
 ];
 
 const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1204,6 +1294,15 @@ const HINDI_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "पिछले {duration} में {rise}% उपयोग · लगभग {rate}% प्रति घंटा",
     "इस गति पर रीसेट के समय लगभग {percent}% शेष रहेगा",
     "इस गति पर सीमा रीसेट से पहले समाप्त हो सकती है",
+    "CodexPeek {version} उपलब्ध है।\n\nअभी अपडेट करें? आपकी सेटिंग्स सुरक्षित रहेंगी।",
+    "अभी अपडेट करें",
+    "इस संस्करण को छोड़ें",
+    "अपडेट डाउनलोड हो रहा है",
+    "अपडेट इंस्टॉल करके पुनः शुरू किया जा रहा है",
+    "अपडेट डाउनलोड नहीं हो सका। अपना नेटवर्क या प्रॉक्सी सेटिंग जाँचें और फिर प्रयास करें।",
+    "डाउनलोड किए गए अपडेट को सत्यापित नहीं किया जा सका, इसलिए उसे इंस्टॉल नहीं किया गया। GitHub रिलीज़ पेज से मैन्युअल रूप से अपडेट करें।",
+    "अपडेट इंस्टॉल नहीं किया जा सका। CodexPeek बंद करके फिर प्रयास करें, या GitHub रिलीज़ पेज से मैन्युअल रूप से अपडेट करें।",
+    "यह CodexPeek निष्पादन योग्य फ़ाइल आधिकारिक GitHub रिलीज़ बिल्ड नहीं है।\n\nस्वचालित अपडेट अक्षम हैं। इसे आधिकारिक रिलीज़ से बदलने पर स्थानीय रूप से बनाए गए बदलाव शामिल नहीं होंगे। अपडेट करने के लिए स्रोत खींचकर फिर से बिल्ड करें या आधिकारिक रिलीज़ मैन्युअल रूप से इंस्टॉल करें।",
 ];
 
 const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1309,6 +1408,15 @@ const GERMAN_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "In den letzten {duration} {rise}% genutzt · etwa {rate}% pro Stunde",
     "Bei diesem Tempo bleiben beim Zurücksetzen etwa {percent}% übrig",
     "Bei diesem Tempo kann das Limit vor dem Zurücksetzen aufgebraucht sein",
+    "CodexPeek {version} ist verfügbar.\n\nJetzt aktualisieren? Deine Einstellungen bleiben erhalten.",
+    "Jetzt aktualisieren",
+    "Diese Version überspringen",
+    "Update wird heruntergeladen",
+    "Update wird installiert und CodexPeek neu gestartet",
+    "Das Update konnte nicht heruntergeladen werden. Prüfe die Netzwerk- oder Proxyeinstellungen und versuche es erneut.",
+    "Das heruntergeladene Update konnte nicht überprüft werden und wurde daher nicht installiert. Aktualisiere manuell über die GitHub-Release-Seite.",
+    "Das Update konnte nicht installiert werden. Beende CodexPeek und versuche es erneut oder aktualisiere manuell über die GitHub-Release-Seite.",
+    "Diese CodexPeek-Datei ist kein offizieller GitHub-Release-Build.\n\nAutomatische Updates sind deaktiviert. Beim Ersetzen durch ein offizielles Release werden lokal erstellte Änderungen nicht übernommen. Aktualisiere den Quellcode und erstelle ihn neu oder installiere ein offizielles Release manuell.",
 ];
 
 const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1414,6 +1522,15 @@ const FRENCH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "{rise}% utilisés au cours des dernières {duration} · environ {rate}% par heure",
     "À ce rythme, il restera environ {percent}% à la réinitialisation",
     "À ce rythme, la limite peut être épuisée avant la réinitialisation",
+    "CodexPeek {version} est disponible.\n\nMettre à jour maintenant ? Vos paramètres seront conservés.",
+    "Mettre à jour",
+    "Ignorer cette version",
+    "Téléchargement de la mise à jour",
+    "Installation de la mise à jour et redémarrage",
+    "Impossible de télécharger la mise à jour. Vérifiez les paramètres réseau ou du proxy, puis réessayez.",
+    "La mise à jour téléchargée n’a pas pu être vérifiée et n’a donc pas été installée. Effectuez la mise à jour manuellement depuis la page des versions GitHub.",
+    "Impossible d’installer la mise à jour. Fermez CodexPeek et réessayez, ou effectuez la mise à jour manuellement depuis la page des versions GitHub.",
+    "Cet exécutable CodexPeek n’est pas une version officielle publiée sur GitHub.\n\nLes mises à jour automatiques sont désactivées. Le remplacer par une version officielle n’inclura pas les modifications compilées localement. Pour mettre à jour, récupérez et recompilez le code source ou installez manuellement une version officielle.",
 ];
 
 const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1519,6 +1636,15 @@ const VIETNAMESE_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Đã dùng {rise}% trong {duration} gần đây · khoảng {rate}% mỗi giờ",
     "Với tốc độ này, khoảng {percent}% sẽ còn lại khi đặt lại",
     "Với tốc độ này, giới hạn có thể hết trước khi đặt lại",
+    "CodexPeek {version} đã có sẵn.\n\nCập nhật ngay? Cài đặt của bạn sẽ được giữ nguyên.",
+    "Cập nhật ngay",
+    "Bỏ qua phiên bản này",
+    "Đang tải bản cập nhật",
+    "Đang cài đặt bản cập nhật và khởi động lại",
+    "Không thể tải bản cập nhật. Hãy kiểm tra cài đặt mạng hoặc proxy rồi thử lại.",
+    "Không thể xác minh bản cập nhật đã tải xuống nên bản cập nhật chưa được cài đặt. Hãy cập nhật thủ công từ trang phát hành GitHub.",
+    "Không thể cài đặt bản cập nhật. Hãy đóng CodexPeek rồi thử lại, hoặc cập nhật thủ công từ trang phát hành GitHub.",
+    "Tệp thực thi CodexPeek này không phải là bản dựng phát hành GitHub chính thức.\n\nCập nhật tự động đã bị tắt. Việc thay thế bằng bản phát hành chính thức sẽ không bao gồm các thay đổi được dựng cục bộ. Để cập nhật, hãy kéo và dựng lại mã nguồn hoặc cài đặt thủ công bản phát hành chính thức.",
 ];
 
 const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1624,6 +1750,15 @@ const TURKISH_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "Son {duration} içinde %{rise} kullanıldı · saatte yaklaşık %{rate}",
     "Bu hızla sıfırlamada yaklaşık %{percent} kalır",
     "Bu hızla sınır sıfırlamadan önce tükenebilir",
+    "CodexPeek {version} kullanıma hazır.\n\nŞimdi güncellensin mi? Ayarlarınız korunacaktır.",
+    "Şimdi güncelle",
+    "Bu sürümü atla",
+    "Güncelleme indiriliyor",
+    "Güncelleme yükleniyor ve yeniden başlatılıyor",
+    "Güncelleme indirilemedi. Ağ veya proxy ayarlarınızı kontrol edip yeniden deneyin.",
+    "İndirilen güncelleme doğrulanamadığı için yüklenmedi. GitHub sürüm sayfasından elle güncelleyin.",
+    "Güncelleme yüklenemedi. CodexPeek’i kapatıp yeniden deneyin veya GitHub sürüm sayfasından elle güncelleyin.",
+    "Bu CodexPeek yürütülebilir dosyası resmi bir GitHub sürüm derlemesi değildir.\n\nOtomatik güncellemeler devre dışıdır. Resmi sürümle değiştirilirse yerel olarak derlenen değişiklikler korunmaz. Güncellemek için kaynak kodu çekip yeniden derleyin veya resmi sürümü elle yükleyin.",
 ];
 
 const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
@@ -1729,6 +1864,15 @@ const ARABIC_TEXT: [&str; LOCALIZATION_KEY_COUNT] = [
     "تم استخدام {rise}% خلال آخر {duration} · نحو {rate}% في الساعة",
     "بهذه الوتيرة، سيتبقى نحو {percent}% عند إعادة التعيين",
     "بهذه الوتيرة، قد ينفد الحد قبل إعادة التعيين",
+    "يتوفر CodexPeek {version}.\n\nهل تريد التحديث الآن؟ سيتم الاحتفاظ بإعداداتك.",
+    "التحديث الآن",
+    "تخطي هذا الإصدار",
+    "جارٍ تنزيل التحديث",
+    "جارٍ تثبيت التحديث وإعادة التشغيل",
+    "تعذر تنزيل التحديث. تحقق من إعدادات الشبكة أو الوكيل ثم حاول مرة أخرى.",
+    "تعذر التحقق من التحديث الذي تم تنزيله، لذلك لم يتم تثبيته. حدّث يدويًا من صفحة الإصدارات على GitHub.",
+    "تعذر تثبيت التحديث. أغلق CodexPeek وحاول مرة أخرى، أو حدّث يدويًا من صفحة الإصدارات على GitHub.",
+    "ملف CodexPeek التنفيذي هذا ليس إصدارًا رسميًا منشورًا على GitHub.\n\nالتحديثات التلقائية معطلة. استبداله بإصدار رسمي لن يتضمن التغييرات المبنية محليًا. للتحديث، اسحب المصدر وأعد بناءه أو ثبّت إصدارًا رسميًا يدويًا.",
 ];
 
 /// 지정한 언어와 키에 해당하는 정적 사용자 문구를 반환합니다.

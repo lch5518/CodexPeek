@@ -13,7 +13,9 @@ pub(crate) mod time;
 pub mod tray;
 pub mod widget;
 
-use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode, UsageProfileId};
+use crate::{
+    AvailableUpdate, Language, LanguagePreference, StartupView, TaskbarDisplayMode, UsageProfileId,
+};
 
 /// 즉시 갱신 메뉴 식별자입니다.
 pub const MENU_REFRESH: u16 = 100;
@@ -288,6 +290,10 @@ pub enum UiAction {
     RunDiagnostics,
     /// 업데이트를 확인합니다.
     CheckForUpdates,
+    /// 표시 중인 업데이트 버전의 자동 안내를 다음 릴리스까지 숨깁니다.
+    DismissUpdate(String),
+    /// 사용자가 승인한 검증된 업데이트를 설치 작업자에게 전달합니다.
+    InstallUpdate(AvailableUpdate),
     /// 위젯 표시 여부를 전환합니다.
     ToggleWidget,
     /// 남은 한도 표시 여부를 전환합니다.
@@ -666,6 +672,10 @@ pub fn profile_taskbar_tooltip(
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.
 pub trait UiBackend {
+    /// Signals a self-update helper only after the tray and initial windows are ready.
+    fn signal_restart_ready(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
     /// 최신 렌더링 복사본을 반환합니다.
     fn snapshot(&self) -> WidgetViewModel;
     /// 현재 메뉴 및 창 설정 복사본을 반환합니다.

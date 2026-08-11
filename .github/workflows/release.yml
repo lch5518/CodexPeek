@@ -57,6 +57,8 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Build release executable
+        env:
+          CODEX_PEEK_OFFICIAL_BUILD: "1"
         run: cargo build --release
 
       - name: Create portable and installer release assets
@@ -77,11 +79,12 @@ jobs:
         shell: pwsh
         run: |
           $manifest = Get-Content -LiteralPath release-assets\SHA256SUMS.txt
-          if ($manifest.Count -ne 2) {
-            throw "SHA256SUMS.txt must contain exactly two entries"
+          if ($manifest.Count -ne 3) {
+            throw "SHA256SUMS.txt must contain exactly three entries"
           }
           $expectedNames = @(
             "CodexPeek-Setup-v$($env:GITHUB_REF_NAME.Substring(1))-x64.exe"
+            "codex-peek-$env:GITHUB_REF_NAME-windows-x86_64.exe"
             "codex-peek-$env:GITHUB_REF_NAME-windows-x86_64-portable.zip"
           )
           $manifestNames = @()
@@ -140,6 +143,7 @@ jobs:
           $expected = @(
             "CodexPeek-Setup-v$version-x64.exe"
             "SHA256SUMS.txt"
+            "codex-peek-v$version-windows-x86_64.exe"
             "codex-peek-v$version-windows-x86_64-portable.zip"
           )
           $actual = @(

@@ -124,6 +124,15 @@ pub struct Settings {
     pub language: LanguagePreference,
     /// 마지막 업데이트 확인의 UNIX 초입니다.
     pub last_update_check_unix: Option<u64>,
+    /// 사용자가 자동 업데이트 안내에서 거절한 릴리스 버전입니다.
+    ///
+    /// 이전 스키마 2 설정 파일과의 호환성을 위해 필드가 없으면 거절한 버전이 없는 것으로
+    /// 처리합니다. 값은 표시 억제 비교에만 사용되며 잘못된 문자열은 일치하지 않습니다.
+    #[serde(default)]
+    pub dismissed_update_version: Option<String>,
+    /// 마지막으로 비공식 빌드 경고를 표시한 앱 버전입니다.
+    #[serde(default)]
+    pub unofficial_build_warning_version: Option<String>,
     /// 위젯에 남은 한도(%)를 표시할지 여부입니다.
     ///
     /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
@@ -172,6 +181,8 @@ impl LegacySettingsV1 {
             auto_auth_refresh: self.auto_auth_refresh,
             language: self.language,
             last_update_check_unix: self.last_update_check_unix,
+            dismissed_update_version: None,
+            unofficial_build_warning_version: None,
             show_remaining_percent: self.show_remaining_percent,
             usage_forecast_enabled: default_usage_forecast_enabled(),
             usage_profiles: UsageProfileCatalog::default(),
@@ -205,6 +216,8 @@ impl Default for Settings {
             language: default_language_preference(),
             last_update_check_unix: None,
             show_remaining_percent: default_show_remaining_percent(),
+            dismissed_update_version: None,
+            unofficial_build_warning_version: None,
             usage_forecast_enabled: default_usage_forecast_enabled(),
             usage_profiles: UsageProfileCatalog::default(),
         }

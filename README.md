@@ -24,6 +24,7 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
   submenu behavior in the styled right-click menu. High contrast and screen-reader modes keep the
   standard Windows presentation.
 - Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and localized UI.
+- Checks for a newer release after startup and can apply a checksum-verified self-update in place.
 
 ### Release note: local usage forecasts
 
@@ -194,13 +195,37 @@ The Installer and Portable editions use `%APPDATA%\CodexPeek\settings.json`, so
 settings are shared if you switch between them. The installer adds a Start Menu shortcut
 but does not enable Windows startup by default.
 
+After the app starts—whether launched manually or with Windows—official builds check for a newer
+GitHub Release. If one is available, CodexPeek opens normally before asking whether to update.
+Choosing **Skip this version** suppresses that prompt for the same release; a later release is
+offered again. Choosing **Update now** downloads the release's raw Windows x64 executable and
+`SHA256SUMS.txt`, verifies the executable's SHA-256, replaces the executable at its current path,
+and restarts CodexPeek. The update does not modify `%APPDATA%\CodexPeek`, so existing settings and
+profiles remain in place. If verification or replacement fails, the existing executable is kept
+and the release can be installed manually.
+
+The helper keeps a rollback copy until the exact relaunched child process has created its tray and
+initial windows. If readiness fails, the helper restores and relaunches the previous executable
+only after that child is confirmed stopped. If termination cannot be confirmed, it preserves the
+backup and performs no rollback or second relaunch. `--startup` launches remain preserved. For
+Installer editions, Windows Apps & Features continues to
+show the installer version until a newer Setup package is installed; after a self-update, use the
+running app's version as the authoritative version.
+
+Executables built locally from source are not marked as official release builds, so in-app
+updates are disabled for them. CodexPeek shows a warning once per app version: replacing a local
+build with an official release would omit locally compiled changes. Pull and rebuild the source,
+or install an official release manually, to update such a build.
+
 If the new data root does not exist, CodexPeek moves an existing
 `%APPDATA%\CodexUsageMonitor` directory to `%APPDATA%\CodexPeek` without opening or copying
 the profile authentication files. If both roots already exist, the new root wins and no
 automatic merge is attempted.
 
-Initial releases are not code-signed and may trigger Microsoft Defender SmartScreen.
-Download only from the official release and verify the file against `SHA256SUMS.txt`.
+Initial releases, including the raw self-update executable, are not code-signed and may trigger
+Microsoft Defender SmartScreen. The checksum verifies the downloaded bytes against the release
+manifest but is not a substitute for an Authenticode publisher signature. Use only official
+GitHub Releases and verify manually when the automatic check cannot complete.
 
 See the [detailed installation guide (Korean)](docs/INSTALL.md) for hash verification,
 updates, uninstall behavior, diagnostics, and troubleshooting.
