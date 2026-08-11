@@ -77,10 +77,8 @@ pub(crate) struct UsagePopupPresentation {
     pub(crate) profile_label: String,
     pub(crate) profile_note: String,
     pub(crate) usage_label: Option<String>,
-    pub(crate) current_label: String,
-    pub(crate) current_percent: Option<u8>,
-    pub(crate) remaining_label: String,
-    pub(crate) remaining_percent: Option<u8>,
+    pub(crate) metric_label: String,
+    pub(crate) metric_percent: Option<u8>,
     pub(crate) reset_label: String,
     pub(crate) reset_text: Option<String>,
     pub(crate) status_label: String,
@@ -99,7 +97,7 @@ pub(crate) fn usage_popup_presentation(
     language: Language,
 ) -> UsagePopupPresentation {
     let row = view.secondary.as_ref().or(view.primary.as_ref());
-    let used_percent = row.map(|row| row.used_percent.clamp(0.0, 100.0).round() as u8);
+    let metric_percent = row.map(|row| row.display_percent.clamp(0.0, 100.0).round() as u8);
     let forecast = |label: crate::LocalizationKey,
                     row: Option<&super::UsageRowView>|
      -> Option<PopupForecastLine> {
@@ -120,10 +118,13 @@ pub(crate) fn usage_popup_presentation(
         usage_label: row.map(|_| {
             crate::domain::window_kind_label(crate::WindowKind::Secondary, language).to_owned()
         }),
-        current_label: crate::app::current_usage_label(language).to_owned(),
-        current_percent: used_percent,
-        remaining_label: crate::app::remaining_usage_label(language).to_owned(),
-        remaining_percent: used_percent.map(|percent| 100_u8.saturating_sub(percent)),
+        metric_label: if view.show_remaining_percent {
+            crate::app::remaining_usage_label(language)
+        } else {
+            crate::app::current_usage_label(language)
+        }
+        .to_owned(),
+        metric_percent,
         reset_label: crate::app::reset_at_label(language).to_owned(),
         reset_text: row
             .and_then(|row| (!row.reset_text.is_empty()).then(|| row.reset_text.clone())),
@@ -224,14 +225,15 @@ mod tests {
     fn row(
         label: &str,
         used_percent: f64,
+        display_percent: f64,
         reset_text: &str,
         forecast: ForecastView,
     ) -> UsageRowView {
         UsageRowView {
             label: label.to_owned(),
             used_percent,
-            display_percent: used_percent,
-            percent_text: format!("{used_percent:.0}%"),
+            display_percent,
+            percent_text: format!("{display_percent:.0}%"),
             reset_text: reset_text.to_owned(),
             level: UsageLevel::Stable,
             forecast,
@@ -244,6 +246,7 @@ mod tests {
             primary: Some(row(
                 "5h",
                 12.0,
+                88.0,
                 "2026-08-11 15:00",
                 ForecastView::Collecting {
                     line: "Collecting primary samples".to_owned(),
@@ -252,6 +255,7 @@ mod tests {
             secondary: Some(row(
                 "7d",
                 34.4,
+                65.6,
                 "2026-08-18 10:23",
                 ForecastView::ForecastAvailable {
                     line: "About 52% will remain".to_owned(),
@@ -260,6 +264,7 @@ mod tests {
             status: "Healthy · Polling".to_owned(),
             last_success: "just now".to_owned(),
             is_stale: false,
+            show_remaining_percent: true,
             taskbar_label: "7d".to_owned(),
             taskbar_tooltip: "legacy fallback".to_owned(),
             reset_credits_text: None,
@@ -273,15 +278,13 @@ mod tests {
     }
 
     #[test]
-    fn presentation_prefers_weekly_row_and_keeps_both_percentages() {
+    fn presentation_prefers_weekly_row_and_shows_remaining_metric() {
         let presentation = usage_popup_presentation(&ready_view(), Language::English);
 
         assert_eq!(presentation.profile_label, "Work");
         assert_eq!(presentation.usage_label.as_deref(), Some("Weekly"));
-        assert_eq!(presentation.current_label, "Current usage");
-        assert_eq!(presentation.current_percent, Some(34));
-        assert_eq!(presentation.remaining_label, "Remaining");
-        assert_eq!(presentation.remaining_percent, Some(66));
+        assert_eq!(presentation.metric_label, "Remaining");
+        assert_eq!(presentation.metric_percent, Some(66));
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-18 10:23"));
         assert_eq!(
             presentation.forecasts,
@@ -296,6 +299,23 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn presentation_shows_current_metric_when_widget_uses_current_usage() {
+        let mut view = ready_view();
+        view.show_remaining_percent = false;
+        for row in [&mut view.primary, &mut view.secondary]
+            .into_iter()
+            .flatten()
+        {
+            row.display_percent = row.used_percent;
+        }
+
+        let presentation = usage_popup_presentation(&view, Language::English);
+
+        assert_eq!(presentation.metric_label, "Current usage");
+        assert_eq!(presentation.metric_percent, Some(34));
     }
 
     #[test]
@@ -324,8 +344,8 @@ mod tests {
         let presentation = usage_popup_presentation(&view, Language::English);
 
         assert_eq!(presentation.usage_label, None);
-        assert_eq!(presentation.current_percent, None);
-        assert_eq!(presentation.remaining_percent, None);
+        assert_eq!(presentation.metric_label, "Remaining");
+        assert_eq!(presentation.metric_percent, None);
         assert_eq!(presentation.reset_text, None);
         assert!(presentation.forecasts.is_empty());
     }

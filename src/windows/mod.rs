@@ -579,6 +579,8 @@ pub struct WidgetViewModel {
     pub last_success: String,
     /// 오래된 정보인지 나타냅니다.
     pub is_stale: bool,
+    /// 위젯이 사용량 대신 남은 사용량을 표시하는지 나타냅니다.
+    pub show_remaining_percent: bool,
     /// 작업 표시줄의 고정 주간 레이블입니다.
     pub taskbar_label: String,
     /// 작업 표시줄에 연결할 상세 툴팁 문구입니다.

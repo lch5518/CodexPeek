@@ -127,7 +127,7 @@ pub struct Settings {
     /// 위젯에 남은 한도(%)를 표시할지 여부입니다.
     ///
     /// `false`면 사용량을, `true`면 남은 한도를 큰 숫자로 보여줍니다.
-    #[serde(default)]
+    #[serde(default = "default_show_remaining_percent")]
     pub show_remaining_percent: bool,
     /// 사용량 소진 예측 기록과 표시를 활성화할지 여부입니다.
     #[serde(default = "default_usage_forecast_enabled")]
@@ -155,7 +155,7 @@ struct LegacySettingsV1 {
     #[serde(default = "default_language_preference")]
     language: LanguagePreference,
     last_update_check_unix: Option<u64>,
-    #[serde(default)]
+    #[serde(default = "default_show_remaining_percent")]
     show_remaining_percent: bool,
 }
 
@@ -187,6 +187,10 @@ const fn default_usage_forecast_enabled() -> bool {
     true
 }
 
+const fn default_show_remaining_percent() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -200,7 +204,7 @@ impl Default for Settings {
             auto_auth_refresh: true,
             language: default_language_preference(),
             last_update_check_unix: None,
-            show_remaining_percent: false,
+            show_remaining_percent: default_show_remaining_percent(),
             usage_forecast_enabled: default_usage_forecast_enabled(),
             usage_profiles: UsageProfileCatalog::default(),
         }

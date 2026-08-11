@@ -961,6 +961,7 @@ impl UiBackend for AppRuntime {
             status,
             last_success,
             is_stale: snapshot.is_stale,
+            show_remaining_percent: settings.show_remaining_percent,
             taskbar_label: taskbar.label,
             taskbar_tooltip,
             reset_credits_text,

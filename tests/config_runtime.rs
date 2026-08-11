@@ -273,7 +273,7 @@ fn settings_defaults_match_product_policy() {
     assert!(settings.auto_auth_refresh);
     assert_eq!(settings.language, LanguagePreference::Auto);
     assert_eq!(settings.last_update_check_unix, None);
-    assert!(!settings.show_remaining_percent);
+    assert!(settings.show_remaining_percent);
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn settings_without_show_remaining_field_loads_with_default() {
 
     assert!(store.inspect_validity().unwrap());
     let settings = store.load().unwrap();
-    assert!(!settings.show_remaining_percent);
+    assert!(settings.show_remaining_percent);
     assert_eq!(settings.taskbar_display_mode, TaskbarDisplayMode::All);
 
     let _ = fs::remove_dir_all(root);

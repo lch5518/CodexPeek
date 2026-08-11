@@ -376,40 +376,18 @@ unsafe fn paint_content(
         rtl,
         true,
     );
-    let metric_width = (text_right - text_left - gap) / 2;
-    let first = Rect::new(
-        text_left,
-        section(94),
-        text_left + metric_width,
-        section(130),
-    );
-    let second = Rect::new(
-        text_left + metric_width + gap,
-        section(94),
-        text_right,
-        section(130),
-    );
     draw_metric(
         dc,
-        first,
-        &presentation.current_label,
-        presentation.current_percent,
-        palette,
-        dpi,
-        rtl,
-    );
-    draw_metric(
-        dc,
-        second,
-        &presentation.remaining_label,
-        presentation.remaining_percent,
+        Rect::new(text_left, section(94), text_right, section(130)),
+        &presentation.metric_label,
+        presentation.metric_percent,
         palette,
         dpi,
         rtl,
     );
     let track = Rect::new(text_left, section(134), text_right, section(138));
     fill(dc, track, palette.separator);
-    if let Some(percent) = presentation.current_percent {
+    if let Some(percent) = presentation.metric_percent {
         fill(
             dc,
             Rect::new(
