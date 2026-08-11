@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     ffi::OsString,
+    fmt::Write as _,
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -71,14 +72,13 @@ fn release_fixture(executable: &[u8]) -> (FakeHttpClient, AvailableUpdate) {
     let checksum_url =
         "https://github.com/lch5518/CodexPeek/releases/download/v1.2.3/SHA256SUMS.txt";
     let digest: [u8; 32] = Sha256::digest(executable).into();
-    let checksum = format!(
-        "{}  {executable_name}\n",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    )
-    .into_bytes();
+    let checksum_hex = digest
+        .iter()
+        .fold(String::with_capacity(64), |mut checksum_hex, byte| {
+            write!(&mut checksum_hex, "{byte:02x}").unwrap();
+            checksum_hex
+        });
+    let checksum = format!("{checksum_hex}  {executable_name}\n").into_bytes();
     let metadata = serde_json::to_vec(&serde_json::json!({
         "tag_name": tag,
         "html_url": release_url,
