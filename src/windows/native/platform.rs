@@ -72,8 +72,8 @@ use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
     popup::{
-        popup_render_mode, tooltip_show_decision, usage_popup_presentation, PopupRenderMode,
-        TooltipShowDecision,
+        popup_render_mode, should_hide_custom_popup_on_native_pop, tooltip_show_decision,
+        usage_popup_presentation, PopupRenderMode, TooltipShowDecision,
     },
     profile_dialog::{
         confirm_profile_login_owned, show_profile_manager_owned_live, show_profile_message,
@@ -541,6 +541,7 @@ unsafe extern "system" fn widget_proc(
     }
     match message {
         WM_CONTEXTMENU => {
+            hide_all_usage_popups(pointer);
             show_settings_menu(pointer);
             LRESULT(0)
         }
@@ -571,6 +572,8 @@ unsafe extern "system" fn widget_proc(
             let widget = &mut *widget;
             widget.mouse_tracking = false;
             widget.hover.set_hovered(false);
+            let popup = std::mem::take(&mut widget.usage_popup);
+            usage_popup::destroy(popup);
             let _ = SetTimer(Some(hwnd), HOVER_TIMER_ID, 15, None);
             LRESULT(0)
         }
@@ -1061,8 +1064,10 @@ unsafe fn handle_tooltip_notification(
             }
         }
         TTN_POP => {
-            let popup = std::mem::take(&mut state.widgets[index].usage_popup);
-            usage_popup::destroy(popup);
+            if should_hide_custom_popup_on_native_pop(state.widgets[index].mouse_tracking) {
+                let popup = std::mem::take(&mut state.widgets[index].usage_popup);
+                usage_popup::destroy(popup);
+            }
             Some(LRESULT(0))
         }
         _ => None,

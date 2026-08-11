@@ -197,6 +197,14 @@ pub(crate) const fn tooltip_show_decision(
     }
 }
 
+/// Windows 기본 툴팁 종료 알림에서 커스텀 팝업도 닫을지 결정합니다.
+///
+/// 기본 툴팁의 자동 종료와 실제 포인터 이탈은 알림만으로 구분할 수 없으므로, 위젯의 hover 추적이
+/// 유지되는 동안에는 커스텀 팝업을 보존합니다.
+pub(crate) const fn should_hide_custom_popup_on_native_pop(widget_hovered: bool) -> bool {
+    !widget_hovered
+}
+
 /// 고대비 또는 스크린리더 사용 시 Windows 기본 UI로 안전하게 폴백합니다.
 pub(crate) const fn popup_render_mode(high_contrast: bool, screen_reader: bool) -> PopupRenderMode {
     if high_contrast || screen_reader {
@@ -395,6 +403,12 @@ mod tests {
             tooltip_show_decision(PopupRenderMode::Native, true),
             TooltipShowDecision::ShowNative
         );
+    }
+
+    #[test]
+    fn native_tooltip_autopop_keeps_custom_popup_while_widget_is_hovered() {
+        assert!(!should_hide_custom_popup_on_native_pop(true));
+        assert!(should_hide_custom_popup_on_native_pop(false));
     }
 
     #[test]
