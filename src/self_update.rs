@@ -27,7 +27,9 @@ const MAX_METADATA_BYTES: usize = 256 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 64 * 1024;
 const MAX_EXECUTABLE_BYTES: u64 = 64 * 1024 * 1024;
 const HELPER_MODE_ARGUMENT: &str = "--self-update-helper";
+const RESTART_READY_ARGUMENT: &str = "--self-update-restart-ready";
 const HELPER_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const RESTART_READY_TIMEOUT: Duration = Duration::from_secs(15);
 static UPDATE_NONCE: AtomicU64 = AtomicU64::new(0);
 
 /// 자동 업데이트 준비 또는 적용이 안전하게 완료되지 못한 이유입니다.
@@ -332,6 +334,7 @@ pub fn prepare_update_helper(
     fs::create_dir_all(&helper_root).map_err(|_| SelfUpdateError::Io)?;
     let helper_path = helper_root.join(format!("codex-peek-update-helper-{nonce}.exe"));
     let ready_path = helper_root.join(format!("codex-peek-update-helper-{nonce}.ready"));
+    let restart_ready_path = helper_root.join(format!("codex-peek-update-restart-{nonce}.ready"));
 
     let prepared = (|| {
         let verified = download_verified_executable(client, &release, &staged)?;
@@ -345,6 +348,7 @@ pub fn prepare_update_helper(
                 staged: verified.path,
                 backup,
                 ready: ready_path.clone(),
+                restart_ready: restart_ready_path.clone(),
                 expected_sha256: verified.sha256,
                 expected_size: verified.size,
                 relaunch_args,
@@ -355,6 +359,7 @@ pub fn prepare_update_helper(
         remove_file_if_present(&staged);
         remove_file_if_present(&helper_path);
         remove_file_if_present(&ready_path);
+        remove_file_if_present(&restart_ready_path);
     }
     prepared
 }
@@ -374,7 +379,7 @@ pub fn spawn_prepared_update_helper(
     }
     let deadline = std::time::Instant::now() + HELPER_READY_TIMEOUT;
     while std::time::Instant::now() < deadline {
-        if prepared.plan.ready.is_file() {
+        if ready_file_exists(&prepared.plan.ready) {
             return Ok(SpawnedUpdateHelper {
                 version: prepared.version,
                 helper_path: prepared.helper_path,
@@ -541,6 +546,8 @@ pub struct HelperPlan {
     pub backup: PathBuf,
     /// helper가 인수를 검증한 뒤 부모에게 준비 완료를 알릴 전용 파일입니다.
     pub ready: PathBuf,
+    /// 새 실행 파일이 UI 초기화를 마쳤음을 helper에 알리는 전용 파일입니다.
+    pub restart_ready: PathBuf,
     /// staging 파일의 검증된 SHA-256입니다.
     pub expected_sha256: [u8; 32],
     /// staging 파일의 검증된 바이트 길이입니다.
@@ -564,6 +571,8 @@ impl HelperPlan {
             self.backup.as_os_str().to_owned(),
             OsString::from("--ready"),
             self.ready.as_os_str().to_owned(),
+            OsString::from("--restart-ready"),
+            self.restart_ready.as_os_str().to_owned(),
             OsString::from("--sha256"),
             OsString::from(format_sha256(self.expected_sha256)),
             OsString::from("--size"),
@@ -585,32 +594,34 @@ impl HelperPlan {
         if arguments.first().and_then(|value| value.to_str()) != Some(HELPER_MODE_ARGUMENT) {
             return Ok(None);
         }
-        if arguments.len() < 16
+        if arguments.len() < 18
             || arguments[1] != "--parent-pid"
             || arguments[3] != "--target"
             || arguments[5] != "--staged"
             || arguments[7] != "--backup"
             || arguments[9] != "--ready"
-            || arguments[11] != "--sha256"
-            || arguments[13] != "--size"
-            || arguments[15] != "--"
+            || arguments[11] != "--restart-ready"
+            || arguments[13] != "--sha256"
+            || arguments[15] != "--size"
+            || arguments[17] != "--"
         {
             return Err(SelfUpdateError::InvalidPlan);
         }
         let parent_pid = parse_os_number::<u32>(&arguments[2])?;
         let expected_sha256 =
-            parse_sha256(arguments[12].to_str().ok_or(SelfUpdateError::InvalidPlan)?)
+            parse_sha256(arguments[14].to_str().ok_or(SelfUpdateError::InvalidPlan)?)
                 .map_err(|_| SelfUpdateError::InvalidPlan)?;
-        let expected_size = parse_os_number::<u64>(&arguments[14])?;
+        let expected_size = parse_os_number::<u64>(&arguments[16])?;
         let plan = Self {
             parent_pid,
             target: PathBuf::from(&arguments[4]),
             staged: PathBuf::from(&arguments[6]),
             backup: PathBuf::from(&arguments[8]),
             ready: PathBuf::from(&arguments[10]),
+            restart_ready: PathBuf::from(&arguments[12]),
             expected_sha256,
             expected_size,
-            relaunch_args: arguments[16..].to_vec(),
+            relaunch_args: arguments[18..].to_vec(),
         };
         plan.validate()?;
         Ok(Some(plan))
@@ -618,11 +629,15 @@ impl HelperPlan {
 
     fn validate(&self) -> Result<(), SelfUpdateError> {
         let parent = self.target.parent().ok_or(SelfUpdateError::InvalidPlan)?;
+        let relaunch_args_are_valid = self.relaunch_args.is_empty()
+            || (self.relaunch_args.len() == 1
+                && self.relaunch_args[0].to_str() == Some("--startup"));
         if self.parent_pid == 0
             || !self.target.is_absolute()
             || !self.staged.is_absolute()
             || !self.backup.is_absolute()
             || !self.ready.is_absolute()
+            || !self.restart_ready.is_absolute()
             || self.staged.parent() != Some(parent)
             || self.backup.parent() != Some(parent)
             || self.target == self.staged
@@ -631,6 +646,12 @@ impl HelperPlan {
             || self.ready == self.target
             || self.ready == self.staged
             || self.ready == self.backup
+            || self.restart_ready == self.target
+            || self.restart_ready == self.staged
+            || self.restart_ready == self.backup
+            || self.restart_ready == self.ready
+            || self.restart_ready.exists()
+            || !relaunch_args_are_valid
             || self.expected_size == 0
             || self.expected_size > MAX_EXECUTABLE_BYTES
         {
@@ -654,7 +675,19 @@ pub trait SelfUpdatePlatform {
     /// 새 파일 시작 실패 뒤 backup을 target으로 복원합니다.
     fn rollback(&self, target: &Path, backup: &Path) -> Result<(), SelfUpdateError>;
     /// 대상 실행 파일을 비동기로 다시 시작합니다.
-    fn relaunch(&self, target: &Path, arguments: &[OsString]) -> Result<(), SelfUpdateError>;
+    fn relaunch(
+        &self,
+        target: &Path,
+        arguments: &[OsString],
+        restart_ready: Option<&Path>,
+    ) -> Result<u32, SelfUpdateError>;
+    fn wait_for_restart_ready(
+        &self,
+        process_id: u32,
+        restart_ready: &Path,
+        timeout: Duration,
+    ) -> Result<(), SelfUpdateError>;
+    fn terminate(&self, process_id: u32) -> Result<(), SelfUpdateError>;
     /// 성공한 교체 뒤 더 이상 필요 없는 backup을 제거합니다.
     fn remove_backup(&self, backup: &Path) -> Result<(), SelfUpdateError>;
 }
@@ -688,6 +721,7 @@ pub fn run_update_helper_mode(
     write_ready_file(&plan.ready)?;
     let result = apply_verified_update_helper(&NativeSelfUpdatePlatform, &plan);
     remove_file_if_present(&plan.ready);
+    remove_file_if_present(&plan.restart_ready);
     if let Ok(helper_path) = std::env::current_exe() {
         schedule_helper_cleanup(&helper_path);
     }
@@ -717,25 +751,43 @@ fn apply_verified_update_helper(
     plan: &HelperPlan,
 ) -> Result<HelperOutcome, SelfUpdateError> {
     platform.wait_for_exit(plan.parent_pid, HELPER_WAIT_TIMEOUT)?;
+    // The staged file remains writable while the parent is shutting down, so bind the bytes
+    // again immediately before the irreversible replacement step.
+    if verify_helper_plan(plan).is_err() {
+        platform
+            .relaunch(&plan.target, &plan.relaunch_args, None)
+            .map_err(|_| SelfUpdateError::RelaunchFailed)?;
+        return Ok(HelperOutcome::RolledBack);
+    }
     if platform
         .replace_with_backup(&plan.target, &plan.staged, &plan.backup)
         .is_err()
     {
         platform
-            .relaunch(&plan.target, &plan.relaunch_args)
+            .relaunch(&plan.target, &plan.relaunch_args, None)
             .map_err(|_| SelfUpdateError::RelaunchFailed)?;
         return Ok(HelperOutcome::RolledBack);
     }
-    if platform.relaunch(&plan.target, &plan.relaunch_args).is_ok() {
-        let _ = platform.remove_backup(&plan.backup);
-        return Ok(HelperOutcome::Updated);
+    if let Ok(process_id) =
+        platform.relaunch(&plan.target, &plan.relaunch_args, Some(&plan.restart_ready))
+    {
+        if platform
+            .wait_for_restart_ready(process_id, &plan.restart_ready, RESTART_READY_TIMEOUT)
+            .is_ok()
+        {
+            let _ = platform.remove_backup(&plan.backup);
+            remove_file_if_present(&plan.restart_ready);
+            return Ok(HelperOutcome::Updated);
+        }
+        let _ = platform.terminate(process_id);
     }
     platform
         .rollback(&plan.target, &plan.backup)
         .map_err(|_| SelfUpdateError::RollbackFailed)?;
     platform
-        .relaunch(&plan.target, &plan.relaunch_args)
+        .relaunch(&plan.target, &plan.relaunch_args, None)
         .map_err(|_| SelfUpdateError::RelaunchFailed)?;
+    remove_file_if_present(&plan.restart_ready);
     Ok(HelperOutcome::RolledBack)
 }
 
@@ -799,9 +851,58 @@ fn write_ready_file(path: &Path) -> Result<(), SelfUpdateError> {
     file.sync_all().map_err(|_| SelfUpdateError::Io)
 }
 
+fn ready_file_exists(path: &Path) -> bool {
+    fs::read(path).is_ok_and(|contents| contents == b"ready\n")
+}
+
+/// Removes the private restart handshake argument before normal launch-mode parsing.
+pub fn take_restart_ready_argument(
+    arguments: &mut Vec<OsString>,
+) -> Result<Option<PathBuf>, SelfUpdateError> {
+    let marker_positions = arguments
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| (value == RESTART_READY_ARGUMENT).then_some(index))
+        .collect::<Vec<_>>();
+    if marker_positions.is_empty() {
+        return Ok(None);
+    }
+    if marker_positions.len() != 1 || marker_positions[0] + 2 != arguments.len() {
+        return Err(SelfUpdateError::InvalidPlan);
+    }
+    let path = PathBuf::from(arguments.pop().ok_or(SelfUpdateError::InvalidPlan)?);
+    let marker = arguments.pop().ok_or(SelfUpdateError::InvalidPlan)?;
+    if marker != RESTART_READY_ARGUMENT || !valid_restart_ready_path(&path) {
+        return Err(SelfUpdateError::InvalidPlan);
+    }
+    Ok(Some(path))
+}
+
+/// Signals that the relaunched app has created its tray/UI successfully.
+pub fn signal_restart_ready(path: &Path) -> Result<(), SelfUpdateError> {
+    if !valid_restart_ready_path(path) {
+        return Err(SelfUpdateError::InvalidPlan);
+    }
+    write_ready_file(path)
+}
+
+fn valid_restart_ready_path(path: &Path) -> bool {
+    let expected_parent = std::env::temp_dir().join("CodexPeek").join("updates");
+    path.is_absolute()
+        && path.parent() == Some(expected_parent.as_path())
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with("codex-peek-update-restart-") && name.ends_with(".ready")
+            })
+        && !path.exists()
+}
+
 fn cleanup_unstarted_update(prepared: &PreparedUpdateHelper) {
     remove_file_if_present(&prepared.plan.staged);
     remove_file_if_present(&prepared.plan.ready);
+    remove_file_if_present(&prepared.plan.restart_ready);
     remove_file_if_present(&prepared.helper_path);
 }
 
@@ -865,12 +966,34 @@ impl SelfUpdatePlatform for NativeSelfUpdatePlatform {
         replace_file(target, backup, None).map_err(|_| SelfUpdateError::RollbackFailed)
     }
 
-    fn relaunch(&self, target: &Path, arguments: &[OsString]) -> Result<(), SelfUpdateError> {
-        Command::new(target)
-            .args(arguments)
+    fn relaunch(
+        &self,
+        target: &Path,
+        arguments: &[OsString],
+        restart_ready: Option<&Path>,
+    ) -> Result<u32, SelfUpdateError> {
+        let mut command = Command::new(target);
+        command.args(arguments);
+        if let Some(path) = restart_ready {
+            command.arg(RESTART_READY_ARGUMENT).arg(path);
+        }
+        command
             .spawn()
-            .map(|_| ())
+            .map(|child| child.id())
             .map_err(|_| SelfUpdateError::RelaunchFailed)
+    }
+
+    fn wait_for_restart_ready(
+        &self,
+        process_id: u32,
+        restart_ready: &Path,
+        timeout: Duration,
+    ) -> Result<(), SelfUpdateError> {
+        wait_for_process_ready(process_id, restart_ready, timeout)
+    }
+
+    fn terminate(&self, process_id: u32) -> Result<(), SelfUpdateError> {
+        terminate_process(process_id)
     }
 
     fn remove_backup(&self, backup: &Path) -> Result<(), SelfUpdateError> {
@@ -898,6 +1021,75 @@ fn wait_for_process_exit(process_id: u32, timeout: Duration) -> Result<(), SelfU
 #[cfg(not(windows))]
 fn wait_for_process_exit(_process_id: u32, _timeout: Duration) -> Result<(), SelfUpdateError> {
     Err(SelfUpdateError::WaitFailed)
+}
+
+#[cfg(windows)]
+fn wait_for_process_ready(
+    process_id: u32,
+    ready: &Path,
+    timeout: Duration,
+) -> Result<(), SelfUpdateError> {
+    use windows::Win32::{
+        Foundation::{CloseHandle, WAIT_OBJECT_0},
+        System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, process_id) }
+        .map_err(|_| SelfUpdateError::RelaunchFailed)?;
+    let deadline = std::time::Instant::now() + timeout;
+    let result = loop {
+        if ready_file_exists(ready) {
+            break Ok(());
+        }
+        if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0
+            || std::time::Instant::now() >= deadline
+        {
+            break Err(SelfUpdateError::RelaunchFailed);
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    let _ = unsafe { CloseHandle(handle) };
+    result
+}
+
+#[cfg(not(windows))]
+fn wait_for_process_ready(
+    _process_id: u32,
+    _ready: &Path,
+    _timeout: Duration,
+) -> Result<(), SelfUpdateError> {
+    Err(SelfUpdateError::RelaunchFailed)
+}
+
+#[cfg(windows)]
+fn terminate_process(process_id: u32) -> Result<(), SelfUpdateError> {
+    use windows::Win32::{
+        Foundation::{CloseHandle, WAIT_OBJECT_0},
+        System::Threading::{
+            OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+            PROCESS_TERMINATE,
+        },
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, process_id) }
+        .map_err(|_| SelfUpdateError::RelaunchFailed)?;
+    let result = if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+        Ok(())
+    } else {
+        match unsafe { TerminateProcess(handle, 1) } {
+            Ok(()) => (unsafe { WaitForSingleObject(handle, 5_000) } == WAIT_OBJECT_0)
+                .then_some(())
+                .ok_or(SelfUpdateError::RelaunchFailed),
+            Err(_) => Err(SelfUpdateError::RelaunchFailed),
+        }
+    };
+    let _ = unsafe { CloseHandle(handle) };
+    result
+}
+
+#[cfg(not(windows))]
+fn terminate_process(_process_id: u32) -> Result<(), SelfUpdateError> {
+    Err(SelfUpdateError::RelaunchFailed)
 }
 
 #[cfg(windows)]

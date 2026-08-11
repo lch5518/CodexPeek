@@ -212,8 +212,9 @@ fn dismissal_and_install_queue_accept_only_the_stored_update() {
     assert!(!presentation.queue_install_request(available_update("2.3.0")));
     assert!(presentation.queue_install_request(update.clone()));
     assert!(!presentation.queue_install_request(update.clone()));
-    assert_eq!(presentation.take_install_request(), Some(update));
+    assert_eq!(presentation.take_install_request(), Some(update.clone()));
     assert!(presentation.take_install_request().is_none());
+    assert!(!presentation.queue_install_request(update));
 }
 
 #[test]
@@ -275,7 +276,7 @@ fn install_preparation_exposes_downloading_ready_and_failure_states() {
 
     assert!(presentation.queue_install_request(update.clone()));
     assert_eq!(presentation.status(), UpdatePresentationStatus::Downloading);
-    assert_eq!(presentation.take_install_request(), Some(update));
+    assert_eq!(presentation.take_install_request(), Some(update.clone()));
     presentation.record_install_notice(UpdateCheckNotice::InstallReady);
     assert_eq!(presentation.status(), UpdatePresentationStatus::Installing);
     assert_eq!(
@@ -285,6 +286,7 @@ fn install_preparation_exposes_downloading_ready_and_failure_states() {
 
     presentation.record_install_notice(UpdateCheckNotice::VerificationFailed);
     assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
+    assert!(presentation.queue_install_request(update));
     assert_eq!(
         presentation.take_user_notice(),
         Some(UpdateCheckNotice::VerificationFailed)

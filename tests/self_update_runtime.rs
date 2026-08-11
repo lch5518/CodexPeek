@@ -12,8 +12,8 @@ use std::{
 
 use codex_usage_monitor::{
     apply_update_helper, fetch_available_self_update, prepare_update_helper, release_api_url,
-    AvailableUpdate, DownloadResponse, HelperOutcome, HelperPlan, SelfUpdateError,
-    SelfUpdateHttpClient, SelfUpdatePlatform,
+    signal_restart_ready, take_restart_ready_argument, AvailableUpdate, DownloadResponse,
+    HelperOutcome, HelperPlan, SelfUpdateError, SelfUpdateHttpClient, SelfUpdatePlatform,
 };
 use semver::Version;
 use sha2::{Digest, Sha256};
@@ -164,7 +164,14 @@ fn official_metadata_and_checksum_prepare_a_unicode_safe_helper_plan() {
         HelperPlan::decode_arguments(prepared.plan.encode_arguments()).unwrap(),
         Some(prepared.plan.clone())
     );
+    let mut invalid_relaunch = prepared.plan.clone();
+    invalid_relaunch.relaunch_args = vec![OsString::from("--diagnose")];
+    assert_eq!(
+        HelperPlan::decode_arguments(invalid_relaunch.encode_arguments()),
+        Err(SelfUpdateError::InvalidPlan)
+    );
     assert!(!prepared.plan.ready.exists());
+    assert!(!prepared.plan.restart_ready.exists());
 
     fs::remove_file(&prepared.plan.staged).unwrap();
     fs::remove_file(&prepared.helper_path).unwrap();
@@ -227,15 +234,27 @@ struct RecordingPlatform {
     relaunch_count: AtomicUsize,
     fail_first_relaunch: bool,
     fail_replace: bool,
+    fail_readiness: bool,
 }
 
 impl RecordingPlatform {
+    fn success_fixture() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            relaunch_count: AtomicUsize::new(0),
+            fail_first_relaunch: false,
+            fail_replace: false,
+            fail_readiness: false,
+        }
+    }
+
     fn rollback_fixture() -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
             relaunch_count: AtomicUsize::new(0),
             fail_first_relaunch: true,
             fail_replace: false,
+            fail_readiness: false,
         }
     }
 
@@ -245,6 +264,17 @@ impl RecordingPlatform {
             relaunch_count: AtomicUsize::new(0),
             fail_first_relaunch: false,
             fail_replace: true,
+            fail_readiness: false,
+        }
+    }
+
+    fn readiness_failure_fixture() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            relaunch_count: AtomicUsize::new(0),
+            fail_first_relaunch: false,
+            fail_replace: false,
+            fail_readiness: true,
         }
     }
 }
@@ -274,14 +304,38 @@ impl SelfUpdatePlatform for RecordingPlatform {
         Ok(())
     }
 
-    fn relaunch(&self, _target: &Path, _arguments: &[OsString]) -> Result<(), SelfUpdateError> {
+    fn relaunch(
+        &self,
+        _target: &Path,
+        _arguments: &[OsString],
+        _restart_ready: Option<&Path>,
+    ) -> Result<u32, SelfUpdateError> {
         self.calls.lock().unwrap().push("relaunch");
         let count = self.relaunch_count.fetch_add(1, Ordering::Relaxed);
         if self.fail_first_relaunch && count == 0 {
             Err(SelfUpdateError::RelaunchFailed)
         } else {
+            Ok(100 + count as u32)
+        }
+    }
+
+    fn wait_for_restart_ready(
+        &self,
+        _process_id: u32,
+        _restart_ready: &Path,
+        _timeout: Duration,
+    ) -> Result<(), SelfUpdateError> {
+        self.calls.lock().unwrap().push("wait_ready");
+        if self.fail_readiness {
+            Err(SelfUpdateError::RelaunchFailed)
+        } else {
             Ok(())
         }
+    }
+
+    fn terminate(&self, _process_id: u32) -> Result<(), SelfUpdateError> {
+        self.calls.lock().unwrap().push("terminate");
+        Ok(())
     }
 
     fn remove_backup(&self, _backup: &Path) -> Result<(), SelfUpdateError> {
@@ -305,6 +359,7 @@ fn helper_rolls_back_and_relaunches_the_old_binary_when_new_launch_fails() {
         staged,
         backup,
         ready,
+        restart_ready: root.0.join("restart.ready"),
         expected_sha256: Sha256::digest(bytes).into(),
         expected_size: bytes.len() as u64,
         relaunch_args: vec![OsString::from("--startup")],
@@ -333,6 +388,7 @@ fn helper_relaunches_the_old_binary_when_atomic_replacement_fails() {
         staged,
         backup: root.0.join("codex-peek.backup.exe"),
         ready: root.0.join("helper.ready"),
+        restart_ready: root.0.join("restart.ready"),
         expected_sha256: Sha256::digest(bytes).into(),
         expected_size: bytes.len() as u64,
         relaunch_args: Vec::new(),
@@ -350,6 +406,104 @@ fn helper_relaunches_the_old_binary_when_atomic_replacement_fails() {
 }
 
 #[test]
+fn restart_handshake_is_private_trailing_state_and_preserves_startup_mode() {
+    let ready_root = std::env::temp_dir().join("CodexPeek").join("updates");
+    fs::create_dir_all(&ready_root).unwrap();
+    let ready = ready_root.join(format!(
+        "codex-peek-update-restart-test-{}-{}.ready",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut arguments = vec![
+        OsString::from("--startup"),
+        OsString::from("--self-update-restart-ready"),
+        ready.as_os_str().to_owned(),
+    ];
+
+    assert_eq!(
+        take_restart_ready_argument(&mut arguments),
+        Ok(Some(ready.clone()))
+    );
+    assert_eq!(arguments, [OsString::from("--startup")]);
+    assert_eq!(signal_restart_ready(&ready), Ok(()));
+    assert_eq!(fs::read(&ready).unwrap(), b"ready\n");
+    assert_eq!(
+        signal_restart_ready(&ready),
+        Err(SelfUpdateError::InvalidPlan)
+    );
+    fs::remove_file(ready).unwrap();
+}
+
+#[test]
+fn helper_keeps_backup_until_the_new_app_reports_ui_readiness() {
+    let root = TestRoot::new("restart-ready");
+    let staged = root.0.join("codex-peek.update");
+    let bytes = b"verified replacement";
+    fs::write(&staged, bytes).unwrap();
+    let plan = HelperPlan {
+        parent_pid: 42,
+        target: root.0.join("codex-peek.exe"),
+        staged,
+        backup: root.0.join("codex-peek.backup.exe"),
+        ready: root.0.join("helper.ready"),
+        restart_ready: root.0.join("restart.ready"),
+        expected_sha256: Sha256::digest(bytes).into(),
+        expected_size: bytes.len() as u64,
+        relaunch_args: vec![OsString::from("--startup")],
+    };
+    let platform = RecordingPlatform::success_fixture();
+
+    assert_eq!(
+        apply_update_helper(&platform, &plan),
+        Ok(HelperOutcome::Updated)
+    );
+    assert_eq!(
+        *platform.calls.lock().unwrap(),
+        ["wait", "replace", "relaunch", "wait_ready", "remove_backup"]
+    );
+}
+
+#[test]
+fn helper_terminates_and_rolls_back_when_the_new_app_never_becomes_ready() {
+    let root = TestRoot::new("restart-not-ready");
+    let staged = root.0.join("codex-peek.update");
+    let bytes = b"verified replacement";
+    fs::write(&staged, bytes).unwrap();
+    let plan = HelperPlan {
+        parent_pid: 42,
+        target: root.0.join("codex-peek.exe"),
+        staged,
+        backup: root.0.join("codex-peek.backup.exe"),
+        ready: root.0.join("helper.ready"),
+        restart_ready: root.0.join("restart.ready"),
+        expected_sha256: Sha256::digest(bytes).into(),
+        expected_size: bytes.len() as u64,
+        relaunch_args: Vec::new(),
+    };
+    let platform = RecordingPlatform::readiness_failure_fixture();
+
+    assert_eq!(
+        apply_update_helper(&platform, &plan),
+        Ok(HelperOutcome::RolledBack)
+    );
+    assert_eq!(
+        *platform.calls.lock().unwrap(),
+        [
+            "wait",
+            "replace",
+            "relaunch",
+            "wait_ready",
+            "terminate",
+            "rollback",
+            "relaunch"
+        ]
+    );
+}
+
+#[test]
 fn helper_refuses_a_changed_staging_file_before_waiting_for_the_parent() {
     let root = TestRoot::new("integrity");
     let staged = root.0.join("codex-peek.update");
@@ -360,6 +514,7 @@ fn helper_refuses_a_changed_staging_file_before_waiting_for_the_parent() {
         staged,
         backup: root.0.join("codex-peek.backup.exe"),
         ready: root.0.join("helper.ready"),
+        restart_ready: root.0.join("restart.ready"),
         expected_sha256: [0; 32],
         expected_size: 7,
         relaunch_args: Vec::new(),
@@ -371,4 +526,86 @@ fn helper_refuses_a_changed_staging_file_before_waiting_for_the_parent() {
         Err(SelfUpdateError::Integrity)
     );
     assert!(platform.calls.lock().unwrap().is_empty());
+}
+
+struct TamperingPlatform {
+    staged: PathBuf,
+    relaunched: AtomicUsize,
+}
+
+impl SelfUpdatePlatform for TamperingPlatform {
+    fn wait_for_exit(&self, _process_id: u32, _timeout: Duration) -> Result<(), SelfUpdateError> {
+        fs::write(&self.staged, b"tampered after first verification").unwrap();
+        Ok(())
+    }
+
+    fn replace_with_backup(
+        &self,
+        _target: &Path,
+        _staged: &Path,
+        _backup: &Path,
+    ) -> Result<(), SelfUpdateError> {
+        panic!("replacement must not run after staging tampering")
+    }
+
+    fn rollback(&self, _target: &Path, _backup: &Path) -> Result<(), SelfUpdateError> {
+        panic!("rollback must not run before replacement")
+    }
+
+    fn relaunch(
+        &self,
+        _target: &Path,
+        _arguments: &[OsString],
+        restart_ready: Option<&Path>,
+    ) -> Result<u32, SelfUpdateError> {
+        assert!(restart_ready.is_none());
+        self.relaunched.fetch_add(1, Ordering::Relaxed);
+        Ok(101)
+    }
+
+    fn wait_for_restart_ready(
+        &self,
+        _process_id: u32,
+        _restart_ready: &Path,
+        _timeout: Duration,
+    ) -> Result<(), SelfUpdateError> {
+        panic!("readiness must not be checked after staging tampering")
+    }
+
+    fn terminate(&self, _process_id: u32) -> Result<(), SelfUpdateError> {
+        panic!("no new process exists after staging tampering")
+    }
+
+    fn remove_backup(&self, _backup: &Path) -> Result<(), SelfUpdateError> {
+        panic!("backup must not be removed after staging tampering")
+    }
+}
+
+#[test]
+fn helper_rechecks_staging_integrity_after_the_parent_exits() {
+    let root = TestRoot::new("integrity-after-wait");
+    let staged = root.0.join("codex-peek.update");
+    let bytes = b"verified replacement";
+    fs::write(&staged, bytes).unwrap();
+    let plan = HelperPlan {
+        parent_pid: 42,
+        target: root.0.join("codex-peek.exe"),
+        staged: staged.clone(),
+        backup: root.0.join("codex-peek.backup.exe"),
+        ready: root.0.join("helper.ready"),
+        restart_ready: root.0.join("restart.ready"),
+        expected_sha256: Sha256::digest(bytes).into(),
+        expected_size: bytes.len() as u64,
+        relaunch_args: Vec::new(),
+    };
+
+    let platform = TamperingPlatform {
+        staged,
+        relaunched: AtomicUsize::new(0),
+    };
+    assert_eq!(
+        apply_update_helper(&platform, &plan),
+        Ok(HelperOutcome::RolledBack)
+    );
+    assert_eq!(platform.relaunched.load(Ordering::Relaxed), 1);
 }

@@ -182,6 +182,7 @@ struct UpdatePresentationInner {
     running_intent: Option<UpdateCheckIntent>,
     pending_user_intent: bool,
     pending_install_request: Option<AvailableUpdate>,
+    install_in_progress: bool,
 }
 
 /// 업데이트 결과와 UI 스레드가 처리할 일회성 사용자 알림을 공유하는 상태입니다.
@@ -353,7 +354,7 @@ impl UpdatePresentation {
     /// 실제 다운로드와 교체는 이 큐를 소비하는 별도 작업자가 수행해야 합니다.
     pub fn queue_install_request(&self, update: AvailableUpdate) -> bool {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        if inner.available.as_ref() != Some(&update) || inner.pending_install_request.is_some() {
+        if inner.available.as_ref() != Some(&update) || inner.install_in_progress {
             return false;
         }
         inner.open_requested = false;
@@ -362,6 +363,7 @@ impl UpdatePresentation {
             inner.pending_user_notice = None;
         }
         inner.pending_install_request = Some(update);
+        inner.install_in_progress = true;
         inner.status = UpdatePresentationStatus::Downloading;
         true
     }
@@ -385,6 +387,8 @@ impl UpdatePresentation {
             | UpdateCheckNotice::InstallFailed => UpdatePresentationStatus::Failed,
             _ => return,
         };
+        inner.pending_install_request = None;
+        inner.install_in_progress = false;
         inner.pending_user_notice = Some(notice);
     }
 }

@@ -47,10 +47,10 @@ pub use profiles::{
 pub use self_update::{
     apply_update_helper, download_verified_executable, fetch_available_self_update,
     native_update_helper, prepare_and_spawn_update_helper, prepare_update_helper, release_api_url,
-    run_update_helper_mode, spawn_prepared_update_helper, DownloadResponse, HelperOutcome,
-    HelperPlan, PreparedUpdateHelper, ReleaseAsset, SelfUpdateError, SelfUpdateHttpClient,
-    SelfUpdatePlatform, SelfUpdateRelease, SpawnedUpdateHelper, UreqSelfUpdateHttpClient,
-    VerifiedExecutable,
+    run_update_helper_mode, signal_restart_ready, spawn_prepared_update_helper,
+    take_restart_ready_argument, DownloadResponse, HelperOutcome, HelperPlan, PreparedUpdateHelper,
+    ReleaseAsset, SelfUpdateError, SelfUpdateHttpClient, SelfUpdatePlatform, SelfUpdateRelease,
+    SpawnedUpdateHelper, UreqSelfUpdateHttpClient, VerifiedExecutable,
 };
 pub use update_check::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,

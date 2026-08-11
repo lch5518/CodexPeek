@@ -34,9 +34,9 @@ use windows::{
         UI::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
             Controls::{
-                TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON,
+                TaskDialogIndirect, NMHDR, TASKDIALOGCONFIG, TASKDIALOG_BUTTON,
                 TDF_POSITION_RELATIVE_TO_WINDOW, TDF_RTL_LAYOUT, TDF_SIZE_TO_CONTENT,
-                TDF_USE_COMMAND_LINKS_NO_ICON, NMHDR, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
+                TDF_USE_COMMAND_LINKS_NO_ICON, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
                 TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_UPDATETIPTEXTW, TTN_POP, TTN_SHOW,
                 TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
             },
@@ -253,6 +253,7 @@ pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
             }
             state.lifecycle.timer_started();
             apply_window_policy((&mut *state) as *mut NativeState<'_>)?;
+            state.backend.signal_restart_ready()?;
 
             let mut message = MSG::default();
             loop {

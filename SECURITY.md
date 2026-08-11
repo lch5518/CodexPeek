@@ -140,8 +140,10 @@ the app is running. Skipping a version records that version locally and suppress
 newer release appears. With explicit approval, the updater accepts only the expected raw Windows
 x64 executable and `SHA256SUMS.txt` assets from the validated GitHub Release, checks the exact
 manifest entry and SHA-256, stages the file, and uses a helper to replace only the running
-executable before restarting. A failed download, verification, or replacement leaves the current
-executable in place. Update state is stored with the other settings under `%APPDATA%\CodexPeek`;
+executable before restarting. The helper rechecks the staged bytes immediately before replacement
+and keeps its rollback copy until the new app reports that its tray and initial windows are ready.
+A failed download, verification, replacement, or restart-readiness check preserves or restores
+the previous executable. Update state is stored with the other settings under `%APPDATA%\CodexPeek`;
 the updater does not replace that directory. Proxy diagnostics report presence only; they never
 log proxy URLs, credentials, or environment-variable values.
 

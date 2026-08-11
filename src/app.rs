@@ -16,7 +16,7 @@ use crate::{
     diagnose_profile_contexts,
     domain::{reset_credits_label, reset_unavailable_label, ResetDateTime},
     inspect_settings_for_diagnostics, localized_text, prepare_and_spawn_update_helper,
-    run_update_helper_mode,
+    run_update_helper_mode, signal_restart_ready, take_restart_ready_argument,
     windows::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, profile_taskbar_tooltip, resolve_windows_language, taskbar,
@@ -39,13 +39,15 @@ use crate::{
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
-    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    let mut arguments = arguments.into_iter().collect::<Vec<_>>();
     if run_update_helper_mode(arguments.clone())
         .map_err(|_| io::Error::other("self-update helper failed"))?
         .is_some()
     {
         return Ok(());
     }
+    let restart_ready = take_restart_ready_argument(&mut arguments)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid update handshake"))?;
     let arguments = arguments
         .iter()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -63,7 +65,14 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
     let startup_hidden =
         !initial_widget_visible(mode, settings.startup_view, settings.widget_visible)
             && settings.widget_visible;
-    let mut runtime = AppRuntime::new(store, settings, startup_hidden)?;
+    let relaunch_args = relaunch_args_for_mode(mode);
+    let mut runtime = AppRuntime::new(
+        store,
+        settings,
+        startup_hidden,
+        relaunch_args,
+        restart_ready,
+    )?;
     runtime.start_automatic_update_check();
     let result = native::run(&mut runtime);
     runtime.shutdown();
@@ -76,6 +85,13 @@ fn is_official_release_build() -> bool {
 
 fn is_official_release_marker(value: Option<&str>) -> bool {
     value == Some("1")
+}
+
+fn relaunch_args_for_mode(mode: LaunchMode) -> Vec<OsString> {
+    match mode {
+        LaunchMode::Startup => vec![OsString::from("--startup")],
+        LaunchMode::Normal | LaunchMode::Diagnose => Vec::new(),
+    }
 }
 
 /// 프로필 설정의 내구성 이벤트와 계정 워커 이벤트 사이의 순서를 조정하는 명령입니다.
@@ -526,10 +542,18 @@ struct AppRuntime {
     startup_hidden: bool,
     update_presentation: UpdatePresentation,
     official_release_build: bool,
+    relaunch_args: Vec<OsString>,
+    restart_ready: Option<PathBuf>,
 }
 
 impl AppRuntime {
-    fn new(store: SettingsStore, settings: Settings, startup_hidden: bool) -> io::Result<Self> {
+    fn new(
+        store: SettingsStore,
+        settings: Settings,
+        startup_hidden: bool,
+        relaunch_args: Vec<OsString>,
+        restart_ready: Option<PathBuf>,
+    ) -> io::Result<Self> {
         let usage_provider = Arc::new(AppServerUsageProvider::new());
         let root = UsageProfileRoot::new(store.root().to_path_buf());
         let history_store = UsageHistoryStore::for_root(store.root().to_path_buf());
@@ -581,6 +605,8 @@ impl AppRuntime {
             startup_hidden,
             update_presentation: UpdatePresentation::default(),
             official_release_build: is_official_release_build(),
+            relaunch_args,
+            restart_ready,
         })
     }
 
@@ -677,6 +703,7 @@ impl AppRuntime {
             return;
         };
         let presentation = self.update_presentation.clone();
+        let relaunch_args = self.relaunch_args.clone();
         thread::spawn(move || {
             let result = std::env::current_exe()
                 .map_err(|_| SelfUpdateError::Io)
@@ -686,7 +713,7 @@ impl AppRuntime {
                         &update,
                         env!("CARGO_PKG_VERSION"),
                         &current_executable,
-                        Vec::new(),
+                        relaunch_args,
                     )
                     .map(|_| ())
                 });
@@ -928,6 +955,13 @@ impl AppRuntime {
 }
 
 impl UiBackend for AppRuntime {
+    fn signal_restart_ready(&mut self) -> io::Result<()> {
+        let Some(path) = self.restart_ready.take() else {
+            return Ok(());
+        };
+        signal_restart_ready(&path).map_err(|_| io::Error::other("update handshake failed"))
+    }
+
     fn snapshot(&self) -> WidgetViewModel {
         self.drain_profile_events();
         let settings = self.settings_snapshot();
@@ -2703,6 +2737,7 @@ fn safe_path_text(path: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsString,
         sync::Arc,
         time::{Duration, SystemTime},
     };
@@ -2712,8 +2747,8 @@ mod tests {
         consumption_pace_view, data_state_for_snapshot, diagnostic_status, forecast_duration_text,
         forecast_view, is_official_release_marker, last_success_text, pass_fail,
         profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
-        proxy_presence, row_view, row_view_with_reset_time, status_with_update, taskbar_copy,
-        taskbar_risk_text, AppRuntime, DiagnosticSummary,
+        proxy_presence, relaunch_args_for_mode, row_view, row_view_with_reset_time,
+        status_with_update, taskbar_copy, taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
     use crate::windows::{
@@ -3003,6 +3038,8 @@ mod tests {
             startup_hidden: false,
             update_presentation: UpdatePresentation::default(),
             official_release_build: true,
+            relaunch_args: Vec::new(),
+            restart_ready: None,
         }
     }
 
@@ -3185,6 +3222,16 @@ mod tests {
         );
         runtime.shutdown();
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn self_update_relaunch_preserves_only_the_validated_startup_mode() {
+        assert_eq!(
+            relaunch_args_for_mode(crate::windows::LaunchMode::Startup),
+            vec![OsString::from("--startup")]
+        );
+        assert!(relaunch_args_for_mode(crate::windows::LaunchMode::Normal).is_empty());
+        assert!(relaunch_args_for_mode(crate::windows::LaunchMode::Diagnose).is_empty());
     }
 
     #[test]

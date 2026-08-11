@@ -672,6 +672,10 @@ pub fn profile_taskbar_tooltip(
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.
 pub trait UiBackend {
+    /// Signals a self-update helper only after the tray and initial windows are ready.
+    fn signal_restart_ready(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
     /// 최신 렌더링 복사본을 반환합니다.
     fn snapshot(&self) -> WidgetViewModel;
     /// 현재 메뉴 및 창 설정 복사본을 반환합니다.

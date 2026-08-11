@@ -286,6 +286,11 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
       offered once available
 - [ ] **Update now** downloads only the expected raw x64 EXE and `SHA256SUMS.txt`, rejects a missing
       entry or mismatched SHA-256, replaces only the current executable, and restarts successfully
+- [ ] Start the update from a `--startup` launch and verify the restarted app preserves that mode
+- [ ] Make the replacement exit before tray/UI readiness and verify the helper keeps its backup,
+      terminates the failed replacement, restores the old EXE, and relaunches it
+- [ ] Change the staged EXE after helper readiness but before parent exit; verify the helper's
+      pre-replacement recheck rejects it and relaunches the old EXE
 - [ ] Download, verification, helper-launch, replacement, and restart failures preserve the old
       executable and show the localized recovery message
 - [ ] Repeat the prompt, action buttons, progress, and error messages in all 12 locales; verify

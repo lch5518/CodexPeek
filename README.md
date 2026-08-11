@@ -204,6 +204,12 @@ and restarts CodexPeek. The update does not modify `%APPDATA%\CodexPeek`, so exi
 profiles remain in place. If verification or replacement fails, the existing executable is kept
 and the release can be installed manually.
 
+The helper keeps a rollback copy until the relaunched app has created its tray and initial
+windows. If that readiness check fails, it restores and relaunches the previous executable while
+preserving `--startup` launches. For Installer editions, Windows Apps & Features continues to
+show the installer version until a newer Setup package is installed; after a self-update, use the
+running app's version as the authoritative version.
+
 Executables built locally from source are not marked as official release builds, so in-app
 updates are disabled for them. CodexPeek shows a warning once per app version: replacing a local
 build with an official release would omit locally compiled changes. Pull and rebuild the source,
