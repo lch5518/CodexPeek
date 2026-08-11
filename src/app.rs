@@ -15,7 +15,8 @@ use crate::{
     codex::{locate_supported_cli, AppServerUsageProvider},
     diagnose_profile_contexts,
     domain::{reset_credits_label, reset_unavailable_label, ResetDateTime},
-    inspect_settings_for_diagnostics, localized_text,
+    inspect_settings_for_diagnostics, localized_text, prepare_and_spawn_update_helper,
+    run_update_helper_mode,
     windows::{
         autostart::{set_autostart, WindowsRegistry},
         initial_widget_visible, native, profile_taskbar_tooltip, resolve_windows_language, taskbar,
@@ -30,16 +31,23 @@ use crate::{
     ProfileDiagnosticRun, ProfileDiagnosticSnapshot, ProfileExecutionContext, ProfilePollEvent,
     ProfilePollingService, ProfileSettingsMutation, ProfileSettingsOperation,
     ProfileSettingsRequestId, ProfileSettingsService, ProfileValidationError, ResetCredits,
-    SafeDiagnostic, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckNotice,
+    SafeDiagnostic, SelfUpdateError, Settings, SettingsStore, UpdateCheckIntent, UpdateCheckNotice,
     UpdateCheckStart, UpdateChecker, UpdatePresentation, UpdatePresentationStatus,
-    UpdateUserAction, UreqHttpClient, UsageError, UsageForecastService, UsageHistoryStore,
-    UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
+    UpdateUserAction, UreqHttpClient, UreqSelfUpdateHttpClient, UsageError, UsageForecastService,
+    UsageHistoryStore, UsageProfileId, UsageProfileRoot, UsageWindow, WindowKind,
 };
 
 /// 명령줄 모드에 따라 진단 또는 네이티브 애플리케이션을 실행합니다.
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    if run_update_helper_mode(arguments.clone())
+        .map_err(|_| io::Error::other("self-update helper failed"))?
+        .is_some()
+    {
+        return Ok(());
+    }
     let arguments = arguments
-        .into_iter()
+        .iter()
         .map(|argument| argument.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
     let mode = LaunchMode::parse(arguments.iter())
@@ -60,6 +68,14 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> io::Result<()> {
     let result = native::run(&mut runtime);
     runtime.shutdown();
     result
+}
+
+fn is_official_release_build() -> bool {
+    is_official_release_marker(option_env!("CODEX_PEEK_OFFICIAL_BUILD"))
+}
+
+fn is_official_release_marker(value: Option<&str>) -> bool {
+    value == Some("1")
 }
 
 /// 프로필 설정의 내구성 이벤트와 계정 워커 이벤트 사이의 순서를 조정하는 명령입니다.
@@ -509,6 +525,7 @@ struct AppRuntime {
     diagnostics: Option<AsyncDiagnosticWriter>,
     startup_hidden: bool,
     update_presentation: UpdatePresentation,
+    official_release_build: bool,
 }
 
 impl AppRuntime {
@@ -563,6 +580,7 @@ impl AppRuntime {
             diagnostics: Some(diagnostics),
             startup_hidden,
             update_presentation: UpdatePresentation::default(),
+            official_release_build: is_official_release_build(),
         })
     }
 
@@ -574,20 +592,15 @@ impl AppRuntime {
     }
 
     fn start_automatic_update_check(&mut self) {
+        if !self.official_release_build {
+            self.queue_unofficial_build_warning(false);
+            return;
+        }
         let Some(checker) = update_checker() else {
             return;
         };
         let now = SystemTime::now();
-        let last_check = self
-            .settings_snapshot()
-            .last_update_check_unix
-            .map(|seconds| UNIX_EPOCH + std::time::Duration::from_secs(seconds));
-        if last_check.is_some_and(|checked| {
-            now.duration_since(checked)
-                .is_ok_and(|elapsed| elapsed < std::time::Duration::from_secs(24 * 60 * 60))
-        }) {
-            return;
-        }
+        let dismissed_version = self.settings_snapshot().dismissed_update_version;
         if self
             .update_presentation
             .begin_check(UpdateCheckIntent::Automatic)
@@ -595,10 +608,14 @@ impl AppRuntime {
         {
             return;
         }
-        self.spawn_update_worker(checker, last_check, now);
+        self.spawn_update_worker(checker, now, dismissed_version);
     }
 
     fn handle_user_update_action(&mut self) {
+        if !self.official_release_build {
+            self.queue_unofficial_build_warning(true);
+            return;
+        }
         let Some(checker) = update_checker() else {
             self.update_presentation
                 .queue_user_notice(UpdateCheckNotice::Failed);
@@ -609,17 +626,37 @@ impl AppRuntime {
                 .update_presentation
                 .queue_user_notice(UpdateCheckNotice::Available(update)),
             UpdateUserAction::StartCheck => {
-                self.spawn_update_worker(checker, None, SystemTime::now());
+                self.spawn_update_worker(checker, SystemTime::now(), None);
             }
             UpdateUserAction::WaitForRunning => {}
         }
     }
 
+    fn queue_unofficial_build_warning(&self, force: bool) {
+        let version = env!("CARGO_PKG_VERSION");
+        let already_shown = self
+            .settings_snapshot()
+            .unofficial_build_warning_version
+            .as_deref()
+            == Some(version);
+        if !force && already_shown {
+            return;
+        }
+        if !already_shown {
+            self.with_settings_mut(|settings| {
+                settings.unofficial_build_warning_version = Some(version.to_owned());
+            });
+            self.save_settings();
+        }
+        self.update_presentation
+            .queue_user_notice(UpdateCheckNotice::UnofficialBuild);
+    }
+
     fn spawn_update_worker(
         &mut self,
         checker: UpdateChecker,
-        last_check: Option<SystemTime>,
         now: SystemTime,
+        dismissed_version: Option<String>,
     ) {
         self.with_settings_mut(|settings| {
             settings.last_update_check_unix = now
@@ -630,8 +667,42 @@ impl AppRuntime {
         self.save_settings();
         let presentation = self.update_presentation.clone();
         thread::spawn(move || {
-            let result = checker.check_if_due(&UreqHttpClient, last_check, now);
-            presentation.record_result(result);
+            let result = checker.check_if_due(&UreqHttpClient, None, now);
+            presentation.record_result_with_dismissed_version(result, dismissed_version.as_deref());
+        });
+    }
+
+    fn start_install_worker(&self) {
+        let Some(update) = self.update_presentation.take_install_request() else {
+            return;
+        };
+        let presentation = self.update_presentation.clone();
+        thread::spawn(move || {
+            let result = std::env::current_exe()
+                .map_err(|_| SelfUpdateError::Io)
+                .and_then(|current_executable| {
+                    prepare_and_spawn_update_helper(
+                        &UreqSelfUpdateHttpClient,
+                        &update,
+                        env!("CARGO_PKG_VERSION"),
+                        &current_executable,
+                        Vec::new(),
+                    )
+                    .map(|_| ())
+                });
+            let notice = match result {
+                Ok(()) => UpdateCheckNotice::InstallReady,
+                Err(SelfUpdateError::Network | SelfUpdateError::TooLarge) => {
+                    UpdateCheckNotice::DownloadFailed
+                }
+                Err(
+                    SelfUpdateError::InvalidMetadata
+                    | SelfUpdateError::SelectionMismatch
+                    | SelfUpdateError::Integrity,
+                ) => UpdateCheckNotice::VerificationFailed,
+                Err(_) => UpdateCheckNotice::InstallFailed,
+            };
+            presentation.record_install_notice(notice);
         });
     }
 
@@ -1044,6 +1115,23 @@ impl UiBackend for AppRuntime {
                 });
             }
             UiAction::CheckForUpdates => self.handle_user_update_action(),
+            UiAction::DismissUpdate(version) => {
+                if self.update_presentation.dismiss_available_version(&version) {
+                    self.with_settings_mut(|settings| {
+                        settings.dismissed_update_version = Some(version);
+                    });
+                } else {
+                    save_preferences = false;
+                }
+            }
+            UiAction::InstallUpdate(update) => {
+                if !self.official_release_build {
+                    self.queue_unofficial_build_warning(true);
+                } else if self.update_presentation.queue_install_request(update) {
+                    self.start_install_worker();
+                }
+                save_preferences = false;
+            }
             UiAction::ToggleWidget => {
                 if self.startup_hidden {
                     self.startup_hidden = false;
@@ -1398,6 +1486,8 @@ fn update_status_key(status: UpdatePresentationStatus) -> Option<LocalizationKey
         UpdatePresentationStatus::Available => Some(LocalizationKey::UpdateAvailable),
         UpdatePresentationStatus::Current => Some(LocalizationKey::UpdateCurrent),
         UpdatePresentationStatus::Failed => Some(LocalizationKey::UpdateFailed),
+        UpdatePresentationStatus::Downloading => Some(LocalizationKey::UpdateDownloading),
+        UpdatePresentationStatus::Installing => Some(LocalizationKey::UpdateInstalling),
     }
 }
 
@@ -2620,9 +2710,10 @@ mod tests {
     use super::{
         append_consumption_pace_tooltip, append_forecast_tooltip, compact_decimal,
         consumption_pace_view, data_state_for_snapshot, diagnostic_status, forecast_duration_text,
-        forecast_view, last_success_text, pass_fail, profile_usage_presentation_for_snapshot,
-        profile_usage_presentation_for_window, proxy_presence, row_view, row_view_with_reset_time,
-        status_with_update, taskbar_copy, taskbar_risk_text, AppRuntime, DiagnosticSummary,
+        forecast_view, is_official_release_marker, last_success_text, pass_fail,
+        profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
+        proxy_presence, row_view, row_view_with_reset_time, status_with_update, taskbar_copy,
+        taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
     use crate::codex::{LoginPageOpener, OperationCancellation, ProfileAccountProvider};
     use crate::windows::{
@@ -2911,6 +3002,7 @@ mod tests {
             diagnostics,
             startup_hidden: false,
             update_presentation: UpdatePresentation::default(),
+            official_release_build: true,
         }
     }
 
@@ -2999,6 +3091,100 @@ mod tests {
             Some(UpdateCheckNotice::Available(update))
         );
         runtime.shutdown();
+    }
+
+    #[test]
+    fn update_dismissal_persists_only_the_validated_version() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-peek-update-decisions-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = SettingsStore::for_root(&root);
+        let mut runtime = test_app_runtime_with_store(Settings::default(), store, None);
+        let update = AvailableUpdate {
+            version: semver::Version::parse("2.0.0").unwrap(),
+            release_url: "https://github.com/owner/repo/releases/tag/v2.0.0".to_owned(),
+        };
+        runtime
+            .update_presentation
+            .begin_check(crate::UpdateCheckIntent::Automatic);
+        runtime
+            .update_presentation
+            .record_result(Ok(Some(update.clone())));
+
+        runtime.dispatch(UiAction::DismissUpdate("1.9.0".to_owned()));
+        assert_eq!(runtime.settings_snapshot().dismissed_update_version, None);
+
+        runtime.dispatch(UiAction::DismissUpdate("2.0.0".to_owned()));
+        assert_eq!(
+            runtime
+                .settings_snapshot()
+                .dismissed_update_version
+                .as_deref(),
+            Some("2.0.0")
+        );
+
+        runtime.shutdown();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unofficial_build_warns_once_per_version_and_never_queues_installation() {
+        assert!(is_official_release_marker(Some("1")));
+        assert!(!is_official_release_marker(None));
+        assert!(!is_official_release_marker(Some("0")));
+        let root = std::env::temp_dir().join(format!(
+            "codex-peek-unofficial-build-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = SettingsStore::for_root(&root);
+        let mut runtime = test_app_runtime_with_store(Settings::default(), store, None);
+        runtime.official_release_build = false;
+
+        runtime.start_automatic_update_check();
+        assert_eq!(
+            runtime.take_update_notice(),
+            Some(UpdateCheckNotice::UnofficialBuild)
+        );
+        assert_eq!(
+            runtime
+                .settings_snapshot()
+                .unofficial_build_warning_version
+                .as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+
+        runtime.start_automatic_update_check();
+        assert!(runtime.take_update_notice().is_none());
+
+        let update = AvailableUpdate {
+            version: semver::Version::parse("2.0.0").unwrap(),
+            release_url: "https://github.com/owner/repo/releases/tag/v2.0.0".to_owned(),
+        };
+        runtime
+            .update_presentation
+            .begin_check(crate::UpdateCheckIntent::Automatic);
+        runtime
+            .update_presentation
+            .record_result(Ok(Some(update.clone())));
+        let _ = runtime.take_update_notice();
+        runtime.dispatch(UiAction::InstallUpdate(update));
+
+        assert!(runtime.update_presentation.take_install_request().is_none());
+        assert_eq!(
+            runtime.take_update_notice(),
+            Some(UpdateCheckNotice::UnofficialBuild)
+        );
+        runtime.shutdown();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

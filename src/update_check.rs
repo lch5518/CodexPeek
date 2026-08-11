@@ -112,6 +112,16 @@ pub enum UpdateCheckNotice {
     Available(AvailableUpdate),
     /// 네트워크 요청 또는 릴리스 응답 검증에 실패했습니다.
     Failed,
+    /// The verified updater helper is waiting for this process to exit.
+    InstallReady,
+    /// Downloading the release assets failed before the executable was changed.
+    DownloadFailed,
+    /// Release metadata, asset identity, or checksum verification failed.
+    VerificationFailed,
+    /// Preparing or starting the updater helper failed.
+    InstallFailed,
+    /// The executable was not produced by the official release workflow.
+    UnofficialBuild,
 }
 
 /// 업데이트 검사가 시작된 사용자 의도를 구분합니다.
@@ -146,6 +156,10 @@ pub enum UpdatePresentationStatus {
     Current,
     /// 업데이트 검사에 실패했습니다.
     Failed,
+    /// The selected release assets are being downloaded and verified.
+    Downloading,
+    /// The verified helper is ready to replace the executable and restart the app.
+    Installing,
 }
 
 /// 사용자의 업데이트 메뉴 동작을 안전한 저장 상태로 해석한 결과입니다.
@@ -167,6 +181,7 @@ struct UpdatePresentationInner {
     pending_user_notice: Option<UpdateCheckNotice>,
     running_intent: Option<UpdateCheckIntent>,
     pending_user_intent: bool,
+    pending_install_request: Option<AvailableUpdate>,
 }
 
 /// 업데이트 결과와 UI 스레드가 처리할 일회성 사용자 알림을 공유하는 상태입니다.
@@ -191,8 +206,21 @@ impl UpdatePresentation {
     /// 실행 중인 검사를 완료하고 상태와 일회성 사용자 알림을 원자적으로 기록합니다.
     ///
     /// 유효한 사용자 의도가 있었으면 새 버전·최신 상태·검사 실패 중 하나를 알림으로 한 번 저장합니다.
-    /// 자동 검사만 실행된 경우에는 표시 상태만 갱신하고 사용자 알림을 만들지 않습니다.
+    /// 자동 검사에서 새 버전을 찾은 경우에도 알림을 만들며, 거절한 버전과 정확히 같을 때만
+    /// 자동 알림을 생략합니다.
     pub fn record_result(&self, result: Result<Option<AvailableUpdate>, UpdateCheckError>) {
+        self.record_result_with_dismissed_version(result, None);
+    }
+
+    /// 실행 중인 검사를 완료하고 저장된 거절 버전을 적용해 표시 결과를 기록합니다.
+    ///
+    /// `dismissed_version`은 자동 검사에만 적용됩니다. 수동 검사 또는 자동 검사 도중 합쳐진
+    /// 사용자 요청은 같은 버전을 이전에 거절했더라도 항상 결과 알림을 만듭니다.
+    pub fn record_result_with_dismissed_version(
+        &self,
+        result: Result<Option<AvailableUpdate>, UpdateCheckError>,
+        dismissed_version: Option<&str>,
+    ) {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         if inner.running_intent.is_none() {
             return;
@@ -207,21 +235,25 @@ impl UpdatePresentation {
                 inner.status = UpdatePresentationStatus::Available;
                 inner.available = Some(update.clone());
                 inner.open_requested = user_initiated;
-                UpdateCheckNotice::Available(update)
+                Some(UpdateCheckNotice::Available(update))
             }
             Ok(None) => {
                 inner.status = UpdatePresentationStatus::Current;
                 inner.available = None;
-                UpdateCheckNotice::Current
+                Some(UpdateCheckNotice::Current)
             }
             Err(_) => {
                 inner.status = UpdatePresentationStatus::Failed;
                 inner.available = None;
-                UpdateCheckNotice::Failed
+                Some(UpdateCheckNotice::Failed)
             }
         };
-        if user_initiated {
-            inner.pending_user_notice = Some(notice);
+        let automatic_update_was_dismissed = !user_initiated
+            && inner.available.as_ref().is_some_and(|update| {
+                dismissed_version == Some(update.version.to_string().as_str())
+            });
+        if user_initiated || (inner.available.is_some() && !automatic_update_was_dismissed) {
+            inner.pending_user_notice = notice;
         }
     }
 
@@ -290,6 +322,69 @@ impl UpdatePresentation {
     pub fn queue_user_notice(&self, notice: UpdateCheckNotice) {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         inner.open_requested = false;
+        inner.pending_user_notice = Some(notice);
+    }
+
+    /// 현재 검증된 업데이트 버전의 자동 안내를 거절 처리합니다.
+    ///
+    /// 표시 중인 업데이트와 버전이 정확히 일치할 때만 `true`를 반환합니다. 호출자는 성공한
+    /// 버전만 설정에 저장해야 하며, 이 메서드는 파일 I/O를 수행하지 않습니다.
+    pub fn dismiss_available_version(&self, version: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if inner
+            .available
+            .as_ref()
+            .is_none_or(|update| update.version.to_string() != version)
+        {
+            return false;
+        }
+        inner.open_requested = false;
+        if inner.pending_user_notice.as_ref().is_some_and(|notice| {
+            matches!(notice, UpdateCheckNotice::Available(update) if update.version.to_string() == version)
+        }) {
+            inner.pending_user_notice = None;
+        }
+        true
+    }
+
+    /// 사용자가 승인한 검증된 업데이트를 설치 작업자 경계에 한 번 저장합니다.
+    ///
+    /// 임의 URL 주입을 막기 위해 검사기가 보관한 전체 업데이트 값과 정확히 일치해야 합니다.
+    /// 실제 다운로드와 교체는 이 큐를 소비하는 별도 작업자가 수행해야 합니다.
+    pub fn queue_install_request(&self, update: AvailableUpdate) -> bool {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if inner.available.as_ref() != Some(&update) || inner.pending_install_request.is_some() {
+            return false;
+        }
+        inner.open_requested = false;
+        if inner.pending_user_notice.as_ref() == Some(&UpdateCheckNotice::Available(update.clone()))
+        {
+            inner.pending_user_notice = None;
+        }
+        inner.pending_install_request = Some(update);
+        inner.status = UpdatePresentationStatus::Downloading;
+        true
+    }
+
+    /// 설치 작업자에게 전달할 검증된 업데이트를 정확히 한 번 반환합니다.
+    pub fn take_install_request(&self) -> Option<AvailableUpdate> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pending_install_request
+            .take()
+    }
+
+    /// Records the terminal result of the background self-update preparation once.
+    pub fn record_install_notice(&self, notice: UpdateCheckNotice) {
+        let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        inner.status = match notice {
+            UpdateCheckNotice::InstallReady => UpdatePresentationStatus::Installing,
+            UpdateCheckNotice::DownloadFailed
+            | UpdateCheckNotice::VerificationFailed
+            | UpdateCheckNotice::InstallFailed => UpdatePresentationStatus::Failed,
+            _ => return,
+        };
         inner.pending_user_notice = Some(notice);
     }
 }

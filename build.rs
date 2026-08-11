@@ -29,6 +29,7 @@ fn main() -> std::io::Result<()> {
         .compile()?;
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_support.rs");
+    println!("cargo:rerun-if-env-changed=CODEX_PEEK_OFFICIAL_BUILD");
     Ok(())
 }
 
@@ -36,6 +37,7 @@ fn main() -> std::io::Result<()> {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=build_support.rs");
+    println!("cargo:rerun-if-env-changed=CODEX_PEEK_OFFICIAL_BUILD");
 }
 
 #[cfg(windows)]

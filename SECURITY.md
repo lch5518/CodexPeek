@@ -133,27 +133,48 @@ Codex account and usage access is delegated to the installed Codex CLI. The moni
 not send raw OpenAI HTTP requests itself; the CLI may contact OpenAI services according
 to the CLI's own authentication, configuration, and network policy.
 
-Official builds check release metadata at most once per day through
+Official builds check release metadata at startup through
 `https://api.github.com/repos/lch5518/CodexPeek/releases/latest`. The request enforces
-HTTPS and response size/time limits. The monitor can open only an exact validated
-`https://github.com/lch5518/CodexPeek/releases/tag/<tag>` page. A user-initiated check always
-shows its result, and the page opens only after the user confirms the update prompt. It never
-downloads, replaces, or executes an update. Proxy diagnostics report presence only; they never
+HTTPS and response size/time limits. After startup, an available update is offered only after
+the app is running. Skipping a version records that version locally and suppresses it until a
+newer release appears. With explicit approval, the updater accepts only the expected raw Windows
+x64 executable and `SHA256SUMS.txt` assets from the validated GitHub Release, checks the exact
+manifest entry and SHA-256, stages the file, and uses a helper to replace only the running
+executable before restarting. A failed download, verification, or replacement leaves the current
+executable in place. Update state is stored with the other settings under `%APPDATA%\CodexPeek`;
+the updater does not replace that directory. Proxy diagnostics report presence only; they never
 log proxy URLs, credentials, or environment-variable values.
 
-공식 빌드는 하루에 한 번 이하로 위 GitHub API에서 릴리스 메타데이터만 확인합니다.
-HTTPS와 응답 크기·시간 제한을 적용합니다. 수동 확인 결과는 항상 대화상자로 알리고, 사용자가
-업데이트 안내에서 열기를 다시 확인한 경우에만 검증된 정확한 GitHub 릴리스 페이지를 브라우저로
-엽니다. 업데이트 파일을 다운로드·교체·실행하지 않습니다.
+Only executables compiled by the official Release workflow with the embedded
+`CODEX_PEEK_OFFICIAL_BUILD=1` marker enable in-app updates. Local and custom builds keep the
+updater disabled and show a once-per-version warning because replacing them with an official
+binary would omit locally compiled changes. This marker is a build-channel guard, not a
+cryptographic signature or trust boundary.
+
+공식 빌드는 시작할 때 위 GitHub API에서 릴리스 메타데이터를 확인합니다.
+HTTPS와 응답 크기·시간 제한을 적용하며 앱이 실행된 뒤에만 새 버전을 안내합니다. 특정 버전을
+건너뛰면 로컬 설정에 기록해 더 새 버전이 나올 때까지 다시 묻지 않습니다. 사용자가 명시적으로
+동의한 경우에만 검증된 GitHub Release의 예상 Windows x64 원본 EXE와 `SHA256SUMS.txt`를 받고,
+manifest의 정확한 항목과 SHA-256을 확인합니다. 검증한 파일은 임시 위치에 준비하고 별도 helper가
+현재 실행 파일만 교체한 뒤 다시 시작합니다. 다운로드·검증·교체가 실패하면 기존 실행 파일을
+유지합니다. 업데이트 상태는 `%APPDATA%\CodexPeek`의 기존 설정과 함께 저장하며 updater는 그
+디렉터리를 교체하지 않습니다.
+
+공식 Release workflow가 `CODEX_PEEK_OFFICIAL_BUILD=1` 표시를 포함해 빌드한 실행 파일에서만
+인앱 업데이트를 활성화합니다. 로컬·커스텀 빌드는 updater를 비활성화하고, 공식 바이너리로
+교체하면 직접 빌드한 변경이 포함되지 않는다는 경고를 앱 버전마다 한 번 표시합니다. 이 표시는
+빌드 채널 구분용이며 암호학적 서명이나 신뢰 경계는 아닙니다.
 
 ## Distribution integrity / 배포 파일 무결성
 
 Initial Windows release files are not code-signed and may trigger Microsoft Defender
-SmartScreen. Official GitHub Releases include `SHA256SUMS.txt` for the portable ZIP and
-installer. Verify the SHA-256 hash after downloading; published assets are never silently
-replaced. A correction is issued as a new patch version.
+SmartScreen. Official GitHub Releases include `SHA256SUMS.txt` for the Installer, Portable ZIP,
+and raw self-update executable. SHA-256 verification detects a mismatch with that manifest but
+does not provide the publisher identity guarantee of an Authenticode signature. Published assets
+are never silently replaced; a correction is issued as a new patch version.
 
 초기 Windows 릴리스 파일은 코드 서명되지 않아 Microsoft Defender SmartScreen 경고가
-나타날 수 있습니다. 공식 GitHub Release에는 Portable ZIP과 설치 프로그램의 SHA-256
-해시를 담은 `SHA256SUMS.txt`가 포함됩니다. 다운로드 후 해시를 확인하세요. 공개한 파일을
+나타날 수 있습니다. 공식 GitHub Release에는 Installer, Portable ZIP과 자동 업데이트용 원본
+EXE의 SHA-256 해시를 담은 `SHA256SUMS.txt`가 포함됩니다. SHA-256 검증은 manifest와 다른
+파일을 탐지하지만 Authenticode 서명처럼 게시자 신원을 보장하지는 않습니다. 공개한 파일을
 조용히 교체하지 않으며 수정은 새 패치 버전으로 배포합니다.

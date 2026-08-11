@@ -39,7 +39,7 @@ Codex Usage Monitor는 `%USERPROFILE%\.codex\auth.json` 내용을 직접 읽지 
 | --- | --- |
 | `CodexPeek-Setup-v<version>-x64.exe` | 일반 사용자에게 권장하는 설치 프로그램 |
 | `codex-peek-v<version>-windows-x86_64-portable.zip` | 설치 없이 압축을 풀어 실행하는 Portable 버전 |
-| `SHA256SUMS.txt` | 두 배포 파일의 SHA-256 무결성 확인 |
+| `SHA256SUMS.txt` | Installer, Portable ZIP과 자동 업데이트용 원본 EXE의 SHA-256 무결성 확인 |
 
 `<version>`은 실제 릴리스 번호로 표시됩니다.
 
@@ -216,18 +216,36 @@ CodexPeek은 시스템 또는 관리 프로필의 `auth.json`을 읽거나 파�
 
 ## 7. 업데이트
 
-트레이 메뉴에서 수동으로 업데이트를 확인하면 최신·업데이트 가능·확인 실패 결과를 대화상자로
-표시합니다. 새 버전이 있을 때 사용자가 열기를 확인한 경우에만 검증된 GitHub Release 페이지를
-브라우저로 엽니다. 업데이트 파일을 자동으로 다운로드하거나 실행 파일을 교체하지 않습니다.
+CodexPeek은 수동 실행 또는 Windows 자동 시작으로 앱 화면이 열린 뒤 최신 GitHub Release를
+확인합니다. 새 버전이 있으면 앱을 계속 실행한 상태로 업데이트 여부를 묻습니다.
 
-### Installer 업데이트
+- **지금 업데이트**: 릴리스의 Windows x64 원본 EXE와 `SHA256SUMS.txt`를 HTTPS로 내려받고,
+  manifest의 정확한 파일 항목과 SHA-256을 확인합니다. 검증이 끝나면 현재 EXE와 같은 경로에
+  새 파일을 적용하고 CodexPeek을 다시 시작합니다.
+- **이번 버전 건너뛰기**: 해당 버전에는 다시 묻지 않습니다. 더 새 버전이 게시되면 다시
+  안내합니다.
+
+자동 업데이트는 `%APPDATA%\CodexPeek`을 수정하지 않으므로 설정, 사용량 프로필과 로컬 기록은
+유지됩니다. 다운로드·검증·교체에 실패하면 기존 EXE를 보존하고 오류를 표시합니다. 이때는 아래
+수동 절차를 사용할 수 있습니다. 설치 폴더에 쓸 수 없는 경우에도 수동 업데이트가 필요합니다.
+
+원본 EXE는 현재 코드 서명되지 않았습니다. SHA-256 확인은 파일이 릴리스 manifest와 일치하는지
+검증하지만 Authenticode 게시자 신원을 증명하지는 않으며 SmartScreen 경고를 없애지 않습니다.
+공식 GitHub Release 이외의 파일은 사용하지 마세요.
+
+공식 Release workflow가 `CODEX_PEEK_OFFICIAL_BUILD=1`로 만든 EXE만 인앱 업데이트를
+사용합니다. 소스에서 직접 빌드하거나 별도로 패키징한 EXE는 자동 업데이트가 비활성화되고 앱
+버전마다 한 번 경고가 표시됩니다. 공식 릴리스로 교체하면 직접 수정해 빌드한 내용은 포함되지
+않으므로, 해당 변경이 필요하면 최신 소스를 받아 다시 빌드하세요.
+
+### Installer 수동 업데이트
 
 1. 트레이 메뉴에서 앱을 종료합니다.
 2. 새 버전의 설치 프로그램과 `SHA256SUMS.txt`를 다운로드합니다.
 3. SHA-256을 확인합니다.
 4. 새 설치 프로그램을 실행해 기존 위치에 설치합니다.
 
-### Portable 업데이트
+### Portable 수동 업데이트
 
 1. 트레이 메뉴에서 앱을 종료합니다.
 2. 새 Portable ZIP과 `SHA256SUMS.txt`를 다운로드하고 검증합니다.

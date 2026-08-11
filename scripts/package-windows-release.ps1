@@ -41,12 +41,14 @@ foreach ($requiredFile in @(
 
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 $portableName = "codex-peek-v$Version-windows-x86_64-portable.zip"
+$rawExecutableName = "codex-peek-v$Version-windows-x86_64.exe"
 $installerName = "CodexPeek-Setup-v$Version-x64.exe"
 $checksumName = "SHA256SUMS.txt"
 $portableArchive = Join-Path $outputPath $portableName
+$rawExecutable = Join-Path $outputPath $rawExecutableName
 $installer = Join-Path $outputPath $installerName
 $checksumManifest = Join-Path $outputPath $checksumName
-foreach ($artifact in @($portableArchive, $installer, $checksumManifest)) {
+foreach ($artifact in @($portableArchive, $rawExecutable, $installer, $checksumManifest)) {
     if (Test-Path -LiteralPath $artifact) {
         throw "release artifact already exists: $artifact"
     }
@@ -74,6 +76,7 @@ try {
     }
     Compress-Archive -Path (Join-Path $stagingRoot "*") `
         -DestinationPath $portableArchive
+    Copy-Item -LiteralPath $executablePath -Destination $rawExecutable
 
     $compilerArguments = @(
         "/DAppVersion=$Version"
@@ -92,7 +95,11 @@ try {
         throw "Inno Setup did not create the expected installer: $installer"
     }
 
-    $checksumLines = foreach ($name in @($portableName, $installerName) | Sort-Object) {
+    $checksumLines = foreach ($name in @(
+        $portableName
+        $rawExecutableName
+        $installerName
+    ) | Sort-Object) {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (
             Join-Path $outputPath $name
         )).Hash.ToLowerInvariant()
@@ -110,7 +117,12 @@ finally {
         Remove-Item -LiteralPath $stagingRoot -Recurse -Force
     }
     if (-not $completed) {
-        foreach ($artifact in @($portableArchive, $installer, $checksumManifest)) {
+        foreach ($artifact in @(
+            $portableArchive
+            $rawExecutable
+            $installer
+            $checksumManifest
+        )) {
             Remove-Item -LiteralPath $artifact -Force -ErrorAction SilentlyContinue
         }
     }
@@ -118,6 +130,7 @@ finally {
 
 [pscustomobject]@{
     PortableArchive = $portableArchive
+    RawExecutable = $rawExecutable
     Installer = $installer
     Checksums = $checksumManifest
 }

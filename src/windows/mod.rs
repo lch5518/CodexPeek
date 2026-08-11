@@ -13,7 +13,9 @@ pub(crate) mod time;
 pub mod tray;
 pub mod widget;
 
-use crate::{Language, LanguagePreference, StartupView, TaskbarDisplayMode, UsageProfileId};
+use crate::{
+    AvailableUpdate, Language, LanguagePreference, StartupView, TaskbarDisplayMode, UsageProfileId,
+};
 
 /// 즉시 갱신 메뉴 식별자입니다.
 pub const MENU_REFRESH: u16 = 100;
@@ -288,6 +290,10 @@ pub enum UiAction {
     RunDiagnostics,
     /// 업데이트를 확인합니다.
     CheckForUpdates,
+    /// 표시 중인 업데이트 버전의 자동 안내를 다음 릴리스까지 숨깁니다.
+    DismissUpdate(String),
+    /// 사용자가 승인한 검증된 업데이트를 설치 작업자에게 전달합니다.
+    InstallUpdate(AvailableUpdate),
     /// 위젯 표시 여부를 전환합니다.
     ToggleWidget,
     /// 남은 한도 표시 여부를 전환합니다.

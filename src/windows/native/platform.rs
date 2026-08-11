@@ -34,9 +34,11 @@ use windows::{
         UI::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
             Controls::{
-                NMHDR, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
-                TTM_SETMAXTIPWIDTH, TTM_UPDATETIPTEXTW, TTN_POP, TTN_SHOW, TTS_ALWAYSTIP,
-                TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+                TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON,
+                TDF_POSITION_RELATIVE_TO_WINDOW, TDF_RTL_LAYOUT, TDF_SIZE_TO_CONTENT,
+                TDF_USE_COMMAND_LINKS_NO_ICON, NMHDR, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS,
+                TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH, TTM_UPDATETIPTEXTW, TTN_POP, TTN_SHOW,
+                TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
             },
             HiDpi::{
                 GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -69,7 +71,6 @@ use crate::diagnostics::{DiagnosticLogger, SafeDiagnostic};
 use crate::{localized_text, Language, LocalizationKey, UpdateCheckNotice};
 
 use super::super::{
-    is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
     popup::{
         popup_render_mode, should_hide_custom_popup_on_native_pop, tooltip_show_decision,
@@ -768,6 +769,22 @@ trait NativeMessagePresenter {
         title: &str,
         style: MESSAGEBOX_STYLE,
     ) -> io::Result<MESSAGEBOX_RESULT>;
+
+    fn present_update_choice(
+        &mut self,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        install_label: &str,
+        skip_label: &str,
+        rtl: bool,
+    ) -> io::Result<UpdateChoice>;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateChoice {
+    Install,
+    SkipVersion,
 }
 
 struct WindowsNativeMessagePresenter;
@@ -810,6 +827,63 @@ impl NativeMessagePresenter for WindowsNativeMessagePresenter {
             Err(io::Error::last_os_error())
         } else {
             Ok(result)
+        }
+    }
+
+    fn present_update_choice(
+        &mut self,
+        owner: HWND,
+        message: &str,
+        title: &str,
+        install_label: &str,
+        skip_label: &str,
+        rtl: bool,
+    ) -> io::Result<UpdateChoice> {
+        const INSTALL_BUTTON_ID: i32 = 1001;
+        const SKIP_BUTTON_ID: i32 = 1002;
+
+        let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+        let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        let install_label: Vec<u16> = install_label.encode_utf16().chain(Some(0)).collect();
+        let skip_label: Vec<u16> = skip_label.encode_utf16().chain(Some(0)).collect();
+        let buttons = [
+            TASKDIALOG_BUTTON {
+                nButtonID: INSTALL_BUTTON_ID,
+                pszButtonText: PCWSTR(install_label.as_ptr()),
+            },
+            TASKDIALOG_BUTTON {
+                nButtonID: SKIP_BUTTON_ID,
+                pszButtonText: PCWSTR(skip_label.as_ptr()),
+            },
+        ];
+        let mut flags =
+            TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS_NO_ICON;
+        if rtl {
+            flags |= TDF_RTL_LAYOUT;
+        }
+        let config = TASKDIALOGCONFIG {
+            cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
+            hwndParent: owner,
+            dwFlags: flags,
+            pszWindowTitle: PCWSTR(title.as_ptr()),
+            pszContent: PCWSTR(message.as_ptr()),
+            cButtons: buttons.len() as u32,
+            pButtons: buttons.as_ptr(),
+            nDefaultButton: INSTALL_BUTTON_ID,
+            ..Default::default()
+        };
+        let mut selected = 0;
+        // SAFETY: all strings and the button array remain alive for this synchronous call. The
+        // hidden application owner keeps the prompt modal to CodexPeek.
+        unsafe { TaskDialogIndirect(&config, Some(&mut selected), None, None) }
+            .map_err(win_error)?;
+        match selected {
+            INSTALL_BUTTON_ID => Ok(UpdateChoice::Install),
+            SKIP_BUTTON_ID => Ok(UpdateChoice::SkipVersion),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected update dialog result",
+            )),
         }
     }
 }
@@ -2036,16 +2110,6 @@ pub(super) unsafe fn user_ui_language() -> (Option<u16>, Option<String>) {
     (language, locale)
 }
 
-pub(super) unsafe fn open_validated_tag_page(url: &str) -> io::Result<()> {
-    if !is_exact_github_tag_page(url) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "unsafe release URL",
-        ));
-    }
-    open_browser_url(url)
-}
-
 pub(super) unsafe fn open_validated_login_page(url: &str) -> io::Result<()> {
     if !super::super::is_valid_chatgpt_login_url(url) {
         return Err(io::Error::new(
@@ -2142,13 +2206,24 @@ unsafe fn show_pending_update_notice_if_ready(state_pointer: *mut NativeState<'_
     let Some(notice) = (*state_pointer).backend.take_update_notice() else {
         return;
     };
+    if notice == UpdateCheckNotice::InstallReady {
+        begin_exit(state_pointer);
+        return;
+    }
     let mut presenter = WindowsNativeMessagePresenter;
     let _ = show_update_notice_with_presenter(
         (*state_pointer).owner,
         &notice,
         (*state_pointer).settings.resolved_language,
         &mut presenter,
-        |url| open_validated_tag_page(url),
+        |choice, update| {
+            let action = match choice {
+                UpdateChoice::Install => UiAction::InstallUpdate(update.clone()),
+                UpdateChoice::SkipVersion => UiAction::DismissUpdate(update.version.to_string()),
+            };
+            dispatch_action(state_pointer, action);
+            Ok(())
+        },
     );
 }
 
@@ -2161,65 +2236,67 @@ fn show_update_notice_with_presenter<P, F>(
     notice: &UpdateCheckNotice,
     language: Language,
     presenter: &mut P,
-    mut open_release: F,
+    mut handle_choice: F,
 ) -> io::Result<()>
 where
     P: NativeMessagePresenter,
-    F: FnMut(&str) -> io::Result<()>,
+    F: FnMut(UpdateChoice, &crate::AvailableUpdate) -> io::Result<()>,
 {
-    let (message, confirm_open, warning, release_url) = match notice {
+    if let UpdateCheckNotice::Available(update) = notice {
+        let message = localized_text(LocalizationKey::UpdateInstallPrompt, language)
+            .replace("{version}", &update.version.to_string());
+        let choice = presenter.present_update_choice(
+            owner,
+            &message,
+            localized_text(LocalizationKey::WindowTitle, language),
+            localized_text(LocalizationKey::UpdateActionInstall, language),
+            localized_text(LocalizationKey::UpdateActionSkipVersion, language),
+            matches!(language, Language::Arabic),
+        )?;
+        return handle_choice(choice, update);
+    }
+
+    let (message, warning) = match notice {
         UpdateCheckNotice::Current => (
             localized_text(LocalizationKey::UpdateCurrent, language).to_owned(),
             false,
-            false,
-            None,
-        ),
-        UpdateCheckNotice::Available(update) => (
-            localized_text(LocalizationKey::UpdateAvailablePrompt, language)
-                .replace("{version}", &update.version.to_string()),
-            true,
-            false,
-            Some(update.release_url.as_str()),
         ),
         UpdateCheckNotice::Failed => (
             localized_text(LocalizationKey::UpdateFailedHelp, language).to_owned(),
-            false,
             true,
-            None,
         ),
+        UpdateCheckNotice::DownloadFailed => (
+            localized_text(LocalizationKey::UpdateDownloadFailed, language).to_owned(),
+            true,
+        ),
+        UpdateCheckNotice::VerificationFailed => (
+            localized_text(LocalizationKey::UpdateVerificationFailed, language).to_owned(),
+            true,
+        ),
+        UpdateCheckNotice::InstallFailed => (
+            localized_text(LocalizationKey::UpdateInstallFailed, language).to_owned(),
+            true,
+        ),
+        UpdateCheckNotice::UnofficialBuild => (
+            localized_text(LocalizationKey::UpdateUnofficialBuildWarning, language).to_owned(),
+            true,
+        ),
+        UpdateCheckNotice::InstallReady => unreachable!("install-ready exits before presentation"),
+        UpdateCheckNotice::Available(_) => unreachable!("available updates return above"),
     };
-    let buttons = if confirm_open { MB_YESNO } else { MB_OK };
     let icon = if warning {
         MB_ICONWARNING
     } else {
         MB_ICONINFORMATION
     };
-    let style = update_dialog_style(buttons, icon);
-    let result = presenter.present_application(
-        owner,
-        &message,
-        localized_text(LocalizationKey::WindowTitle, language),
-        style,
-    )?;
-    let Some(release_url) = release_url else {
-        return Ok(());
-    };
-    if !confirm_open || !update_dialog_opens_release(result) {
-        return Ok(());
-    }
-    if open_release(release_url).is_err() {
-        let _ = presenter.present_application(
+    presenter
+        .present_application(
             owner,
-            localized_text(LocalizationKey::UpdateOpenFailed, language),
+            &message,
             localized_text(LocalizationKey::WindowTitle, language),
-            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND | MB_TASKMODAL,
-        );
-    }
-    Ok(())
-}
-
-fn update_dialog_opens_release(result: MESSAGEBOX_RESULT) -> bool {
-    result == IDYES
+            update_dialog_style(MB_OK, icon),
+        )
+        .map(|_| ())
 }
 
 fn update_dialog_style(buttons: MESSAGEBOX_STYLE, icon: MESSAGEBOX_STYLE) -> MESSAGEBOX_STYLE {
@@ -2235,9 +2312,9 @@ mod tests {
         material_surface_alpha, rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
         should_open_widget_menu, show_diagnostic_summary_with_presenter,
         show_profile_dialog_error_with_presenter, show_update_notice_with_presenter,
-        taskbar_indicator_color, taskbar_palette, update_dialog_in_progress,
-        update_dialog_opens_release, update_dialog_style, NativeMessagePresenter, TaskbarIndicator,
-        TaskbarLayoutMode, TaskbarRefreshSchedule, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
+        taskbar_indicator_color, taskbar_palette, update_dialog_in_progress, update_dialog_style,
+        NativeMessagePresenter, TaskbarIndicator, TaskbarLayoutMode, TaskbarRefreshSchedule,
+        UpdateChoice, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
     use crate::{
         windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
@@ -2259,6 +2336,14 @@ mod tests {
             message: String,
             title: String,
             style: MESSAGEBOX_STYLE,
+        },
+        UpdateChoice {
+            owner: HWND,
+            message: String,
+            title: String,
+            install_label: String,
+            skip_label: String,
+            rtl: bool,
         },
     }
 
@@ -2294,6 +2379,30 @@ mod tests {
                 style,
             });
             Ok(self.response)
+        }
+
+        fn present_update_choice(
+            &mut self,
+            owner: HWND,
+            message: &str,
+            title: &str,
+            install_label: &str,
+            skip_label: &str,
+            rtl: bool,
+        ) -> io::Result<UpdateChoice> {
+            self.messages.push(PresentedNativeMessage::UpdateChoice {
+                owner,
+                message: message.to_owned(),
+                title: title.to_owned(),
+                install_label: install_label.to_owned(),
+                skip_label: skip_label.to_owned(),
+                rtl,
+            });
+            Ok(if self.response == IDYES {
+                UpdateChoice::Install
+            } else {
+                UpdateChoice::SkipVersion
+            })
         }
     }
 
@@ -2380,22 +2489,37 @@ mod tests {
             messages: Vec::new(),
             response: IDNO,
         };
-        let mut opened = None;
+        let mut selected = None;
         show_update_notice_with_presenter(
             owner,
             &update,
             Language::English,
             &mut presenter,
-            |url| {
-                opened = Some(url.to_owned());
+            |choice, update| {
+                selected = Some((choice, update.version.to_string()));
                 Ok(())
             },
         )
         .unwrap();
 
-        assert_eq!(opened, None);
+        assert_eq!(
+            selected,
+            Some((UpdateChoice::SkipVersion, "2.0.0".to_owned()))
+        );
         assert_eq!(presenter.messages.len(), 1);
         assert_eq!(presenter.messages[0].owner(), owner);
+        let PresentedNativeMessage::UpdateChoice {
+            install_label,
+            skip_label,
+            rtl,
+            ..
+        } = &presenter.messages[0]
+        else {
+            panic!("available update must use the localized choice dialog");
+        };
+        assert_eq!(install_label, "Update now");
+        assert_eq!(skip_label, "Skip this version");
+        assert!(!rtl);
 
         presenter.messages.clear();
         presenter.response = IDYES;
@@ -2404,17 +2528,40 @@ mod tests {
             &update,
             Language::English,
             &mut presenter,
-            |url| {
-                opened = Some(url.to_owned());
+            |choice, update| {
+                selected = Some((choice, update.version.to_string()));
                 Ok(())
             },
         )
         .unwrap();
 
-        assert_eq!(
-            opened,
-            Some("https://github.com/owner/repo/releases/tag/v2.0.0".to_owned())
-        );
+        assert_eq!(selected, Some((UpdateChoice::Install, "2.0.0".to_owned())));
+    }
+
+    #[test]
+    fn arabic_update_choice_requests_rtl_layout() {
+        let update = UpdateCheckNotice::Available(AvailableUpdate {
+            version: semver::Version::parse("2.0.0").unwrap(),
+            release_url: "https://github.com/owner/repo/releases/tag/v2.0.0".to_owned(),
+        });
+        let mut presenter = RecordingNativeMessagePresenter {
+            messages: Vec::new(),
+            response: IDNO,
+        };
+
+        show_update_notice_with_presenter(
+            HWND(201_usize as _),
+            &update,
+            Language::Arabic,
+            &mut presenter,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            presenter.messages.as_slice(),
+            [PresentedNativeMessage::UpdateChoice { rtl: true, .. }]
+        ));
     }
 
     #[test]
@@ -2422,6 +2569,7 @@ mod tests {
         for (notice, warning) in [
             (UpdateCheckNotice::Current, false),
             (UpdateCheckNotice::Failed, true),
+            (UpdateCheckNotice::UnofficialBuild, true),
         ] {
             let mut presenter = RecordingNativeMessagePresenter {
                 messages: Vec::new(),
@@ -2432,7 +2580,7 @@ mod tests {
                 &notice,
                 Language::English,
                 &mut presenter,
-                |_| Ok(()),
+                |_, _| Ok(()),
             )
             .unwrap();
 
@@ -2462,6 +2610,7 @@ mod tests {
             match self {
                 Self::Profile(_) => HWND::default(),
                 Self::Application { owner, .. } => *owner,
+                Self::UpdateChoice { owner, .. } => *owner,
             }
         }
     }
@@ -2478,12 +2627,6 @@ mod tests {
     fn widget_menu_uses_the_standard_context_menu_message() {
         assert!(should_open_widget_menu(WM_CONTEXTMENU));
         assert!(!should_open_widget_menu(NIN_SELECT));
-    }
-
-    #[test]
-    fn update_dialog_opens_release_only_for_an_explicit_yes() {
-        assert!(update_dialog_opens_release(IDYES));
-        assert!(!update_dialog_opens_release(IDNO));
     }
 
     #[test]

@@ -146,7 +146,7 @@ fn user_intent_during_automatic_check_reports_failure_without_opening() {
 }
 
 #[test]
-fn automatic_update_results_are_visible_without_requesting_browser_open() {
+fn automatic_update_results_prompt_once_without_requesting_browser_open() {
     let presentation = UpdatePresentation::default();
     let update = available_update("2.0.0");
 
@@ -156,9 +156,64 @@ fn automatic_update_results_are_visible_without_requesting_browser_open() {
     );
     presentation.record_result(Ok(Some(update.clone())));
 
-    assert_eq!(presentation.available_update(), Some(update));
+    assert_eq!(presentation.available_update(), Some(update.clone()));
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Available(update))
+    );
     assert!(presentation.take_user_notice().is_none());
     assert!(presentation.take_open_request().is_none());
+}
+
+#[test]
+fn automatic_check_suppresses_only_the_exact_dismissed_version() {
+    let presentation = UpdatePresentation::default();
+    let dismissed = available_update("2.0.0");
+
+    presentation.begin_check(UpdateCheckIntent::Automatic);
+    presentation.record_result_with_dismissed_version(Ok(Some(dismissed.clone())), Some("2.0.0"));
+
+    assert_eq!(presentation.available_update(), Some(dismissed));
+    assert!(presentation.take_user_notice().is_none());
+
+    let newer = available_update("2.1.0");
+    presentation.begin_check(UpdateCheckIntent::Automatic);
+    presentation.record_result_with_dismissed_version(Ok(Some(newer.clone())), Some("2.0.0"));
+
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Available(newer))
+    );
+}
+
+#[test]
+fn manual_check_ignores_the_dismissed_version() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.0.0");
+
+    presentation.begin_check(UpdateCheckIntent::UserInitiated);
+    presentation.record_result_with_dismissed_version(Ok(Some(update.clone())), Some("2.0.0"));
+
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::Available(update))
+    );
+}
+
+#[test]
+fn dismissal_and_install_queue_accept_only_the_stored_update() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.4.0");
+    presentation.begin_check(UpdateCheckIntent::Automatic);
+    presentation.record_result(Ok(Some(update.clone())));
+
+    assert!(!presentation.dismiss_available_version("2.3.0"));
+    assert!(presentation.dismiss_available_version("2.4.0"));
+    assert!(!presentation.queue_install_request(available_update("2.3.0")));
+    assert!(presentation.queue_install_request(update.clone()));
+    assert!(!presentation.queue_install_request(update.clone()));
+    assert_eq!(presentation.take_install_request(), Some(update));
+    assert!(presentation.take_install_request().is_none());
 }
 
 #[test]
@@ -208,6 +263,32 @@ fn queued_user_notice_is_consumed_once_by_the_ui_boundary() {
         Some(UpdateCheckNotice::Current)
     );
     assert!(presentation.take_user_notice().is_none());
+}
+
+#[test]
+fn install_preparation_exposes_downloading_ready_and_failure_states() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.0.0");
+    presentation.begin_check(UpdateCheckIntent::Automatic);
+    presentation.record_result(Ok(Some(update.clone())));
+    let _ = presentation.take_user_notice();
+
+    assert!(presentation.queue_install_request(update.clone()));
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Downloading);
+    assert_eq!(presentation.take_install_request(), Some(update));
+    presentation.record_install_notice(UpdateCheckNotice::InstallReady);
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Installing);
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::InstallReady)
+    );
+
+    presentation.record_install_notice(UpdateCheckNotice::VerificationFailed);
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
+    assert_eq!(
+        presentation.take_user_notice(),
+        Some(UpdateCheckNotice::VerificationFailed)
+    );
 }
 
 #[test]

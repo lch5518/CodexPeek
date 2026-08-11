@@ -54,6 +54,7 @@ release executable, and creates exactly these files:
 ```text
 CodexPeek-Setup-v<version>-x64.exe
 SHA256SUMS.txt
+codex-peek-v<version>-windows-x86_64.exe
 codex-peek-v<version>-windows-x86_64-portable.zip
 ```
 
@@ -68,7 +69,7 @@ SECURITY.md
 THIRD_PARTY_NOTICES.md
 ```
 
-The workflow verifies both SHA-256 entries, silently installs and removes the
+The workflow verifies all three SHA-256 entries, silently installs and removes the
 installer on its isolated runner, and then creates a new GitHub Release. It fails
 instead of overwriting an existing release or asset.
 
@@ -114,7 +115,7 @@ Confirm all of the following on a clean current-user profile:
 - With both legacy and new roots present, confirm CodexPeek uses the new root and leaves the
   legacy root untouched instead of merging or deleting it.
 - Run `codex-peek.exe --diagnose`.
-- Compare both release files against `SHA256SUMS.txt`.
+- Compare the Installer, Portable ZIP, and raw self-update EXE against `SHA256SUMS.txt`.
 - On an unsigned build, confirm the README SmartScreen warning matches the observed
   Windows experience.
 
@@ -277,11 +278,21 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 ### Existing application and distribution behavior
 
 - [ ] Missing, unsupported, and logged-out Codex CLI
-- [ ] Automatic release-metadata check and user-initiated release-page opening
-- [ ] After the tray menu closes, a user-initiated update check shows exactly one owned dialog for
-      current, failed, and available-release results; an available release opens only after an
-      explicit confirmation and a browser failure shows the localized recovery message
+- [ ] Manual launch and Windows autostart both show the app before checking release metadata and
+      presenting an available-update dialog
+- [ ] Confirm the release workflow embeds `CODEX_PEEK_OFFICIAL_BUILD=1`; a normal local build must
+      skip update checks, reject in-app installation, and show its localized warning once per version
+- [ ] **Skip this version** suppresses the same version across restarts, while a later version is
+      offered once available
+- [ ] **Update now** downloads only the expected raw x64 EXE and `SHA256SUMS.txt`, rejects a missing
+      entry or mismatched SHA-256, replaces only the current executable, and restarts successfully
+- [ ] Download, verification, helper-launch, replacement, and restart failures preserve the old
+      executable and show the localized recovery message
+- [ ] Repeat the prompt, action buttons, progress, and error messages in all 12 locales; verify
+      Arabic RTL layout and long German/French/Portuguese copy
 - [ ] Installer and portable upgrade preserve settings and recover valid profile state
+- [ ] Self-update preserves `%APPDATA%\CodexPeek`, including preferences, ignored-release state,
+      managed profiles, and usage history
 
 Record any check that could not be completed. Fix failures in a new patch version
 instead of silently replacing a published release asset.
