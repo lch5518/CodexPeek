@@ -138,6 +138,8 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Hover the taskbar and floating widgets in light and dark mode; verify the Fluent detail popup
       stays inside the active monitor, shows only the metric selected for the widget, and closes
       without flicker.
+- [ ] Verify the hover popup omits the profile sign-in scope note and routine polling status while
+      profile login confirmations still explain the unchanged Codex CLI and IDE sign-ins.
 - [ ] Verify every supported language at 100/125/150/200% DPI; confirm the localized weekly label
       and long pace details wrap without clipping or overlapping the following section.
 - [ ] Open every right-click submenu with mouse and keyboard; verify selection, check marks, RTL

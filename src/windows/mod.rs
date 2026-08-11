@@ -649,19 +649,18 @@ pub struct UiSettings {
     pub usage_profile_mutation_pending: bool,
 }
 
-/// 작업 표시줄 상세 툴팁 앞에 선택 프로필과 CLI 격리 안내를 추가합니다.
+/// 작업 표시줄 상세 툴팁 앞에 선택 프로필 이름을 추가합니다.
 ///
 /// `usage_profile_label`은 이미 검증되거나 지역화된 표시 이름이고 `details`는 기존 사용량
-/// 툴팁입니다. 반환 문자열에는 프로필 경로나 계정 식별 정보가 추가되지 않습니다.
+/// 툴팁입니다. 반환 문자열에는 로그인 범위, 프로필 경로나 계정 식별 정보가 추가되지 않습니다.
 pub fn profile_taskbar_tooltip(
     usage_profile_label: &str,
     details: &str,
     language: Language,
 ) -> String {
     format!(
-        "{}: {usage_profile_label}\n{}\n\n{details}",
+        "{}: {usage_profile_label}\n\n{details}",
         crate::localized_text(crate::LocalizationKey::MenuUsageProfiles, language),
-        crate::localized_text(crate::LocalizationKey::UsageProfileCliUnchanged, language),
     )
 }
 

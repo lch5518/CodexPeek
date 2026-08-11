@@ -13,8 +13,8 @@ use windows::{
             BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
             DIB_RGB_COLORS, DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
             DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
-            FF_SWISS, FW_MEDIUM, FW_NORMAL, FW_SEMIBOLD, HDC, HGDIOBJ, MONITORINFO,
-            MONITOR_DEFAULTTONEAREST, NULL_PEN, OUT_DEFAULT_PRECIS, PROOF_QUALITY, TRANSPARENT,
+            FF_SWISS, FW_NORMAL, FW_SEMIBOLD, HDC, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            NULL_PEN, OUT_DEFAULT_PRECIS, PROOF_QUALITY, TRANSPARENT,
         },
         UI::{
             HiDpi::GetDpiForWindow,
@@ -36,8 +36,8 @@ use crate::windows::{
 };
 
 const USAGE_POPUP_CLASS: PCWSTR = w!("CodexUsageMonitor.UsagePopup.v1");
-const PACE_DETAIL_TOP_LOGICAL: i32 = 208;
-const FORECAST_TOP_WITHOUT_DETAIL_LOGICAL: i32 = 244;
+const PACE_DETAIL_TOP_LOGICAL: i32 = 178;
+const FORECAST_TOP_WITHOUT_DETAIL_LOGICAL: i32 = 214;
 const FORECAST_GAP_LOGICAL: i32 = 8;
 const FORECAST_SECTION_HEIGHT_LOGICAL: i32 = 60;
 const PACE_DETAIL_FALLBACK_HEIGHT_LOGICAL: i32 = 80;
@@ -345,47 +345,37 @@ unsafe fn paint_content(
     };
     let section = |logical: i32| logical_to_physical(logical, dpi);
 
-    draw_icon(dc, icon_rect(section(14)), "\u{E77B}", palette, dpi);
+    draw_icon(dc, icon_rect(section(8)), "\u{E77B}", palette, dpi);
     draw_text(
         dc,
         &presentation.profile_label,
-        text_rect(section(12), section(34)),
+        text_rect(section(12), section(38)),
         popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
         palette.text,
         rtl,
         true,
     );
-    draw_text(
-        dc,
-        &presentation.profile_note,
-        text_rect(section(34), section(56)),
-        popup_font(dc, 12, FW_NORMAL.0 as i32, dpi),
-        palette.secondary_text,
-        rtl,
-        true,
-    );
-    separator(dc, section(64), width, padding, palette.separator);
+    separator(dc, section(48), width, padding, palette.separator);
 
-    draw_icon(dc, icon_rect(section(74)), "\u{E9D2}", palette, dpi);
+    draw_icon(dc, icon_rect(section(58)), "\u{E9D2}", palette, dpi);
     draw_text(
         dc,
         presentation.usage_label.as_deref().unwrap_or("Codex usage"),
-        text_rect(section(70), section(92)),
+        text_rect(section(54), section(76)),
         popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
         palette.text,
         rtl,
         true,
     );
-    draw_metric(
+    draw_percent(
         dc,
-        Rect::new(text_left, section(94), text_right, section(130)),
-        &presentation.metric_label,
+        Rect::new(text_left, section(78), text_right, section(114)),
         presentation.metric_percent,
         palette,
         dpi,
         rtl,
     );
-    let track = Rect::new(text_left, section(134), text_right, section(138));
+    let track = Rect::new(text_left, section(118), text_right, section(122));
     fill(dc, track, palette.separator);
     if let Some(percent) = presentation.metric_percent {
         fill(
@@ -407,28 +397,19 @@ unsafe fn paint_content(
     draw_text(
         dc,
         &reset,
-        text_rect(section(141), section(159)),
+        text_rect(section(125), section(143)),
         popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
         palette.secondary_text,
         rtl,
         true,
     );
-    draw_text(
-        dc,
-        &format!("{}: {}", presentation.status_label, presentation.status),
-        text_rect(section(159), section(179)),
-        popup_font(dc, 11, FW_MEDIUM.0 as i32, dpi),
-        palette.text,
-        rtl,
-        true,
-    );
-    separator(dc, section(180), width, padding, palette.separator);
+    separator(dc, section(150), width, padding, palette.separator);
 
-    draw_icon(dc, icon_rect(section(190)), "\u{E9D9}", palette, dpi);
+    draw_icon(dc, icon_rect(section(160)), "\u{E9D9}", palette, dpi);
     draw_text(
         dc,
         &presentation.pace_summary,
-        text_rect(section(186), section(208)),
+        text_rect(section(156), section(178)),
         popup_font(dc, 13, FW_SEMIBOLD.0 as i32, dpi),
         palette.text,
         rtl,
@@ -487,10 +468,9 @@ unsafe fn paint_content(
     }
 }
 
-unsafe fn draw_metric(
+unsafe fn draw_percent(
     dc: HDC,
     rect: Rect,
-    label: &str,
     percent: Option<u8>,
     palette: PopupPalette,
     dpi: u32,
@@ -498,27 +478,8 @@ unsafe fn draw_metric(
 ) {
     draw_text(
         dc,
-        label,
-        Rect::new(
-            rect.left,
-            rect.top,
-            rect.right,
-            rect.top + logical_to_physical(16, dpi),
-        ),
-        popup_font(dc, 10, FW_NORMAL.0 as i32, dpi),
-        palette.secondary_text,
-        rtl,
-        true,
-    );
-    draw_text(
-        dc,
         &percent.map_or_else(|| "--".to_owned(), |value| format!("{value}%")),
-        Rect::new(
-            rect.left,
-            rect.top + logical_to_physical(15, dpi),
-            rect.right,
-            rect.bottom,
-        ),
+        rect,
         popup_font(dc, 15, FW_SEMIBOLD.0 as i32, dpi),
         palette.accent,
         rtl,
@@ -769,8 +730,8 @@ mod tests {
 
     #[test]
     fn measured_pace_detail_pushes_following_content_below_text() {
-        assert_eq!(forecast_top_for_detail(None, 96), 244);
-        assert_eq!(forecast_top_for_detail(Some(56), 96), 272);
-        assert_eq!(popup_height_for_forecasts(272, 1, 96), 332);
+        assert_eq!(forecast_top_for_detail(None, 96), 214);
+        assert_eq!(forecast_top_for_detail(Some(56), 96), 242);
+        assert_eq!(popup_height_for_forecasts(242, 1, 96), 302);
     }
 }

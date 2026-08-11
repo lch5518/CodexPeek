@@ -1314,12 +1314,14 @@ fn profile_mutation_actions_keep_ids_and_validated_labels_typed() {
 }
 
 #[test]
-fn profile_tooltip_adds_identity_without_changing_taskbar_dimensions() {
+fn profile_tooltip_keeps_identity_without_cli_scope_note() {
     let tooltip =
         profile_taskbar_tooltip("Work", "Codex 7d usage\nRemaining: 72%", Language::English);
 
-    assert!(tooltip.starts_with("Usage profiles: Work\nCodex CLI sign-in is unchanged\n"));
-    assert!(tooltip.ends_with("Codex 7d usage\nRemaining: 72%"));
+    assert_eq!(
+        tooltip,
+        "Usage profiles: Work\n\nCodex 7d usage\nRemaining: 72%"
+    );
     assert_eq!(taskbar_widget_size(48, 96), Ok((208, 48)));
 }
 
