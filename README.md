@@ -20,6 +20,9 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 - Lets you manually choose among as many as eight isolated usage profiles.
 - Supports showing the widget on every taskbar or only on the primary monitor.
 - Falls back safely to a floating widget and tray icon when taskbar attachment is unavailable.
+- Uses a system-themed Fluent Compact surface for hover details and preserves native keyboard and
+  submenu behavior in the styled right-click menu. High contrast and screen-reader modes keep the
+  standard Windows presentation.
 - Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and localized UI.
 
 ### Release note: local usage forecasts

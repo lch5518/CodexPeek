@@ -4,6 +4,7 @@ pub mod autostart;
 pub mod design;
 pub mod lifecycle;
 pub mod native;
+pub(crate) mod popup;
 pub mod profile_dialog;
 pub mod taskbar;
 pub mod taskbar_widget;

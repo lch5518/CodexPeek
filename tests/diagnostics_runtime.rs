@@ -177,6 +177,23 @@ fn diagnostics_mask_secrets_and_keep_one_line_records() {
 }
 
 #[test]
+fn popup_render_failure_uses_a_dedicated_safe_diagnostic_code() {
+    let path = temp_log();
+    let logger = DiagnosticLogger::for_path(&path);
+    logger
+        .record_safe(SafeDiagnostic::PopupRender {
+            surface: "usage_details",
+            stage: "create",
+            error_code: Some(5),
+        })
+        .unwrap();
+
+    let line = fs::read_to_string(&path).unwrap();
+    assert!(line.contains(" popup_render surface=usage_details stage=create error_code=Some(5)"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn sequential_profile_diagnostics_classify_mixed_results_and_reconcile_counts() {
     let contexts = [
         ProfileExecutionContext::system(),

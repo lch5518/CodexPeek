@@ -6,7 +6,7 @@ use std::{
 };
 
 use windows::{
-    core::{w, PCWSTR, PWSTR},
+    core::{w, BOOL, PCWSTR, PWSTR},
     Win32::{
         Foundation::{
             CloseHandle, GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HANDLE, HINSTANCE, HWND,
@@ -32,9 +32,11 @@ use windows::{
             Threading::CreateMutexW,
         },
         UI::{
+            Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
             Controls::{
-                TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_SETMAXTIPWIDTH,
-                TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+                NMHDR, TOOLTIPS_CLASSW, TTF_IDISHWND, TTF_SUBCLASS, TTM_ADDTOOLW,
+                TTM_SETMAXTIPWIDTH, TTM_UPDATETIPTEXTW, TTN_POP, TTN_SHOW, TTS_ALWAYSTIP,
+                TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
             },
             HiDpi::{
                 GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -47,15 +49,17 @@ use windows::{
                 GetMessageW, GetParent, GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW,
                 MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
                 SendMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-                ShowWindow, TranslateMessage, UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW,
-                CS_VREDRAW, CW_USEDEFAULT, GWLP_HWNDPARENT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE,
-                HWND_TOPMOST, IDC_ARROW, IDYES, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK,
-                MB_SETFOREGROUND, MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG,
-                SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE,
-                SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU,
-                WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_MOUSEMOVE, WM_NCCREATE,
-                WM_NCDESTROY, WM_PAINT, WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW,
-                WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                ShowWindow, SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow,
+                CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_HWNDPARENT,
+                GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, IDC_ARROW, IDYES,
+                MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TASKMODAL,
+                MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SPI_GETHIGHCONTRAST,
+                SPI_GETSCREENREADER, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+                SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE,
+                WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_DRAWITEM,
+                WM_MEASUREITEM, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT,
+                WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -67,6 +71,10 @@ use crate::{localized_text, Language, LocalizationKey, UpdateCheckNotice};
 use super::super::{
     is_exact_github_tag_page,
     lifecycle::{CleanupAction, NativeLifecycle, RecoveryEvent},
+    popup::{
+        popup_render_mode, tooltip_show_decision, usage_popup_presentation, PopupRenderMode,
+        TooltipShowDecision,
+    },
     profile_dialog::{
         confirm_profile_login_owned, show_profile_manager_owned_live, show_profile_message,
         ProfileMessageRoute,
@@ -85,6 +93,7 @@ use super::super::{
     widget::{logical_to_physical, Rect},
     UiAction, UiBackend, UiSettings, WidgetViewModel,
 };
+use super::usage_popup;
 use super::{
     profile_dialog_ui_action, profile_login_confirmation_request,
     usage_forecast_clear_confirmation_request, ProfileLoginDispatch,
@@ -185,6 +194,7 @@ struct WidgetSlot {
     mouse_tracking: bool,
     tooltip: HWND,
     tooltip_text: Vec<u16>,
+    usage_popup: HWND,
 }
 
 pub(super) fn run(backend: &mut dyn UiBackend) -> io::Result<()> {
@@ -301,7 +311,7 @@ unsafe fn register_classes(instance: HINSTANCE) -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
     }
-    Ok(())
+    usage_popup::register_class(instance)
 }
 
 unsafe fn cleanup_native_state(state_pointer: *mut NativeState<'_>) {
@@ -353,6 +363,9 @@ unsafe extern "system" fn owner_proc(
                 | WM_DISPLAYCHANGE
                 | WM_SETTINGCHANGE
                 | WM_THEMECHANGED
+                | WM_NOTIFY
+                | WM_MEASUREITEM
+                | WM_DRAWITEM
         )
     {
         return DefWindowProcW(hwnd, message, wparam, lparam);
@@ -419,10 +432,27 @@ unsafe extern "system" fn owner_proc(
             LRESULT(0)
         }
         WM_DISPLAYCHANGE | WM_SETTINGCHANGE | WM_THEMECHANGED => {
+            hide_all_usage_popups(pointer);
             if let Some(observer) = &(*pointer).taskbar_observer {
                 observer.refresh();
             }
             LRESULT(0)
+        }
+        WM_NOTIFY => handle_tooltip_notification(pointer, lparam)
+            .unwrap_or_else(|| DefWindowProcW(hwnd, message, wparam, lparam)),
+        WM_MEASUREITEM => {
+            if TrayIcon::measure_menu_item(lparam) {
+                LRESULT(1)
+            } else {
+                DefWindowProcW(hwnd, message, wparam, lparam)
+            }
+        }
+        WM_DRAWITEM => {
+            if TrayIcon::draw_menu_item(lparam) {
+                LRESULT(1)
+            } else {
+                DefWindowProcW(hwnd, message, wparam, lparam)
+            }
         }
         TRAY_CALLBACK => {
             let event = lparam.0 as u32 & 0xffff;
@@ -458,7 +488,12 @@ unsafe fn show_settings_menu(pointer: *mut NativeState<'_>) {
         let state = &*pointer;
         (state.owner, state.settings.clone())
     };
-    let action = TrayIcon::show_menu(owner, &settings, snapshot.reset_credits_text.as_deref());
+    let action = TrayIcon::show_menu(
+        owner,
+        &settings,
+        snapshot.reset_credits_text.as_deref(),
+        matches!(system_popup_render_mode(), PopupRenderMode::Custom),
+    );
     if let Some(action) = action {
         dispatch_action(pointer, action);
     }
@@ -485,6 +520,7 @@ unsafe extern "system" fn widget_proc(
                 if widget.tooltip != HWND::default() && IsWindow(Some(widget.tooltip)).as_bool() {
                     let _ = DestroyWindow(widget.tooltip);
                 }
+                usage_popup::destroy(widget.usage_popup);
             }
             if state.widgets.is_empty() {
                 state.lifecycle.widget_destroyed();
@@ -883,6 +919,7 @@ unsafe fn create_detached_widget(state_pointer: *mut NativeState<'_>) -> io::Res
         mouse_tracking: false,
         tooltip: HWND::default(),
         tooltip_text: Vec::new(),
+        usage_popup: HWND::default(),
     });
     if was_empty {
         let state = &mut *state_pointer;
@@ -962,6 +999,124 @@ unsafe fn position_detached_widget(widget: HWND) -> io::Result<()> {
         SWP_FRAMECHANGED | SWP_NOACTIVATE,
     )
     .map_err(win_error)
+}
+
+unsafe fn handle_tooltip_notification(
+    state_pointer: *mut NativeState<'_>,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
+    if lparam.0 == 0 {
+        return None;
+    }
+    let header = &*(lparam.0 as *const NMHDR);
+    let state = &mut *state_pointer;
+    let index = state
+        .widgets
+        .iter()
+        .position(|widget| widget.tooltip == header.hwndFrom)?;
+    match header.code {
+        TTN_SHOW => {
+            let previous = std::mem::take(&mut state.widgets[index].usage_popup);
+            usage_popup::destroy(previous);
+            let mode = system_popup_render_mode();
+            let custom = if matches!(mode, PopupRenderMode::Custom) {
+                let snapshot = state.backend.snapshot();
+                let language = state.settings.resolved_language;
+                let presentation = usage_popup_presentation(&snapshot, language);
+                let widget = state.widgets[index].hwnd;
+                let rtl = matches!(language, crate::Language::Arabic);
+                match usage_popup::show(
+                    state.instance,
+                    state.owner,
+                    widget,
+                    &presentation,
+                    theme::system_uses_light_theme(),
+                    rtl,
+                ) {
+                    Ok(hwnd) => Some(hwnd),
+                    Err(error) => {
+                        log_popup_render_error("usage_details", "create", &error);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            match tooltip_show_decision(mode, custom.is_some()) {
+                TooltipShowDecision::ShowCustomAndParkNative => {
+                    if let Err(error) = park_native_tooltip(header.hwndFrom) {
+                        log_popup_render_error("usage_details", "park_native", &error);
+                        usage_popup::destroy(custom.unwrap_or_default());
+                        return Some(LRESULT(0));
+                    }
+                    state.widgets[index].usage_popup = custom.unwrap_or_default();
+                    Some(LRESULT(1))
+                }
+                TooltipShowDecision::ShowNative => {
+                    if let Some(hwnd) = custom {
+                        usage_popup::destroy(hwnd);
+                    }
+                    Some(LRESULT(0))
+                }
+            }
+        }
+        TTN_POP => {
+            let popup = std::mem::take(&mut state.widgets[index].usage_popup);
+            usage_popup::destroy(popup);
+            Some(LRESULT(0))
+        }
+        _ => None,
+    }
+}
+
+/// 커스텀 팝업의 hover 감지는 유지하면서 Windows 기본 툴팁을 화면 밖에 배치합니다.
+///
+/// `tooltip`은 현재 `TTN_SHOW`를 보낸 유효한 툴팁 창이어야 합니다. 실패하면 호출자가 커스텀
+/// 팝업을 닫고 기본 툴팁으로 복귀할 수 있도록 운영체제 오류를 반환합니다.
+unsafe fn park_native_tooltip(tooltip: HWND) -> io::Result<()> {
+    SetWindowPos(
+        tooltip,
+        None,
+        -32_000,
+        -32_000,
+        0,
+        0,
+        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+    )
+    .map_err(win_error)
+}
+
+unsafe fn hide_all_usage_popups(state_pointer: *mut NativeState<'_>) {
+    for widget in &mut (*state_pointer).widgets {
+        let popup = std::mem::take(&mut widget.usage_popup);
+        usage_popup::destroy(popup);
+    }
+}
+
+unsafe fn system_popup_render_mode() -> PopupRenderMode {
+    let mut high_contrast = HIGHCONTRASTW {
+        cbSize: std::mem::size_of::<HIGHCONTRASTW>() as u32,
+        ..Default::default()
+    };
+    let high_contrast_query = SystemParametersInfoW(
+        SPI_GETHIGHCONTRAST,
+        high_contrast.cbSize,
+        Some((&mut high_contrast as *mut HIGHCONTRASTW).cast()),
+        Default::default(),
+    );
+    let high_contrast_enabled =
+        high_contrast_query.is_err() || high_contrast.dwFlags.contains(HCF_HIGHCONTRASTON);
+    let mut screen_reader = BOOL(0);
+    let screen_reader_query = SystemParametersInfoW(
+        SPI_GETSCREENREADER,
+        0,
+        Some((&mut screen_reader as *mut BOOL).cast()),
+        Default::default(),
+    );
+    popup_render_mode(
+        high_contrast_enabled,
+        screen_reader_query.is_err() || screen_reader.as_bool(),
+    )
 }
 
 unsafe fn create_tooltip(state_pointer: *mut NativeState<'_>, widget: HWND) -> io::Result<()> {
@@ -1795,6 +1950,14 @@ const fn taskbar_risk_color(risk: TaskbarRisk) -> COLORREF {
 
 fn log_taskbar_render_error(stage: &'static str, error: &io::Error) {
     let _ = DiagnosticLogger::new().record_safe(SafeDiagnostic::TaskbarRender {
+        stage,
+        error_code: error.raw_os_error(),
+    });
+}
+
+fn log_popup_render_error(surface: &'static str, stage: &'static str, error: &io::Error) {
+    let _ = DiagnosticLogger::new().record_safe(SafeDiagnostic::PopupRender {
+        surface,
         stage,
         error_code: error.raw_os_error(),
     });

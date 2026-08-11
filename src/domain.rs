@@ -157,7 +157,7 @@ impl UsageWindow {
     /// 사용량 창의 실제 길이 또는 종류별 대체 문구를 반환합니다.
     pub fn period_label(&self, language: Language) -> String {
         let Some(duration_mins) = self.window_duration_mins.filter(|duration| *duration > 0) else {
-            return fallback_period_label(self.kind, language).to_owned();
+            return window_kind_label(self.kind, language).to_owned();
         };
 
         if duration_mins % (24 * 60) == 0 {
@@ -197,7 +197,11 @@ pub struct CodexUsage {
     pub fetched_at: SystemTime,
 }
 
-fn fallback_period_label(kind: WindowKind, language: Language) -> &'static str {
+/// 사용량 창 종류의 의미를 숫자 기간 없이 지역화한 레이블로 반환합니다.
+///
+/// `kind`는 단기 또는 주간 창을, `language`는 표시 언어를 지정합니다. 반환 문자열은 정적이며
+/// 실제 서버 기간이 없거나 UI가 기간 종류 자체를 강조할 때 사용할 수 있습니다.
+pub(crate) fn window_kind_label(kind: WindowKind, language: Language) -> &'static str {
     let (primary, secondary) = match language {
         Language::Korean => ("단기", "주간"),
         Language::English => ("Short", "Weekly"),

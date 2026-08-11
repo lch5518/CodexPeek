@@ -33,6 +33,8 @@ pub enum DiagnosticCode {
     TaskbarCheck,
     /// 작업 표시줄 창 합성 단계의 결과입니다.
     TaskbarRender,
+    /// 사용량 상세 팝업 또는 트레이 메뉴 렌더링 실패입니다.
+    PopupRender,
     /// 사용량 프로필의 집계 상태입니다.
     Profiles,
     /// 사용량 이력의 안전한 작업 실패입니다.
@@ -72,6 +74,7 @@ impl DiagnosticCode {
             Self::ProxyPresence => "proxy_presence",
             Self::TaskbarCheck => "taskbar_check",
             Self::TaskbarRender => "taskbar_render",
+            Self::PopupRender => "popup_render",
             Self::Profiles => "profiles",
             Self::UsageHistory => "usage_history",
         }
@@ -96,6 +99,15 @@ pub enum SafeDiagnostic {
     /// 작업 표시줄 합성 단계와 민감정보가 없는 운영체제 오류 코드입니다.
     TaskbarRender {
         stage: &'static str,
+        error_code: Option<i32>,
+    },
+    /// 팝업 표면과 렌더 단계만 기록하는 민감 정보 없는 운영체제 오류입니다.
+    PopupRender {
+        /// 실패한 고정 표면 분류입니다.
+        surface: &'static str,
+        /// 실패한 고정 렌더 단계입니다.
+        stage: &'static str,
+        /// 운영체제가 제공한 숫자 오류 코드입니다.
         error_code: Option<i32>,
     },
     /// 설정 유효성과 프로필 상태별 개수만 포함하는 집계입니다.
@@ -205,6 +217,14 @@ impl DiagnosticLogger {
             SafeDiagnostic::TaskbarRender { stage, error_code } => self.record(
                 DiagnosticCode::TaskbarRender,
                 &format!("stage={stage} error_code={error_code:?}"),
+            ),
+            SafeDiagnostic::PopupRender {
+                surface,
+                stage,
+                error_code,
+            } => self.record(
+                DiagnosticCode::PopupRender,
+                &format!("surface={surface} stage={stage} error_code={error_code:?}"),
             ),
             SafeDiagnostic::Profiles {
                 settings_valid,

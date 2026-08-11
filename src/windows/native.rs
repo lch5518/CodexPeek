@@ -6,6 +6,8 @@ use super::{profile_dialog::ProfileDialogAction, UiAction, UiBackend, UiSettings
 
 #[cfg(windows)]
 mod platform;
+#[cfg(windows)]
+mod usage_popup;
 
 /// 프로세스가 살아 있는 동안 이름 있는 뮤텍스를 보유하는 단일 인스턴스 가드입니다.
 pub struct SingleInstanceGuard {

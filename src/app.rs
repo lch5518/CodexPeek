@@ -1936,7 +1936,7 @@ const fn taskbar_usage_title_prefix(language: Language) -> &'static str {
     }
 }
 
-const fn current_usage_label(language: Language) -> &'static str {
+pub(crate) const fn current_usage_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "현재 사용량",
         Language::English => "Current usage",
@@ -1953,7 +1953,7 @@ const fn current_usage_label(language: Language) -> &'static str {
     }
 }
 
-const fn remaining_usage_label(language: Language) -> &'static str {
+pub(crate) const fn remaining_usage_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "남은 사용량",
         Language::English => "Remaining",
@@ -1970,7 +1970,7 @@ const fn remaining_usage_label(language: Language) -> &'static str {
     }
 }
 
-const fn reset_at_label(language: Language) -> &'static str {
+pub(crate) const fn reset_at_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "초기화 시각",
         Language::English => "Reset at",
@@ -1987,7 +1987,7 @@ const fn reset_at_label(language: Language) -> &'static str {
     }
 }
 
-const fn status_label(language: Language) -> &'static str {
+pub(crate) const fn status_label(language: Language) -> &'static str {
     match language {
         Language::Korean => "상태",
         Language::English => "Status",
