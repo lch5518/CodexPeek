@@ -289,6 +289,8 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Start the update from a `--startup` launch and verify the restarted app preserves that mode
 - [ ] Make the replacement exit before tray/UI readiness and verify the helper keeps its backup,
       terminates the failed replacement, restores the old EXE, and relaunches it
+- [ ] Force replacement termination to fail; verify the backup remains and neither rollback nor
+      the old-binary relaunch is attempted
 - [ ] Change the staged EXE after helper readiness but before parent exit; verify the helper's
       pre-replacement recheck rejects it and relaunches the old EXE
 - [ ] Download, verification, helper-launch, replacement, and restart failures preserve the old

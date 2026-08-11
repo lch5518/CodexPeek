@@ -277,20 +277,41 @@ fn install_preparation_exposes_downloading_ready_and_failure_states() {
     assert!(presentation.queue_install_request(update.clone()));
     assert_eq!(presentation.status(), UpdatePresentationStatus::Downloading);
     assert_eq!(presentation.take_install_request(), Some(update.clone()));
+    assert_eq!(
+        presentation.begin_user_action(),
+        UpdateUserAction::WaitForRunning
+    );
     presentation.record_install_notice(UpdateCheckNotice::InstallReady);
     assert_eq!(presentation.status(), UpdatePresentationStatus::Installing);
+    assert!(!presentation.queue_install_request(update.clone()));
+    assert_eq!(
+        presentation.begin_user_action(),
+        UpdateUserAction::WaitForRunning
+    );
     assert_eq!(
         presentation.take_user_notice(),
         Some(UpdateCheckNotice::InstallReady)
     );
+    assert!(!presentation.queue_install_request(update));
+}
 
+#[test]
+fn failed_install_preparation_releases_the_install_latch_for_retry() {
+    let presentation = UpdatePresentation::default();
+    let update = available_update("2.0.0");
+    presentation.begin_check(UpdateCheckIntent::Automatic);
+    presentation.record_result(Ok(Some(update.clone())));
+    let _ = presentation.take_user_notice();
+
+    assert!(presentation.queue_install_request(update.clone()));
+    assert_eq!(presentation.take_install_request(), Some(update.clone()));
     presentation.record_install_notice(UpdateCheckNotice::VerificationFailed);
     assert_eq!(presentation.status(), UpdatePresentationStatus::Failed);
-    assert!(presentation.queue_install_request(update));
     assert_eq!(
         presentation.take_user_notice(),
         Some(UpdateCheckNotice::VerificationFailed)
     );
+    assert!(presentation.queue_install_request(update));
 }
 
 #[test]

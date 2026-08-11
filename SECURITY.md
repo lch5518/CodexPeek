@@ -141,9 +141,11 @@ newer release appears. With explicit approval, the updater accepts only the expe
 x64 executable and `SHA256SUMS.txt` assets from the validated GitHub Release, checks the exact
 manifest entry and SHA-256, stages the file, and uses a helper to replace only the running
 executable before restarting. The helper rechecks the staged bytes immediately before replacement
-and keeps its rollback copy until the new app reports that its tray and initial windows are ready.
-A failed download, verification, replacement, or restart-readiness check preserves or restores
-the previous executable. Update state is stored with the other settings under `%APPDATA%\CodexPeek`;
+and keeps its rollback copy until the exact child process reports that its tray and initial windows
+are ready. A readiness failure triggers rollback only after that child is confirmed stopped. If
+termination cannot be confirmed, the helper preserves the backup and stops without rollback or a
+second relaunch. Other failed download, verification, or replacement paths preserve or restore the
+previous executable. Update state is stored with the other settings under `%APPDATA%\CodexPeek`;
 the updater does not replace that directory. Proxy diagnostics report presence only; they never
 log proxy URLs, credentials, or environment-variable values.
 
@@ -158,8 +160,10 @@ HTTPS와 응답 크기·시간 제한을 적용하며 앱이 실행된 뒤에만
 건너뛰면 로컬 설정에 기록해 더 새 버전이 나올 때까지 다시 묻지 않습니다. 사용자가 명시적으로
 동의한 경우에만 검증된 GitHub Release의 예상 Windows x64 원본 EXE와 `SHA256SUMS.txt`를 받고,
 manifest의 정확한 항목과 SHA-256을 확인합니다. 검증한 파일은 임시 위치에 준비하고 별도 helper가
-현재 실행 파일만 교체한 뒤 다시 시작합니다. 다운로드·검증·교체가 실패하면 기존 실행 파일을
-유지합니다. 업데이트 상태는 `%APPDATA%\CodexPeek`의 기존 설정과 함께 저장하며 updater는 그
+현재 실행 파일만 교체한 뒤 정확한 새 자식 프로세스의 UI 준비 상태를 확인합니다. 준비 실패 시 해당
+프로세스의 종료가 확인된 경우에만 이전 EXE를 복원합니다. 종료를 확인할 수 없으면 백업을 보존하고
+rollback이나 두 번째 실행 없이 중단합니다. 다운로드·검증·교체 실패는 기존 실행 파일을 유지합니다.
+업데이트 상태는 `%APPDATA%\CodexPeek`의 기존 설정과 함께 저장하며 updater는 그
 디렉터리를 교체하지 않습니다.
 
 공식 Release workflow가 `CODEX_PEEK_OFFICIAL_BUILD=1` 표시를 포함해 빌드한 실행 파일에서만

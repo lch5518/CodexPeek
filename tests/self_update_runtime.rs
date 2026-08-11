@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -14,6 +14,7 @@ use codex_usage_monitor::{
     apply_update_helper, fetch_available_self_update, prepare_update_helper, release_api_url,
     signal_restart_ready, take_restart_ready_argument, AvailableUpdate, DownloadResponse,
     HelperOutcome, HelperPlan, SelfUpdateError, SelfUpdateHttpClient, SelfUpdatePlatform,
+    SelfUpdateProcess,
 };
 use semver::Version;
 use sha2::{Digest, Sha256};
@@ -230,51 +231,97 @@ fn checksum_mismatch_never_creates_a_staging_file() {
 }
 
 struct RecordingPlatform {
-    calls: Mutex<Vec<&'static str>>,
+    calls: Arc<Mutex<Vec<&'static str>>>,
     relaunch_count: AtomicUsize,
     fail_first_relaunch: bool,
     fail_replace: bool,
     fail_readiness: bool,
+    fail_termination: bool,
 }
 
 impl RecordingPlatform {
     fn success_fixture() -> Self {
         Self {
-            calls: Mutex::new(Vec::new()),
+            calls: Arc::new(Mutex::new(Vec::new())),
             relaunch_count: AtomicUsize::new(0),
             fail_first_relaunch: false,
             fail_replace: false,
             fail_readiness: false,
+            fail_termination: false,
         }
     }
 
     fn rollback_fixture() -> Self {
         Self {
-            calls: Mutex::new(Vec::new()),
+            calls: Arc::new(Mutex::new(Vec::new())),
             relaunch_count: AtomicUsize::new(0),
             fail_first_relaunch: true,
             fail_replace: false,
             fail_readiness: false,
+            fail_termination: false,
         }
     }
 
     fn replace_failure_fixture() -> Self {
         Self {
-            calls: Mutex::new(Vec::new()),
+            calls: Arc::new(Mutex::new(Vec::new())),
             relaunch_count: AtomicUsize::new(0),
             fail_first_relaunch: false,
             fail_replace: true,
             fail_readiness: false,
+            fail_termination: false,
         }
     }
 
     fn readiness_failure_fixture() -> Self {
         Self {
-            calls: Mutex::new(Vec::new()),
+            calls: Arc::new(Mutex::new(Vec::new())),
             relaunch_count: AtomicUsize::new(0),
             fail_first_relaunch: false,
             fail_replace: false,
             fail_readiness: true,
+            fail_termination: false,
+        }
+    }
+
+    fn termination_failure_fixture() -> Self {
+        Self {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            relaunch_count: AtomicUsize::new(0),
+            fail_first_relaunch: false,
+            fail_replace: false,
+            fail_readiness: true,
+            fail_termination: true,
+        }
+    }
+}
+
+struct RecordingProcess {
+    calls: Arc<Mutex<Vec<&'static str>>>,
+    fail_readiness: bool,
+    fail_termination: bool,
+}
+
+impl SelfUpdateProcess for RecordingProcess {
+    fn wait_for_restart_ready(
+        &mut self,
+        _restart_ready: &Path,
+        _timeout: Duration,
+    ) -> Result<(), SelfUpdateError> {
+        self.calls.lock().unwrap().push("wait_ready");
+        if self.fail_readiness {
+            Err(SelfUpdateError::RelaunchFailed)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn terminate_and_wait(&mut self) -> Result<(), SelfUpdateError> {
+        self.calls.lock().unwrap().push("terminate");
+        if self.fail_termination {
+            Err(SelfUpdateError::TerminationFailed)
+        } else {
+            Ok(())
         }
     }
 }
@@ -309,33 +356,18 @@ impl SelfUpdatePlatform for RecordingPlatform {
         _target: &Path,
         _arguments: &[OsString],
         _restart_ready: Option<&Path>,
-    ) -> Result<u32, SelfUpdateError> {
+    ) -> Result<Box<dyn SelfUpdateProcess>, SelfUpdateError> {
         self.calls.lock().unwrap().push("relaunch");
         let count = self.relaunch_count.fetch_add(1, Ordering::Relaxed);
         if self.fail_first_relaunch && count == 0 {
             Err(SelfUpdateError::RelaunchFailed)
         } else {
-            Ok(100 + count as u32)
+            Ok(Box::new(RecordingProcess {
+                calls: self.calls.clone(),
+                fail_readiness: self.fail_readiness,
+                fail_termination: self.fail_termination,
+            }))
         }
-    }
-
-    fn wait_for_restart_ready(
-        &self,
-        _process_id: u32,
-        _restart_ready: &Path,
-        _timeout: Duration,
-    ) -> Result<(), SelfUpdateError> {
-        self.calls.lock().unwrap().push("wait_ready");
-        if self.fail_readiness {
-            Err(SelfUpdateError::RelaunchFailed)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn terminate(&self, _process_id: u32) -> Result<(), SelfUpdateError> {
-        self.calls.lock().unwrap().push("terminate");
-        Ok(())
     }
 
     fn remove_backup(&self, _backup: &Path) -> Result<(), SelfUpdateError> {
@@ -504,6 +536,35 @@ fn helper_terminates_and_rolls_back_when_the_new_app_never_becomes_ready() {
 }
 
 #[test]
+fn helper_preserves_backup_and_stops_when_new_process_termination_is_unconfirmed() {
+    let root = TestRoot::new("termination-unconfirmed");
+    let staged = root.0.join("codex-peek.update");
+    let bytes = b"verified replacement";
+    fs::write(&staged, bytes).unwrap();
+    let plan = HelperPlan {
+        parent_pid: 42,
+        target: root.0.join("codex-peek.exe"),
+        staged,
+        backup: root.0.join("codex-peek.backup.exe"),
+        ready: root.0.join("helper.ready"),
+        restart_ready: root.0.join("restart.ready"),
+        expected_sha256: Sha256::digest(bytes).into(),
+        expected_size: bytes.len() as u64,
+        relaunch_args: Vec::new(),
+    };
+    let platform = RecordingPlatform::termination_failure_fixture();
+
+    assert_eq!(
+        apply_update_helper(&platform, &plan),
+        Err(SelfUpdateError::TerminationFailed)
+    );
+    assert_eq!(
+        *platform.calls.lock().unwrap(),
+        ["wait", "replace", "relaunch", "wait_ready", "terminate"]
+    );
+}
+
+#[test]
 fn helper_refuses_a_changed_staging_file_before_waiting_for_the_parent() {
     let root = TestRoot::new("integrity");
     let staged = root.0.join("codex-peek.update");
@@ -533,6 +594,22 @@ struct TamperingPlatform {
     relaunched: AtomicUsize,
 }
 
+struct UnusedProcess;
+
+impl SelfUpdateProcess for UnusedProcess {
+    fn wait_for_restart_ready(
+        &mut self,
+        _restart_ready: &Path,
+        _timeout: Duration,
+    ) -> Result<(), SelfUpdateError> {
+        panic!("old-binary relaunch must not wait for readiness")
+    }
+
+    fn terminate_and_wait(&mut self) -> Result<(), SelfUpdateError> {
+        panic!("old-binary relaunch must not be terminated")
+    }
+}
+
 impl SelfUpdatePlatform for TamperingPlatform {
     fn wait_for_exit(&self, _process_id: u32, _timeout: Duration) -> Result<(), SelfUpdateError> {
         fs::write(&self.staged, b"tampered after first verification").unwrap();
@@ -557,23 +634,10 @@ impl SelfUpdatePlatform for TamperingPlatform {
         _target: &Path,
         _arguments: &[OsString],
         restart_ready: Option<&Path>,
-    ) -> Result<u32, SelfUpdateError> {
+    ) -> Result<Box<dyn SelfUpdateProcess>, SelfUpdateError> {
         assert!(restart_ready.is_none());
         self.relaunched.fetch_add(1, Ordering::Relaxed);
-        Ok(101)
-    }
-
-    fn wait_for_restart_ready(
-        &self,
-        _process_id: u32,
-        _restart_ready: &Path,
-        _timeout: Duration,
-    ) -> Result<(), SelfUpdateError> {
-        panic!("readiness must not be checked after staging tampering")
-    }
-
-    fn terminate(&self, _process_id: u32) -> Result<(), SelfUpdateError> {
-        panic!("no new process exists after staging tampering")
+        Ok(Box::new(UnusedProcess))
     }
 
     fn remove_backup(&self, _backup: &Path) -> Result<(), SelfUpdateError> {

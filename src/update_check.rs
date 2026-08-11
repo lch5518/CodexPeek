@@ -281,6 +281,9 @@ impl UpdatePresentation {
     /// 사라지지 않습니다. `StartCheck`인 경우에만 호출자가 새 작업자를 만들어야 합니다.
     pub fn begin_user_action(&self) -> UpdateUserAction {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
+        if inner.install_in_progress {
+            return UpdateUserAction::WaitForRunning;
+        }
         if let Some(update) = inner.available.clone() {
             return UpdateUserAction::Open(update);
         }
@@ -380,16 +383,27 @@ impl UpdatePresentation {
     /// Records the terminal result of the background self-update preparation once.
     pub fn record_install_notice(&self, notice: UpdateCheckNotice) {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
-        inner.status = match notice {
-            UpdateCheckNotice::InstallReady => UpdatePresentationStatus::Installing,
+        if !inner.install_in_progress {
+            return;
+        }
+        match notice {
+            UpdateCheckNotice::InstallReady => {
+                inner.status = UpdatePresentationStatus::Installing;
+                inner.pending_user_notice = Some(notice);
+                inner.pending_install_request = None;
+                // Keep the latch set until process exit. InstallReady only means the helper is
+                // ready; the UI has not consumed the notice or begun shutdown yet.
+            }
             UpdateCheckNotice::DownloadFailed
             | UpdateCheckNotice::VerificationFailed
-            | UpdateCheckNotice::InstallFailed => UpdatePresentationStatus::Failed,
-            _ => return,
-        };
-        inner.pending_install_request = None;
-        inner.install_in_progress = false;
-        inner.pending_user_notice = Some(notice);
+            | UpdateCheckNotice::InstallFailed => {
+                inner.status = UpdatePresentationStatus::Failed;
+                inner.pending_install_request = None;
+                inner.install_in_progress = false;
+                inner.pending_user_notice = Some(notice);
+            }
+            _ => {}
+        }
     }
 }
 

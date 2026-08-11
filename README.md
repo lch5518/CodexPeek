@@ -204,9 +204,11 @@ and restarts CodexPeek. The update does not modify `%APPDATA%\CodexPeek`, so exi
 profiles remain in place. If verification or replacement fails, the existing executable is kept
 and the release can be installed manually.
 
-The helper keeps a rollback copy until the relaunched app has created its tray and initial
-windows. If that readiness check fails, it restores and relaunches the previous executable while
-preserving `--startup` launches. For Installer editions, Windows Apps & Features continues to
+The helper keeps a rollback copy until the exact relaunched child process has created its tray and
+initial windows. If readiness fails, the helper restores and relaunches the previous executable
+only after that child is confirmed stopped. If termination cannot be confirmed, it preserves the
+backup and performs no rollback or second relaunch. `--startup` launches remain preserved. For
+Installer editions, Windows Apps & Features continues to
 show the installer version until a newer Setup package is installed; after a self-update, use the
 running app's version as the authoritative version.
 

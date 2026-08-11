@@ -49,8 +49,8 @@ pub use self_update::{
     native_update_helper, prepare_and_spawn_update_helper, prepare_update_helper, release_api_url,
     run_update_helper_mode, signal_restart_ready, spawn_prepared_update_helper,
     take_restart_ready_argument, DownloadResponse, HelperOutcome, HelperPlan, PreparedUpdateHelper,
-    ReleaseAsset, SelfUpdateError, SelfUpdateHttpClient, SelfUpdatePlatform, SelfUpdateRelease,
-    SpawnedUpdateHelper, UreqSelfUpdateHttpClient, VerifiedExecutable,
+    ReleaseAsset, SelfUpdateError, SelfUpdateHttpClient, SelfUpdatePlatform, SelfUpdateProcess,
+    SelfUpdateRelease, SpawnedUpdateHelper, UreqSelfUpdateHttpClient, VerifiedExecutable,
 };
 pub use update_check::{
     AvailableUpdate, HttpResponse, ReleaseHttpClient, UpdateCheckError, UpdateCheckIntent,

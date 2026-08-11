@@ -3,7 +3,7 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Child, Command},
     sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -59,6 +59,8 @@ pub enum SelfUpdateError {
     HelperStartFailed,
     /// 새 실행 파일 시작 실패 후 기존 실행 파일 복원에 실패했습니다.
     RollbackFailed,
+    /// readiness 실패 후 새 프로세스의 종료를 확인하지 못했습니다.
+    TerminationFailed,
 }
 
 /// 크기 제한을 적용해 내려받은 HTTPS 응답입니다.
@@ -372,13 +374,28 @@ pub fn spawn_prepared_update_helper(
     prepared: PreparedUpdateHelper,
 ) -> Result<SpawnedUpdateHelper, SelfUpdateError> {
     let arguments = prepared.plan.encode_arguments();
-    let spawn_result = Command::new(&prepared.helper_path).args(arguments).spawn();
-    if spawn_result.is_err() {
-        cleanup_unstarted_update(&prepared);
-        return Err(SelfUpdateError::HelperStartFailed);
-    }
+    let mut helper = match Command::new(&prepared.helper_path).args(arguments).spawn() {
+        Ok(helper) => helper,
+        Err(_) => {
+            cleanup_unstarted_update(&prepared);
+            return Err(SelfUpdateError::HelperStartFailed);
+        }
+    };
     let deadline = std::time::Instant::now() + HELPER_READY_TIMEOUT;
     while std::time::Instant::now() < deadline {
+        match helper.try_wait() {
+            Ok(Some(_)) => {
+                cleanup_unstarted_update(&prepared);
+                return Err(SelfUpdateError::HelperStartFailed);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                cleanup_unstarted_update(&prepared);
+                return Err(SelfUpdateError::HelperStartFailed);
+            }
+        }
         if ready_file_exists(&prepared.plan.ready) {
             return Ok(SpawnedUpdateHelper {
                 version: prepared.version,
@@ -387,6 +404,8 @@ pub fn spawn_prepared_update_helper(
         }
         thread::sleep(Duration::from_millis(25));
     }
+    let _ = helper.kill();
+    let _ = helper.wait();
     cleanup_unstarted_update(&prepared);
     Err(SelfUpdateError::HelperStartFailed)
 }
@@ -662,6 +681,17 @@ impl HelperPlan {
 }
 
 /// helper 교체 순서를 운영체제와 분리해 실패 경로를 단위 테스트할 수 있게 하는 경계입니다.
+pub trait SelfUpdateProcess {
+    /// Waits for the exact child process to report UI readiness while confirming it stays alive.
+    fn wait_for_restart_ready(
+        &mut self,
+        restart_ready: &Path,
+        timeout: Duration,
+    ) -> Result<(), SelfUpdateError>;
+    /// Terminates the exact child process and returns only after its exit is confirmed.
+    fn terminate_and_wait(&mut self) -> Result<(), SelfUpdateError>;
+}
+
 pub trait SelfUpdatePlatform {
     /// 기존 프로세스가 종료될 때까지 제한된 시간 동안 기다립니다.
     fn wait_for_exit(&self, process_id: u32, timeout: Duration) -> Result<(), SelfUpdateError>;
@@ -680,14 +710,7 @@ pub trait SelfUpdatePlatform {
         target: &Path,
         arguments: &[OsString],
         restart_ready: Option<&Path>,
-    ) -> Result<u32, SelfUpdateError>;
-    fn wait_for_restart_ready(
-        &self,
-        process_id: u32,
-        restart_ready: &Path,
-        timeout: Duration,
-    ) -> Result<(), SelfUpdateError>;
-    fn terminate(&self, process_id: u32) -> Result<(), SelfUpdateError>;
+    ) -> Result<Box<dyn SelfUpdateProcess>, SelfUpdateError>;
     /// 성공한 교체 뒤 더 이상 필요 없는 backup을 제거합니다.
     fn remove_backup(&self, backup: &Path) -> Result<(), SelfUpdateError>;
 }
@@ -768,18 +791,20 @@ fn apply_verified_update_helper(
             .map_err(|_| SelfUpdateError::RelaunchFailed)?;
         return Ok(HelperOutcome::RolledBack);
     }
-    if let Ok(process_id) =
+    if let Ok(mut process) =
         platform.relaunch(&plan.target, &plan.relaunch_args, Some(&plan.restart_ready))
     {
-        if platform
-            .wait_for_restart_ready(process_id, &plan.restart_ready, RESTART_READY_TIMEOUT)
+        if process
+            .wait_for_restart_ready(&plan.restart_ready, RESTART_READY_TIMEOUT)
             .is_ok()
         {
             let _ = platform.remove_backup(&plan.backup);
             remove_file_if_present(&plan.restart_ready);
             return Ok(HelperOutcome::Updated);
         }
-        let _ = platform.terminate(process_id);
+        process
+            .terminate_and_wait()
+            .map_err(|_| SelfUpdateError::TerminationFailed)?;
     }
     platform
         .rollback(&plan.target, &plan.backup)
@@ -971,7 +996,7 @@ impl SelfUpdatePlatform for NativeSelfUpdatePlatform {
         target: &Path,
         arguments: &[OsString],
         restart_ready: Option<&Path>,
-    ) -> Result<u32, SelfUpdateError> {
+    ) -> Result<Box<dyn SelfUpdateProcess>, SelfUpdateError> {
         let mut command = Command::new(target);
         command.args(arguments);
         if let Some(path) = restart_ready {
@@ -979,25 +1004,61 @@ impl SelfUpdatePlatform for NativeSelfUpdatePlatform {
         }
         command
             .spawn()
-            .map(|child| child.id())
+            .map(|child| Box::new(NativeSelfUpdateProcess { child }) as Box<dyn SelfUpdateProcess>)
             .map_err(|_| SelfUpdateError::RelaunchFailed)
-    }
-
-    fn wait_for_restart_ready(
-        &self,
-        process_id: u32,
-        restart_ready: &Path,
-        timeout: Duration,
-    ) -> Result<(), SelfUpdateError> {
-        wait_for_process_ready(process_id, restart_ready, timeout)
-    }
-
-    fn terminate(&self, process_id: u32) -> Result<(), SelfUpdateError> {
-        terminate_process(process_id)
     }
 
     fn remove_backup(&self, backup: &Path) -> Result<(), SelfUpdateError> {
         fs::remove_file(backup).map_err(|_| SelfUpdateError::Io)
+    }
+}
+
+struct NativeSelfUpdateProcess {
+    child: Child,
+}
+
+impl SelfUpdateProcess for NativeSelfUpdateProcess {
+    fn wait_for_restart_ready(
+        &mut self,
+        restart_ready: &Path,
+        timeout: Duration,
+    ) -> Result<(), SelfUpdateError> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if self
+                .child
+                .try_wait()
+                .map_err(|_| SelfUpdateError::RelaunchFailed)?
+                .is_some()
+            {
+                return Err(SelfUpdateError::RelaunchFailed);
+            }
+            if ready_file_exists(restart_ready) {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(SelfUpdateError::RelaunchFailed);
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    fn terminate_and_wait(&mut self) -> Result<(), SelfUpdateError> {
+        if self
+            .child
+            .try_wait()
+            .map_err(|_| SelfUpdateError::TerminationFailed)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.child
+            .kill()
+            .map_err(|_| SelfUpdateError::TerminationFailed)?;
+        self.child
+            .wait()
+            .map(|_| ())
+            .map_err(|_| SelfUpdateError::TerminationFailed)
     }
 }
 
@@ -1021,75 +1082,6 @@ fn wait_for_process_exit(process_id: u32, timeout: Duration) -> Result<(), SelfU
 #[cfg(not(windows))]
 fn wait_for_process_exit(_process_id: u32, _timeout: Duration) -> Result<(), SelfUpdateError> {
     Err(SelfUpdateError::WaitFailed)
-}
-
-#[cfg(windows)]
-fn wait_for_process_ready(
-    process_id: u32,
-    ready: &Path,
-    timeout: Duration,
-) -> Result<(), SelfUpdateError> {
-    use windows::Win32::{
-        Foundation::{CloseHandle, WAIT_OBJECT_0},
-        System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
-    };
-
-    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, process_id) }
-        .map_err(|_| SelfUpdateError::RelaunchFailed)?;
-    let deadline = std::time::Instant::now() + timeout;
-    let result = loop {
-        if ready_file_exists(ready) {
-            break Ok(());
-        }
-        if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0
-            || std::time::Instant::now() >= deadline
-        {
-            break Err(SelfUpdateError::RelaunchFailed);
-        }
-        thread::sleep(Duration::from_millis(25));
-    };
-    let _ = unsafe { CloseHandle(handle) };
-    result
-}
-
-#[cfg(not(windows))]
-fn wait_for_process_ready(
-    _process_id: u32,
-    _ready: &Path,
-    _timeout: Duration,
-) -> Result<(), SelfUpdateError> {
-    Err(SelfUpdateError::RelaunchFailed)
-}
-
-#[cfg(windows)]
-fn terminate_process(process_id: u32) -> Result<(), SelfUpdateError> {
-    use windows::Win32::{
-        Foundation::{CloseHandle, WAIT_OBJECT_0},
-        System::Threading::{
-            OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
-            PROCESS_TERMINATE,
-        },
-    };
-
-    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, process_id) }
-        .map_err(|_| SelfUpdateError::RelaunchFailed)?;
-    let result = if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
-        Ok(())
-    } else {
-        match unsafe { TerminateProcess(handle, 1) } {
-            Ok(()) => (unsafe { WaitForSingleObject(handle, 5_000) } == WAIT_OBJECT_0)
-                .then_some(())
-                .ok_or(SelfUpdateError::RelaunchFailed),
-            Err(_) => Err(SelfUpdateError::RelaunchFailed),
-        }
-    };
-    let _ = unsafe { CloseHandle(handle) };
-    result
-}
-
-#[cfg(not(windows))]
-fn terminate_process(_process_id: u32) -> Result<(), SelfUpdateError> {
-    Err(SelfUpdateError::RelaunchFailed)
 }
 
 #[cfg(windows)]
