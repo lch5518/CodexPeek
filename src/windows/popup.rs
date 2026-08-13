@@ -75,10 +75,9 @@ pub(crate) struct PopupForecastLine {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct UsagePopupPresentation {
     pub(crate) profile_label: String,
-    pub(crate) usage_label: Option<String>,
-    pub(crate) metric_percent: Option<u8>,
     pub(crate) reset_label: String,
     pub(crate) reset_text: Option<String>,
+    pub(crate) forecast_label: String,
     pub(crate) pace_summary: String,
     pub(crate) pace_detail: Option<String>,
     pub(crate) forecasts: Vec<PopupForecastLine>,
@@ -93,46 +92,27 @@ pub(crate) fn usage_popup_presentation(
     language: Language,
 ) -> UsagePopupPresentation {
     let row = view.secondary.as_ref().or(view.primary.as_ref());
-    let metric_percent = row.map(|row| row.display_percent.clamp(0.0, 100.0).round() as u8);
-    let forecast = |label: crate::LocalizationKey,
-                    row: Option<&super::UsageRowView>|
-     -> Option<PopupForecastLine> {
-        row.and_then(|row| row.forecast.line())
-            .map(|detail| PopupForecastLine {
-                label: crate::localized_text(label, language).to_owned(),
-                detail: detail.to_owned(),
-            })
-    };
-
-    let metric_label = if view.show_remaining_percent {
-        crate::app::remaining_usage_label(language)
-    } else {
-        crate::app::current_usage_label(language)
-    };
+    let forecast =
+        |kind: crate::WindowKind, row: Option<&super::UsageRowView>| -> Option<PopupForecastLine> {
+            row.and_then(|row| row.forecast.line())
+                .map(|detail| PopupForecastLine {
+                    label: crate::domain::window_kind_label(kind, language).to_owned(),
+                    detail: detail.to_owned(),
+                })
+        };
 
     UsagePopupPresentation {
         profile_label: view.usage_profile_label.clone(),
-        usage_label: row.map(|_| {
-            format!(
-                "{} · {metric_label}",
-                crate::domain::window_kind_label(crate::WindowKind::Secondary, language)
-            )
-        }),
-        metric_percent,
         reset_label: crate::app::reset_at_label(language).to_owned(),
         reset_text: row
             .and_then(|row| (!row.reset_text.is_empty()).then(|| row.reset_text.clone())),
+        forecast_label: crate::localized_text(crate::LocalizationKey::MenuUsageForecast, language)
+            .to_owned(),
         pace_summary: view.consumption_pace.summary.clone(),
         pace_detail: view.consumption_pace.detail.clone(),
         forecasts: [
-            forecast(
-                crate::LocalizationKey::PrimaryWindowLabel,
-                view.primary.as_ref(),
-            ),
-            forecast(
-                crate::LocalizationKey::SecondaryWindowLabel,
-                view.secondary.as_ref(),
-            ),
+            forecast(crate::WindowKind::Primary, view.primary.as_ref()),
+            forecast(crate::WindowKind::Secondary, view.secondary.as_ref()),
         ]
         .into_iter()
         .flatten()
@@ -278,25 +258,21 @@ mod tests {
     }
 
     #[test]
-    fn presentation_prefers_weekly_row_and_shows_remaining_metric() {
+    fn presentation_prefers_weekly_reset_and_uses_semantic_forecast_rows() {
         let presentation = usage_popup_presentation(&ready_view(), Language::English);
 
         assert_eq!(presentation.profile_label, "Work");
-        assert_eq!(
-            presentation.usage_label.as_deref(),
-            Some("Weekly · Remaining")
-        );
-        assert_eq!(presentation.metric_percent, Some(66));
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-18 10:23"));
+        assert_eq!(presentation.forecast_label, "Usage forecasting");
         assert_eq!(
             presentation.forecasts,
             vec![
                 PopupForecastLine {
-                    label: "Primary window".to_owned(),
+                    label: "Short".to_owned(),
                     detail: "Collecting primary samples".to_owned(),
                 },
                 PopupForecastLine {
-                    label: "Secondary window".to_owned(),
+                    label: "Weekly".to_owned(),
                     detail: "About 52% will remain".to_owned(),
                 },
             ]
@@ -304,44 +280,17 @@ mod tests {
     }
 
     #[test]
-    fn presentation_shows_current_metric_when_widget_uses_current_usage() {
+    fn presentation_uses_primary_reset_when_weekly_row_is_missing() {
         let mut view = ready_view();
-        view.show_remaining_percent = false;
-        for row in [&mut view.primary, &mut view.secondary]
-            .into_iter()
-            .flatten()
-        {
-            row.display_percent = row.used_percent;
-        }
+        view.secondary = None;
 
         let presentation = usage_popup_presentation(&view, Language::English);
 
-        assert_eq!(
-            presentation.usage_label.as_deref(),
-            Some("Weekly · Current usage")
-        );
-        assert_eq!(presentation.metric_percent, Some(34));
+        assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-11 15:00"));
     }
 
     #[test]
-    fn weekly_heading_uses_the_localized_semantic_label_in_every_language() {
-        for &language in Language::ALL {
-            let presentation = usage_popup_presentation(&ready_view(), language);
-            let period = crate::UsageWindow::new(crate::WindowKind::Secondary, 0.0, None, None)
-                .expect("valid semantic weekly window")
-                .period_label(language);
-            let expected = format!("{period} · {}", crate::app::remaining_usage_label(language));
-
-            assert_eq!(
-                presentation.usage_label.as_deref(),
-                Some(expected.as_str()),
-                "language={language:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn presentation_uses_empty_metrics_when_no_usage_row_exists() {
+    fn presentation_omits_reset_and_forecasts_when_no_usage_row_exists() {
         let mut view = ready_view();
         view.primary = None;
         view.secondary = None;
@@ -349,8 +298,6 @@ mod tests {
 
         let presentation = usage_popup_presentation(&view, Language::English);
 
-        assert_eq!(presentation.usage_label, None);
-        assert_eq!(presentation.metric_percent, None);
         assert_eq!(presentation.reset_text, None);
         assert!(presentation.forecasts.is_empty());
     }

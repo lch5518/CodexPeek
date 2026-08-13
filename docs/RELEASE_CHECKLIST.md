@@ -137,13 +137,14 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Windows autostart enable, verify, disable, and uninstall cleanup
 - [ ] Tray icon cleanup on every normal exit path
 - [ ] Hover the taskbar and floating widgets in light and dark mode; verify the Fluent detail popup
-      stays inside the active monitor, shows only the metric selected for the widget, remains open
-      past the native five-second tooltip timeout while the pointer stays over the widget, and
-      closes without flicker after the pointer leaves.
+      stays inside the active monitor, shows account/reset followed by one usage-forecast section,
+      does not repeat the weekly usage metric or progress bar, keeps Short and Weekly rows in that
+      section, remains open past the native five-second tooltip timeout while the pointer stays over
+      the widget, and closes without flicker after the pointer leaves.
 - [ ] Verify the hover popup omits the profile sign-in scope note and routine polling status while
       profile login confirmations still explain the unchanged Codex CLI and IDE sign-ins.
-- [ ] Verify every supported language at 100/125/150/200% DPI; confirm the localized weekly label
-      and long pace details wrap without clipping or overlapping the following section.
+- [ ] At 100/125/150/200% DPI, verify long Korean, English, and RTL pace and forecast details wrap
+      without ellipsis, clipping, or overlapping the following row.
 - [ ] Open every right-click submenu with mouse and keyboard; verify selection, check marks, RTL
       arrows, Escape dismissal, and native high-contrast/screen-reader fallback.
 

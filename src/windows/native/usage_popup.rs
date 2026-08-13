@@ -36,37 +36,55 @@ use crate::windows::{
 };
 
 const USAGE_POPUP_CLASS: PCWSTR = w!("CodexUsageMonitor.UsagePopup.v1");
-const PACE_DETAIL_TOP_LOGICAL: i32 = 178;
-const FORECAST_TOP_WITHOUT_DETAIL_LOGICAL: i32 = 214;
+const PACE_SUMMARY_TOP_LOGICAL: i32 = 106;
+const PACE_DETAIL_GAP_LOGICAL: i32 = 4;
 const FORECAST_GAP_LOGICAL: i32 = 8;
-const FORECAST_SECTION_HEIGHT_LOGICAL: i32 = 60;
-const PACE_DETAIL_FALLBACK_HEIGHT_LOGICAL: i32 = 80;
+const WRAPPED_TEXT_FALLBACK_HEIGHT_LOGICAL: i32 = 80;
 
 #[derive(Clone, Copy)]
+struct TextBlockLayout {
+    top: i32,
+    height: i32,
+}
+
+#[derive(Clone, Copy)]
+struct ForecastRowLayout {
+    top: i32,
+    detail_height: i32,
+}
+
 struct PopupLayout {
     width: i32,
     height: i32,
-    pace_detail_height: Option<i32>,
-    forecast_top: i32,
+    pace_summary: TextBlockLayout,
+    pace_detail: Option<TextBlockLayout>,
+    forecast_rows: Vec<ForecastRowLayout>,
 }
 
-fn forecast_top_for_detail(detail_height: Option<i32>, dpi: u32) -> i32 {
-    let minimum = logical_to_physical(FORECAST_TOP_WITHOUT_DETAIL_LOGICAL, dpi);
+fn forecast_row_height(detail_height: i32, dpi: u32) -> i32 {
     detail_height
-        .map(|height| {
-            logical_to_physical(PACE_DETAIL_TOP_LOGICAL, dpi)
-                .saturating_add(height.max(0))
-                .saturating_add(logical_to_physical(FORECAST_GAP_LOGICAL, dpi))
-        })
-        .unwrap_or(minimum)
-        .max(minimum)
+        .max(0)
+        .saturating_add(logical_to_physical(24, dpi))
 }
 
-fn popup_height_for_forecasts(forecast_top: i32, forecast_count: usize, dpi: u32) -> i32 {
-    let section_count = i32::try_from(forecast_count).unwrap_or(i32::MAX);
-    forecast_top.saturating_add(
-        logical_to_physical(FORECAST_SECTION_HEIGHT_LOGICAL, dpi).saturating_mul(section_count),
-    )
+fn popup_height_for_content(content_bottom: i32, dpi: u32) -> i32 {
+    content_bottom
+        .max(0)
+        .saturating_add(logical_to_physical(20, dpi))
+}
+
+fn pace_detail_top(summary_height: i32, dpi: u32) -> i32 {
+    logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi)
+        .saturating_add(summary_height.max(0))
+        .saturating_add(logical_to_physical(PACE_DETAIL_GAP_LOGICAL, dpi))
+}
+
+fn popup_render_size(requested: (i32, i32), bounds: Rect) -> Option<(i32, i32)> {
+    (requested.0 > 0
+        && requested.1 > 0
+        && requested.0 <= bounds.width()
+        && requested.1 <= bounds.height())
+    .then_some(requested)
 }
 
 /// 상세 팝업 전용 창 클래스를 현재 프로세스에 등록합니다.
@@ -102,16 +120,6 @@ pub(super) unsafe fn show(
     rtl: bool,
 ) -> io::Result<HWND> {
     let dpi = GetDpiForWindow(widget).max(96);
-    let width = logical_to_physical(POPUP_WIDTH_LOGICAL, dpi);
-    let pace_detail_height = measure_pace_detail_height(presentation, width, dpi, rtl);
-    let forecast_top = forecast_top_for_detail(pace_detail_height, dpi);
-    let height = popup_height_for_forecasts(forecast_top, presentation.forecasts.len(), dpi);
-    let layout = PopupLayout {
-        width,
-        height,
-        pace_detail_height,
-        forecast_top,
-    };
     let mut anchor = RECT::default();
     GetWindowRect(widget, &mut anchor).map_err(win_error)?;
     let monitor = MonitorFromWindow(widget, MONITOR_DEFAULTTONEAREST);
@@ -122,6 +130,70 @@ pub(super) unsafe fn show(
     if !GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
         return Err(io::Error::last_os_error());
     }
+    let margin = logical_to_physical(8, dpi);
+    let available_width = (monitor_info.rcWork.right - monitor_info.rcWork.left)
+        .saturating_sub(margin.saturating_mul(2))
+        .max(0);
+    let width = logical_to_physical(POPUP_WIDTH_LOGICAL, dpi).min(available_width);
+    let padding = logical_to_physical(20, dpi);
+    let text_width = width
+        .saturating_sub(padding.saturating_mul(2))
+        .saturating_sub(logical_to_physical(36, dpi))
+        .saturating_sub(logical_to_physical(12, dpi))
+        .max(1);
+    let pace_summary = TextBlockLayout {
+        top: logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi),
+        height: measure_wrapped_text_height(
+            &presentation.pace_summary,
+            text_width,
+            13,
+            FW_SEMIBOLD.0 as i32,
+            dpi,
+            rtl,
+        ),
+    };
+    let pace_detail_top = pace_detail_top(pace_summary.height, dpi);
+    let pace_detail = presentation
+        .pace_detail
+        .as_deref()
+        .map(|detail| TextBlockLayout {
+            top: pace_detail_top,
+            height: measure_wrapped_text_height(
+                detail,
+                text_width,
+                11,
+                FW_NORMAL.0 as i32,
+                dpi,
+                rtl,
+            ),
+        });
+    let mut content_bottom = pace_detail
+        .map(|detail| detail.top.saturating_add(detail.height))
+        .unwrap_or(pace_detail_top)
+        .saturating_add(logical_to_physical(FORECAST_GAP_LOGICAL, dpi));
+    let mut forecast_rows = Vec::with_capacity(presentation.forecasts.len());
+    for forecast in &presentation.forecasts {
+        let detail_height = measure_wrapped_text_height(
+            &forecast.detail,
+            text_width,
+            11,
+            FW_NORMAL.0 as i32,
+            dpi,
+            rtl,
+        );
+        forecast_rows.push(ForecastRowLayout {
+            top: content_bottom,
+            detail_height,
+        });
+        content_bottom = content_bottom.saturating_add(forecast_row_height(detail_height, dpi));
+    }
+    let layout = PopupLayout {
+        width,
+        height: popup_height_for_content(content_bottom, dpi),
+        pace_summary,
+        pace_detail,
+        forecast_rows,
+    };
     let bounds = place_popup(
         Rect::new(anchor.left, anchor.top, anchor.right, anchor.bottom),
         Rect::new(
@@ -131,9 +203,16 @@ pub(super) unsafe fn show(
             monitor_info.rcWork.bottom,
         ),
         (layout.width, layout.height),
-        logical_to_physical(8, dpi),
+        margin,
         logical_to_physical(8, dpi),
     );
+    let render_size =
+        popup_render_size((layout.width, layout.height), bounds).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "popup content does not fit the monitor work area",
+            )
+        })?;
     let title: Vec<u16> = presentation
         .profile_label
         .encode_utf16()
@@ -154,7 +233,15 @@ pub(super) unsafe fn show(
         None,
     )
     .map_err(win_error)?;
-    if let Err(error) = render(hwnd, presentation, popup_palette(light), dpi, rtl, layout) {
+    if let Err(error) = render(
+        hwnd,
+        presentation,
+        popup_palette(light),
+        dpi,
+        rtl,
+        &layout,
+        render_size,
+    ) {
         let _ = DestroyWindow(hwnd);
         return Err(error);
     }
@@ -178,50 +265,52 @@ unsafe extern "system" fn popup_proc(
     DefWindowProcW(hwnd, message, wparam, lparam)
 }
 
-/// 소비 속도 상세 문구를 현재 DPI와 글꼴로 측정해 필요한 실제 높이를 반환합니다.
+/// 줄바꿈 문구를 현재 DPI와 글꼴로 측정해 필요한 실제 높이를 반환합니다.
 ///
-/// `presentation`에 상세 문구가 없으면 `None`을 반환합니다. 화면 DC 또는 글꼴 측정이 실패하면
-/// 문구가 잘리지 않도록 보수적인 4줄 높이를 사용하며, 생성한 GDI 객체와 DC는 호출 안에서 정리합니다.
-unsafe fn measure_pace_detail_height(
-    presentation: &UsagePopupPresentation,
-    popup_width: i32,
+/// `value`는 표시할 문구이고 `text_width`는 물리 픽셀 단위의 최대 너비입니다. 빈 문구는 0을
+/// 반환합니다. 화면 DC 또는 글꼴 측정이 실패하면 문구가 잘리지 않도록 보수적인 4줄 높이를
+/// 사용하며, 생성한 GDI 객체와 DC는 호출 안에서 정리합니다.
+unsafe fn measure_wrapped_text_height(
+    value: &str,
+    text_width: i32,
+    font_size: i32,
+    font_weight: i32,
     dpi: u32,
     rtl: bool,
-) -> Option<i32> {
-    let detail = presentation.pace_detail.as_deref()?;
-    let padding = logical_to_physical(20, dpi);
-    let icon = logical_to_physical(36, dpi);
-    let gap = logical_to_physical(12, dpi);
-    let text_width = popup_width
-        .saturating_sub(padding.saturating_mul(2))
-        .saturating_sub(icon)
-        .saturating_sub(gap)
-        .max(1);
-    let fallback = logical_to_physical(PACE_DETAIL_FALLBACK_HEIGHT_LOGICAL, dpi);
+) -> i32 {
+    if value.is_empty() {
+        return 0;
+    }
+    let fallback = logical_to_physical(WRAPPED_TEXT_FALLBACK_HEIGHT_LOGICAL, dpi);
     let dc = GetDC(None);
     if dc == HDC::default() {
-        return Some(fallback);
+        return fallback;
     }
 
-    let font = popup_font(dc, 11, FW_NORMAL.0 as i32, dpi);
+    let font = popup_font(dc, font_size, font_weight, dpi);
     let old_font = SelectObject(dc, font);
-    let mut text: Vec<u16> = detail.encode_utf16().collect();
+    let mut text: Vec<u16> = value.encode_utf16().collect();
     let mut rect = RECT {
         left: 0,
         top: 0,
-        right: text_width,
+        right: text_width.max(1),
         bottom: 0,
     };
-    let measured = DrawTextW(dc, &mut text, &mut rect, pace_detail_measure_format(rtl));
+    let measured = DrawTextW(
+        dc,
+        &mut text,
+        &mut rect,
+        wrapped_text_format(rtl) | DT_CALCRECT,
+    );
     SelectObject(dc, old_font);
     let _ = DeleteObject(font);
     let _ = ReleaseDC(None, dc);
 
-    Some(if measured > 0 {
-        measured.saturating_add(logical_to_physical(2, dpi))
+    if measured > 0 {
+        measured
     } else {
         fallback
-    })
+    }
 }
 
 unsafe fn render(
@@ -230,12 +319,13 @@ unsafe fn render(
     palette: PopupPalette,
     dpi: u32,
     rtl: bool,
-    layout: PopupLayout,
+    layout: &PopupLayout,
+    render_size: (i32, i32),
 ) -> io::Result<()> {
-    let pixel_count = usize::try_from(layout.width)
+    let pixel_count = usize::try_from(render_size.0)
         .ok()
         .and_then(|width| {
-            usize::try_from(layout.height)
+            usize::try_from(render_size.1)
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
@@ -245,8 +335,8 @@ unsafe fn render(
     let bitmap_info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: layout.width,
-            biHeight: -layout.height,
+            biWidth: render_size.0,
+            biHeight: -render_size.1,
             biPlanes: 1,
             biBitCount: 32,
             ..Default::default()
@@ -278,18 +368,26 @@ unsafe fn render(
         return Err(io::Error::last_os_error());
     }
     let old_bitmap = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
-    paint_content(memory_dc, presentation, palette, dpi, rtl, layout);
+    paint_content(
+        memory_dc,
+        presentation,
+        palette,
+        dpi,
+        rtl,
+        layout,
+        render_size,
+    );
     apply_surface_alpha(
         std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
-        layout.width,
-        layout.height,
+        render_size.0,
+        render_size.1,
         logical_to_physical(14, dpi),
         palette.background,
     );
     let source = POINT { x: 0, y: 0 };
     let size = SIZE {
-        cx: layout.width,
-        cy: layout.height,
+        cx: render_size.0,
+        cy: render_size.1,
     };
     let blend = BLENDFUNCTION {
         BlendOp: 0,
@@ -322,10 +420,11 @@ unsafe fn paint_content(
     palette: PopupPalette,
     dpi: u32,
     rtl: bool,
-    layout: PopupLayout,
+    layout: &PopupLayout,
+    render_size: (i32, i32),
 ) {
-    let width = layout.width;
-    let height = layout.height;
+    let width = render_size.0;
+    let height = render_size.1;
     fill(dc, Rect::new(0, 0, width, height), palette.background);
     let padding = logical_to_physical(20, dpi);
     let icon = logical_to_physical(36, dpi);
@@ -345,50 +444,16 @@ unsafe fn paint_content(
     };
     let section = |logical: i32| logical_to_physical(logical, dpi);
 
-    draw_icon(dc, icon_rect(section(8)), "\u{E77B}", palette, dpi);
+    draw_icon(dc, icon_rect(section(12)), "\u{E77B}", palette, dpi);
     draw_text(
         dc,
         &presentation.profile_label,
-        text_rect(section(12), section(38)),
+        text_rect(section(10), section(34)),
         popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
         palette.text,
         rtl,
         true,
     );
-    separator(dc, section(48), width, padding, palette.separator);
-
-    draw_icon(dc, icon_rect(section(58)), "\u{E9D2}", palette, dpi);
-    draw_text(
-        dc,
-        presentation.usage_label.as_deref().unwrap_or("Codex usage"),
-        text_rect(section(54), section(76)),
-        popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
-        palette.text,
-        rtl,
-        true,
-    );
-    draw_percent(
-        dc,
-        Rect::new(text_left, section(78), text_right, section(114)),
-        presentation.metric_percent,
-        palette,
-        dpi,
-        rtl,
-    );
-    let track = Rect::new(text_left, section(118), text_right, section(122));
-    fill(dc, track, palette.separator);
-    if let Some(percent) = presentation.metric_percent {
-        fill(
-            dc,
-            Rect::new(
-                track.left,
-                track.top,
-                track.left + (track.width() * i32::from(percent)) / 100,
-                track.bottom,
-            ),
-            palette.accent,
-        );
-    }
     let reset = presentation
         .reset_text
         .as_deref()
@@ -397,94 +462,74 @@ unsafe fn paint_content(
     draw_text(
         dc,
         &reset,
-        text_rect(section(125), section(143)),
+        text_rect(section(34), section(56)),
         popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
         palette.secondary_text,
         rtl,
         true,
     );
-    separator(dc, section(150), width, padding, palette.separator);
+    separator(dc, section(68), width, padding, palette.separator);
 
-    draw_icon(dc, icon_rect(section(160)), "\u{E9D9}", palette, dpi);
+    draw_icon(dc, icon_rect(section(80)), "\u{E95E}", palette, dpi);
     draw_text(
         dc,
-        &presentation.pace_summary,
-        text_rect(section(156), section(178)),
-        popup_font(dc, 13, FW_SEMIBOLD.0 as i32, dpi),
+        &presentation.forecast_label,
+        text_rect(section(78), section(104)),
+        popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
         palette.text,
         rtl,
         true,
     );
-    if let (Some(detail), Some(detail_height)) = (
-        presentation.pace_detail.as_deref(),
-        layout.pace_detail_height,
-    ) {
-        let detail_top = section(PACE_DETAIL_TOP_LOGICAL);
+    draw_formatted_text(
+        dc,
+        &presentation.pace_summary,
+        text_rect(
+            layout.pace_summary.top,
+            layout
+                .pace_summary
+                .top
+                .saturating_add(layout.pace_summary.height),
+        ),
+        popup_font(dc, 13, FW_SEMIBOLD.0 as i32, dpi),
+        palette.text,
+        wrapped_text_format(rtl),
+    );
+    if let (Some(detail), Some(detail_layout)) =
+        (presentation.pace_detail.as_deref(), layout.pace_detail)
+    {
         draw_formatted_text(
             dc,
             detail,
-            text_rect(detail_top, detail_top.saturating_add(detail_height)),
+            text_rect(
+                detail_layout.top,
+                detail_layout.top.saturating_add(detail_layout.height),
+            ),
             popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
             palette.secondary_text,
-            pace_detail_text_format(rtl),
+            wrapped_text_format(rtl),
         );
     }
 
-    let mut top = layout.forecast_top;
-    for forecast in &presentation.forecasts {
-        separator(dc, top, width, padding, palette.separator);
-        draw_icon(
-            dc,
-            icon_rect(top.saturating_add(section(12))),
-            "\u{E95E}",
-            palette,
-            dpi,
-        );
+    for (forecast, row) in presentation.forecasts.iter().zip(&layout.forecast_rows) {
         draw_text(
             dc,
             &forecast.label,
-            text_rect(
-                top.saturating_add(section(8)),
-                top.saturating_add(section(30)),
-            ),
+            text_rect(row.top, row.top.saturating_add(section(18))),
             popup_font(dc, 12, FW_SEMIBOLD.0 as i32, dpi),
             palette.text,
             rtl,
             true,
         );
-        draw_text(
+        let detail_top = row.top.saturating_add(section(20));
+        draw_formatted_text(
             dc,
             &forecast.detail,
-            text_rect(
-                top.saturating_add(section(28)),
-                top.saturating_add(section(56)),
-            ),
+            text_rect(detail_top, detail_top.saturating_add(row.detail_height)),
             popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
             palette.secondary_text,
-            rtl,
-            false,
+            wrapped_text_format(rtl),
         );
-        top = top.saturating_add(section(FORECAST_SECTION_HEIGHT_LOGICAL));
     }
-}
-
-unsafe fn draw_percent(
-    dc: HDC,
-    rect: Rect,
-    percent: Option<u8>,
-    palette: PopupPalette,
-    dpi: u32,
-    rtl: bool,
-) {
-    draw_text(
-        dc,
-        &percent.map_or_else(|| "--".to_owned(), |value| format!("{value}%")),
-        rect,
-        popup_font(dc, 15, FW_SEMIBOLD.0 as i32, dpi),
-        palette.accent,
-        rtl,
-        true,
-    );
 }
 
 unsafe fn draw_icon(dc: HDC, rect: Rect, glyph: &str, palette: PopupPalette, dpi: u32) {
@@ -509,22 +554,13 @@ fn icon_text_format() -> DRAW_TEXT_FORMAT {
     DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX
 }
 
-fn pace_detail_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
+fn wrapped_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
     let alignment = if rtl {
         DT_RIGHT | DT_RTLREADING
     } else {
         DT_LEFT
     };
-    alignment | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX
-}
-
-fn pace_detail_measure_format(rtl: bool) -> DRAW_TEXT_FORMAT {
-    let alignment = if rtl {
-        DT_RIGHT | DT_RTLREADING
-    } else {
-        DT_LEFT
-    };
-    alignment | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT
+    alignment | DT_WORDBREAK | DT_NOPREFIX
 }
 
 unsafe fn separator(dc: HDC, y: i32, width: i32, padding: i32, color: u32) {
@@ -692,14 +728,15 @@ fn win_error(_: windows::core::Error) -> io::Error {
 #[cfg(test)]
 mod tests {
     use windows::Win32::Graphics::Gdi::{
-        DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE,
-        DT_VCENTER, DT_WORDBREAK,
+        DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER,
+        DT_WORDBREAK,
     };
 
     use super::{
-        forecast_top_for_detail, icon_text_format, pace_detail_text_format,
-        popup_height_for_forecasts, rounded_surface_alpha,
+        forecast_row_height, icon_text_format, pace_detail_top, popup_height_for_content,
+        popup_render_size, rounded_surface_alpha, wrapped_text_format,
     };
+    use crate::windows::widget::Rect;
 
     #[test]
     fn rounded_surface_keeps_center_opaque_and_corners_transparent() {
@@ -717,21 +754,39 @@ mod tests {
     }
 
     #[test]
-    fn pace_detail_uses_wrapping_in_ltr_and_rtl() {
+    fn long_detail_text_wraps_without_ellipsis_in_ltr_and_rtl() {
         assert_eq!(
-            pace_detail_text_format(false),
-            DT_LEFT | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX
+            wrapped_text_format(false),
+            DT_LEFT | DT_WORDBREAK | DT_NOPREFIX
         );
         assert_eq!(
-            pace_detail_text_format(true),
-            DT_RIGHT | DT_RTLREADING | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX
+            wrapped_text_format(true),
+            DT_RIGHT | DT_RTLREADING | DT_WORDBREAK | DT_NOPREFIX
         );
     }
 
     #[test]
-    fn measured_pace_detail_pushes_following_content_below_text() {
-        assert_eq!(forecast_top_for_detail(None, 96), 214);
-        assert_eq!(forecast_top_for_detail(Some(56), 96), 242);
-        assert_eq!(popup_height_for_forecasts(242, 1, 96), 302);
+    fn measured_content_sets_forecast_rows_and_popup_height() {
+        assert_eq!(forecast_row_height(18, 96), 42);
+        assert_eq!(forecast_row_height(44, 96), 68);
+        assert_eq!(popup_height_for_content(220, 96), 240);
+    }
+
+    #[test]
+    fn wrapped_pace_summary_pushes_the_optional_detail_down() {
+        assert_eq!(pace_detail_top(18, 96), 128);
+        assert_eq!(pace_detail_top(44, 96), 154);
+    }
+
+    #[test]
+    fn oversized_content_uses_the_native_fallback_instead_of_clipping() {
+        assert_eq!(
+            popup_render_size((360, 800), Rect::new(0, 0, 360, 480)),
+            None
+        );
+        assert_eq!(
+            popup_render_size((360, 480), Rect::new(0, 0, 360, 480)),
+            Some((360, 480))
+        );
     }
 }
