@@ -10,6 +10,7 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 ## Highlights
 
 - Shows primary and secondary Codex usage windows, including reset times.
+- Shows up to 14 days of daily token usage as vertical bars when you hover the widget.
 - Estimates when each window may be exhausted from recent successful observations and shows the
   estimate in the usage details and taskbar tooltip.
 - Keeps update checks inside the app: current, failed, and available-release results are shown in
@@ -246,6 +247,8 @@ When forecasting is enabled, successful polls are recorded locally in
 `%APPDATA%\CodexPeek\usage-history.json`. The details and taskbar tooltip show a forecast only
 after enough recent data from the same profile, window, and reset cycle is available. New or
 stale data is labelled as collecting or stale rather than presented as a current estimate.
+The hover details include a vertical daily token usage bar chart when the installed Codex
+app-server provides daily buckets, capped at the latest 14 days.
 
 If the taskbar widget cannot be attached after an Explorer restart or taskbar layout change, the tray icon remains available and the monitor retries safely.
 

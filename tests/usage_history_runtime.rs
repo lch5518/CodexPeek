@@ -86,6 +86,88 @@ fn history_store_round_trips_only_validated_sample_fields() {
 }
 
 #[test]
+fn daily_usage_groups_samples_and_returns_daily_increase() {
+    let now = at(3 * 86_400);
+    let mut history = UsageHistory::default();
+    let profile = UsageProfileId::System;
+
+    for (used, observed_at) in [(10.0, at(3_600)), (25.0, at(7_200))] {
+        assert!(history
+            .record(
+                sample(profile, WindowKind::Secondary, used, None, observed_at, now,),
+                now,
+            )
+            .unwrap()
+            .is_added());
+    }
+    for (used, observed_at) in [(30.0, at(86_400 + 3_600)), (42.0, at(86_400 + 7_200))] {
+        assert!(history
+            .record(
+                sample(profile, WindowKind::Secondary, used, None, observed_at, now,),
+                now,
+            )
+            .unwrap()
+            .is_added());
+    }
+
+    let daily = history.daily_usage_for(profile, WindowKind::Secondary);
+    assert_eq!(daily.len(), 2);
+    assert_eq!(daily[0].day(), 0);
+    assert_eq!(daily[0].increase_percent(), 15.0);
+    assert_eq!(daily[1].day(), 1);
+    assert_eq!(daily[1].increase_percent(), 12.0);
+}
+
+#[test]
+fn daily_usage_keeps_single_sample_as_zero_increase() {
+    let now = at(86_400);
+    let mut history = UsageHistory::default();
+    history
+        .record(
+            sample(
+                UsageProfileId::System,
+                WindowKind::Secondary,
+                37.5,
+                None,
+                at(3_600),
+                now,
+            ),
+            now,
+        )
+        .unwrap();
+
+    let daily = history.daily_usage_for(UsageProfileId::System, WindowKind::Secondary);
+    assert_eq!(daily.len(), 1);
+    assert_eq!(daily[0].increase_percent(), 0.0);
+}
+
+#[test]
+fn daily_usage_is_limited_to_the_latest_fourteen_days() {
+    let now = at(20 * 86_400);
+    let mut history = UsageHistory::default();
+    for day in 0..16 {
+        history
+            .record(
+                sample(
+                    UsageProfileId::System,
+                    WindowKind::Secondary,
+                    day as f64,
+                    None,
+                    at(day * 86_400 + 3_600),
+                    now,
+                ),
+                now,
+            )
+            .unwrap();
+    }
+
+    let daily = history.daily_usage_for(UsageProfileId::System, WindowKind::Secondary);
+    assert_eq!(daily.len(), 14);
+    assert_eq!(daily.first().unwrap().day(), 2);
+    assert_eq!(daily.last().unwrap().day(), 15);
+}
+
+#[test]
 fn empty_corrupt_and_unsupported_history_files_are_quarantined_as_safe_empty_history() {
     let now = at(4_000_000);
     for (label, bytes) in [

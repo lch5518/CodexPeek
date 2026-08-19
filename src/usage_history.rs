@@ -19,6 +19,8 @@ const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SAMPLES_PER_STREAM: usize = 1_000;
 const RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const MINIMUM_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const DAILY_SECONDS: u64 = 24 * 60 * 60;
+const MAX_DAILY_USAGE_DAYS: usize = 14;
 
 /// 저장할 수 없는 사용량 이력 표본의 원인을 나타냅니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,6 +143,37 @@ impl UsageSample {
     }
 }
 
+/// 하루 동안 관측된 사용률의 증가량을 나타내는 값입니다.
+///
+/// `day`는 UNIX epoch부터 계산한 UTC 날짜 번호이고, `increase_percent`는 해당 날짜의
+/// 최댓값과 최솟값의 차이입니다. 이 값은 UI 그래프의 입력으로만 사용되며 원본 샘플을
+/// 변경하지 않습니다.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DailyUsage {
+    day: u64,
+    increase_percent: f64,
+}
+
+impl DailyUsage {
+    /// 집계 결과를 내부 UI 전달용으로 생성합니다.
+    pub(crate) const fn from_parts(day: u64, increase_percent: f64) -> Self {
+        Self {
+            day,
+            increase_percent,
+        }
+    }
+
+    /// 집계된 UTC 날짜 번호를 반환합니다.
+    pub fn day(&self) -> u64 {
+        self.day
+    }
+
+    /// 해당 날짜의 사용률 증가량을 백분율로 반환합니다.
+    pub fn increase_percent(&self) -> f64 {
+        self.increase_percent
+    }
+}
+
 /// 프로필과 사용량 창별로 제한된 표본을 보관하는 메모리 이력입니다.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UsageHistory {
@@ -162,6 +195,41 @@ impl UsageHistory {
         self.samples.iter().filter(move |sample| {
             sample.profile_id == profile_id && sample.window_kind == window_kind
         })
+    }
+
+    /// 지정한 프로필과 사용량 창의 최근 14일 일별 증가량을 반환합니다.
+    ///
+    /// 하루에 여러 샘플이 있으면 최댓값과 최솟값의 차이를 사용하고, 샘플이 하나뿐인
+    /// 날도 0% 증가량으로 포함합니다. 기록이 없는 날짜는 생략하며 반환 순서는 오래된
+    /// 날짜부터 최신 날짜입니다.
+    pub fn daily_usage_for(
+        &self,
+        profile_id: UsageProfileId,
+        window_kind: WindowKind,
+    ) -> Vec<DailyUsage> {
+        let mut days: Vec<(u64, f64, f64)> = Vec::new();
+        for sample in self.samples_for(profile_id, window_kind) {
+            let Some(seconds) = unix_seconds(sample.observed_at) else {
+                continue;
+            };
+            let day = seconds / DAILY_SECONDS;
+            if let Some((last_day, minimum, maximum)) = days.last_mut() {
+                if *last_day == day {
+                    *minimum = minimum.min(sample.used_percent);
+                    *maximum = maximum.max(sample.used_percent);
+                    continue;
+                }
+            }
+            days.push((day, sample.used_percent, sample.used_percent));
+        }
+
+        let first = days.len().saturating_sub(MAX_DAILY_USAGE_DAYS);
+        days.into_iter()
+            .skip(first)
+            .map(|(day, minimum, maximum)| {
+                DailyUsage::from_parts(day, (maximum - minimum).max(0.0))
+            })
+            .collect()
     }
 
     /// 검증된 표본을 기록하고 중복·최소 간격·보존 범위를 적용합니다.

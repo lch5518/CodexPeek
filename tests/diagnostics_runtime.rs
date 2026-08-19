@@ -143,6 +143,7 @@ fn diagnostic_usage() -> CodexUsage {
         secondary: None,
         reset_credits: None,
         fetched_at: SystemTime::now(),
+        daily_token_usage: Vec::new(),
     }
 }
 

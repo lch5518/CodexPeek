@@ -39,6 +39,14 @@ const USAGE_POPUP_CLASS: PCWSTR = w!("CodexUsageMonitor.UsagePopup.v1");
 const PACE_SUMMARY_TOP_LOGICAL: i32 = 106;
 const PACE_DETAIL_GAP_LOGICAL: i32 = 4;
 const FORECAST_GAP_LOGICAL: i32 = 8;
+const DAILY_USAGE_GAP_LOGICAL: i32 = 12;
+const DAILY_USAGE_HEIGHT_LOGICAL: i32 = 92;
+const DAILY_USAGE_CHART_HEIGHT_LOGICAL: i32 = 53;
+const DAILY_USAGE_TITLE_HEIGHT_LOGICAL: i32 = 18;
+const DAILY_USAGE_CHART_GAP_LOGICAL: i32 = 4;
+const DAILY_USAGE_DATE_GAP_LOGICAL: i32 = 3;
+const DAILY_USAGE_DATE_HEIGHT_LOGICAL: i32 = 14;
+const DAILY_USAGE_MIN_BAR_HEIGHT_PX: i32 = 4;
 const WRAPPED_TEXT_FALLBACK_HEIGHT_LOGICAL: i32 = 80;
 
 #[derive(Clone, Copy)]
@@ -53,11 +61,18 @@ struct ForecastRowLayout {
     detail_height: i32,
 }
 
+#[derive(Clone, Copy)]
+struct DailyUsageLayout {
+    top: i32,
+    height: i32,
+}
+
 struct PopupLayout {
     width: i32,
     height: i32,
     pace_summary: TextBlockLayout,
     pace_detail: Option<TextBlockLayout>,
+    daily_usage: Option<DailyUsageLayout>,
     forecast_rows: Vec<ForecastRowLayout>,
 }
 
@@ -77,6 +92,65 @@ fn pace_detail_top(summary_height: i32, dpi: u32) -> i32 {
     logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi)
         .saturating_add(summary_height.max(0))
         .saturating_add(logical_to_physical(PACE_DETAIL_GAP_LOGICAL, dpi))
+}
+
+fn daily_usage_top(content_bottom: i32, dpi: u32) -> i32 {
+    content_bottom.saturating_add(logical_to_physical(DAILY_USAGE_GAP_LOGICAL, dpi))
+}
+
+fn daily_usage_height(dpi: u32) -> i32 {
+    logical_to_physical(DAILY_USAGE_HEIGHT_LOGICAL, dpi)
+}
+
+fn daily_usage_chart_height(dpi: u32) -> i32 {
+    logical_to_physical(DAILY_USAGE_CHART_HEIGHT_LOGICAL, dpi)
+}
+
+fn daily_date_indices(count: usize) -> Vec<usize> {
+    match count {
+        0 => Vec::new(),
+        1..=3 => (0..count).collect(),
+        count => vec![0, count / 2, count - 1],
+    }
+}
+
+fn daily_date_label(start_date: &str) -> String {
+    let date = start_date.split('T').next().unwrap_or(start_date);
+    let mut parts = date.split('-');
+    let day_prefix = parts
+        .clone()
+        .nth(2)
+        .map(|day| day.chars().take(2).collect::<String>());
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(_year), Some(month), Some(_day))
+            if month.len() == 2
+                && day_prefix.as_deref().is_some_and(|day| {
+                    day.len() == 2 && day.chars().all(|c| c.is_ascii_digit())
+                }) =>
+        {
+            format!("{month}/{}", day_prefix.unwrap_or_default())
+        }
+        _ => date.to_owned(),
+    }
+}
+
+fn daily_date_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
+    let direction = if rtl {
+        DT_RTLREADING
+    } else {
+        DRAW_TEXT_FORMAT(0)
+    };
+    DT_CENTER | DT_SINGLELINE | DT_VCENTER | direction | DT_NOPREFIX
+}
+
+fn daily_usage_bar_height(value: u64, maximum: u64, chart_height: i32) -> i32 {
+    let ratio = if maximum > 0 {
+        (value.min(maximum) as f64 / maximum as f64).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    ((f64::from(chart_height.max(0)) * ratio).round() as i32)
+        .max(DAILY_USAGE_MIN_BAR_HEIGHT_PX.min(chart_height.max(0)))
 }
 
 fn popup_render_size(requested: (i32, i32), bounds: Rect) -> Option<(i32, i32)> {
@@ -169,8 +243,18 @@ pub(super) unsafe fn show(
         });
     let mut content_bottom = pace_detail
         .map(|detail| detail.top.saturating_add(detail.height))
-        .unwrap_or(pace_detail_top)
-        .saturating_add(logical_to_physical(FORECAST_GAP_LOGICAL, dpi));
+        .unwrap_or(pace_detail_top);
+    let daily_usage = (!presentation.daily_token_usage.is_empty()).then(|| {
+        let top = daily_usage_top(content_bottom, dpi);
+        DailyUsageLayout {
+            top,
+            height: daily_usage_height(dpi),
+        }
+    });
+    if let Some(daily_usage) = daily_usage {
+        content_bottom = daily_usage.top.saturating_add(daily_usage.height);
+    }
+    content_bottom = content_bottom.saturating_add(logical_to_physical(FORECAST_GAP_LOGICAL, dpi));
     let mut forecast_rows = Vec::with_capacity(presentation.forecasts.len());
     for forecast in &presentation.forecasts {
         let detail_height = measure_wrapped_text_height(
@@ -192,6 +276,7 @@ pub(super) unsafe fn show(
         height: popup_height_for_content(content_bottom, dpi),
         pace_summary,
         pace_detail,
+        daily_usage,
         forecast_rows,
     };
     let bounds = place_popup(
@@ -510,6 +595,60 @@ unsafe fn paint_content(
         );
     }
 
+    if let Some(daily_layout) = layout.daily_usage {
+        let daily_rect = text_rect(
+            daily_layout.top,
+            daily_layout.top.saturating_add(daily_layout.height),
+        );
+        draw_text(
+            dc,
+            &presentation.daily_usage_label,
+            Rect::new(
+                daily_rect.left,
+                daily_rect.top,
+                daily_rect.right,
+                daily_rect
+                    .top
+                    .saturating_add(section(DAILY_USAGE_TITLE_HEIGHT_LOGICAL)),
+            ),
+            popup_font(dc, 11, FW_SEMIBOLD.0 as i32, dpi),
+            palette.text,
+            rtl,
+            true,
+        );
+        let chart_top = daily_rect.top.saturating_add(section(
+            DAILY_USAGE_TITLE_HEIGHT_LOGICAL + DAILY_USAGE_CHART_GAP_LOGICAL,
+        ));
+        let chart_bottom = chart_top
+            .saturating_add(daily_usage_chart_height(dpi))
+            .min(daily_rect.bottom);
+        paint_daily_usage(
+            dc,
+            &presentation.daily_token_usage,
+            Rect::new(daily_rect.left, chart_top, daily_rect.right, chart_bottom),
+            palette,
+            dpi,
+            rtl,
+        );
+        let date_top =
+            chart_bottom.saturating_add(logical_to_physical(DAILY_USAGE_DATE_GAP_LOGICAL, dpi));
+        paint_daily_dates(
+            dc,
+            &presentation.daily_token_usage,
+            Rect::new(
+                daily_rect.left,
+                date_top,
+                daily_rect.right,
+                date_top
+                    .saturating_add(logical_to_physical(DAILY_USAGE_DATE_HEIGHT_LOGICAL, dpi))
+                    .min(daily_rect.bottom),
+            ),
+            palette,
+            dpi,
+            rtl,
+        );
+    }
+
     for (forecast, row) in presentation.forecasts.iter().zip(&layout.forecast_rows) {
         draw_text(
             dc,
@@ -528,6 +667,99 @@ unsafe fn paint_content(
             popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
             palette.secondary_text,
             wrapped_text_format(rtl),
+        );
+    }
+}
+
+unsafe fn paint_daily_usage(
+    dc: HDC,
+    daily_usage: &[crate::DailyTokenUsage],
+    chart: Rect,
+    palette: PopupPalette,
+    dpi: u32,
+    rtl: bool,
+) {
+    if daily_usage.is_empty() || chart.width() <= 0 || chart.height() <= 0 {
+        return;
+    }
+    let maximum = daily_usage
+        .iter()
+        .map(|daily| daily.tokens)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let gap = logical_to_physical(4, dpi).max(1);
+    let count = i32::try_from(daily_usage.len()).unwrap_or(i32::MAX).max(1);
+    let total_gap = gap.saturating_mul(count.saturating_sub(1));
+    let bar_width = chart.width().saturating_sub(total_gap).max(count) / count;
+    for (index, daily) in daily_usage.iter().enumerate() {
+        let index = i32::try_from(index).unwrap_or(i32::MAX);
+        let visual_index = if rtl { count - 1 - index } else { index };
+        let left = chart
+            .left
+            .saturating_add(visual_index.saturating_mul(bar_width.saturating_add(gap)));
+        let height = daily_usage_bar_height(daily.tokens, maximum, chart.height());
+        let bar = Rect::new(
+            left,
+            chart.bottom.saturating_sub(height),
+            left.saturating_add(bar_width),
+            chart.bottom,
+        );
+        fill(dc, bar, palette.accent);
+    }
+    let baseline_height = logical_to_physical(1, dpi).max(1);
+    fill(
+        dc,
+        Rect::new(
+            chart.left,
+            chart.bottom.saturating_sub(baseline_height),
+            chart.right,
+            chart.bottom,
+        ),
+        palette.separator,
+    );
+}
+
+unsafe fn paint_daily_dates(
+    dc: HDC,
+    daily_usage: &[crate::DailyTokenUsage],
+    area: Rect,
+    palette: PopupPalette,
+    dpi: u32,
+    rtl: bool,
+) {
+    let indices = daily_date_indices(daily_usage.len());
+    if indices.is_empty() || area.width() <= 0 || area.height() <= 0 {
+        return;
+    }
+    let slot_count = i32::try_from(indices.len()).unwrap_or(i32::MAX).max(1);
+    for (slot, index) in indices.into_iter().enumerate() {
+        let slot = i32::try_from(slot).unwrap_or(i32::MAX);
+        let visual_slot = if rtl {
+            slot_count.saturating_sub(1).saturating_sub(slot)
+        } else {
+            slot
+        };
+        let left = area.left.saturating_add(
+            area.width()
+                .saturating_mul(visual_slot)
+                .checked_div(slot_count)
+                .unwrap_or(0),
+        );
+        let right = area.left.saturating_add(
+            area.width()
+                .saturating_mul(visual_slot.saturating_add(1))
+                .checked_div(slot_count)
+                .unwrap_or(area.width()),
+        );
+        let label = daily_date_label(&daily_usage[index].start_date);
+        draw_formatted_text(
+            dc,
+            &label,
+            Rect::new(left, area.top, right, area.bottom),
+            popup_font(dc, 9, FW_NORMAL.0 as i32, dpi),
+            palette.secondary_text,
+            daily_date_text_format(rtl),
         );
     }
 }
@@ -733,8 +965,10 @@ mod tests {
     };
 
     use super::{
-        forecast_row_height, icon_text_format, pace_detail_top, popup_height_for_content,
-        popup_render_size, rounded_surface_alpha, wrapped_text_format,
+        daily_date_indices, daily_date_label, daily_date_text_format, daily_usage_bar_height,
+        daily_usage_chart_height, daily_usage_height, daily_usage_top, forecast_row_height,
+        icon_text_format, pace_detail_top, popup_height_for_content, popup_render_size,
+        rounded_surface_alpha, wrapped_text_format,
     };
     use crate::windows::widget::Rect;
 
@@ -776,6 +1010,46 @@ mod tests {
     fn wrapped_pace_summary_pushes_the_optional_detail_down() {
         assert_eq!(pace_detail_top(18, 96), 128);
         assert_eq!(pace_detail_top(44, 96), 154);
+    }
+
+    #[test]
+    fn daily_usage_layout_reserves_a_fixed_dpi_scaled_chart() {
+        assert_eq!(daily_usage_top(200, 96), 212);
+        assert_eq!(daily_usage_height(96), 92);
+        assert_eq!(daily_usage_height(144), 138);
+        assert_eq!(daily_usage_chart_height(96), 53);
+    }
+
+    #[test]
+    fn daily_usage_bar_height_scales_to_the_largest_day_and_keeps_zero_visible() {
+        assert_eq!(daily_usage_bar_height(50, 100, 80), 40);
+        assert_eq!(daily_usage_bar_height(0, 0, 80), 4);
+    }
+
+    #[test]
+    fn daily_date_labels_choose_at_most_three_evenly_spaced_days() {
+        assert_eq!(daily_date_indices(0), Vec::<usize>::new());
+        assert_eq!(daily_date_indices(1), vec![0]);
+        assert_eq!(daily_date_indices(2), vec![0, 1]);
+        assert_eq!(daily_date_indices(5), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn daily_date_label_keeps_month_and_day_compact() {
+        assert_eq!(daily_date_label("2026-08-19"), "08/19");
+        assert_eq!(daily_date_label("invalid"), "invalid");
+    }
+
+    #[test]
+    fn daily_date_text_is_centered_and_transparent() {
+        assert_eq!(
+            daily_date_text_format(false),
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX
+        );
+        assert_eq!(
+            daily_date_text_format(true),
+            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_RTLREADING | DT_NOPREFIX
+        );
     }
 
     #[test]

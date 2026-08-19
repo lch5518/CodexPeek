@@ -24,6 +24,7 @@ fn usage(
         ),
         reset_credits: None,
         fetched_at,
+        daily_token_usage: Vec::new(),
     }
 }
 

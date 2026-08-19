@@ -195,6 +195,29 @@ pub struct CodexUsage {
     pub reset_credits: Option<ResetCredits>,
     /// 사용량 정보를 성공적으로 가져온 시각입니다.
     pub fetched_at: SystemTime,
+    /// app-server가 반환한 최근 일별 토큰 사용량입니다.
+    pub daily_token_usage: Vec<DailyTokenUsage>,
+}
+
+/// 하루 단위로 집계된 Codex 토큰 사용량입니다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DailyTokenUsage {
+    /// 사용량이 시작된 UTC 날짜 문자열입니다.
+    pub start_date: String,
+    /// 해당 날짜에 사용한 토큰 수입니다.
+    pub tokens: u64,
+}
+
+impl DailyTokenUsage {
+    /// 날짜와 토큰 수로 일별 사용량을 만듭니다.
+    ///
+    /// 입력값 검증과 최대 14일 제한은 app-server 응답을 변환하는 경계에서 수행합니다.
+    pub fn new(start_date: impl Into<String>, tokens: u64) -> Self {
+        Self {
+            start_date: start_date.into(),
+            tokens,
+        }
+    }
 }
 
 /// 사용량 창 종류의 의미를 숫자 기간 없이 지역화한 레이블로 반환합니다.

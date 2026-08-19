@@ -14,7 +14,8 @@ pub mod tray;
 pub mod widget;
 
 use crate::{
-    AvailableUpdate, Language, LanguagePreference, StartupView, TaskbarDisplayMode, UsageProfileId,
+    AvailableUpdate, DailyTokenUsage, DailyUsage, Language, LanguagePreference, StartupView,
+    TaskbarDisplayMode, UsageProfileId,
 };
 
 /// 즉시 갱신 메뉴 식별자입니다.
@@ -597,6 +598,10 @@ pub struct WidgetViewModel {
     pub data_state: WidgetDataState,
     /// 상태점과 호버 툴팁에 표시할 소비 속도입니다.
     pub consumption_pace: ConsumptionPaceView,
+    /// 최근 14일 동안 표시 가능한 사용량 창에서 관측된 일별 사용률 증가량입니다.
+    pub daily_usage: Vec<DailyUsage>,
+    /// app-server가 반환한 최근 14일의 실제 토큰 사용량입니다.
+    pub daily_token_usage: Vec<DailyTokenUsage>,
 }
 
 /// Codex app-server가 제공한 ChatGPT 브라우저 로그인 URL인지 확인합니다.

@@ -6,13 +6,13 @@ use std::{
         Arc, Barrier,
     },
     thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use codex_usage_monitor::{
-    CodexUsage, ConsumptionPaceAssessment, ConsumptionPaceLevel, ForecastPolicy, ForecastResult,
-    SafeDiagnostic, UsageForecastService, UsageHistory, UsageHistoryOperation, UsageHistoryStore,
-    UsageProfileId, UsageSample, UsageSampleSink, UsageWindow, WindowKind,
+    CodexUsage, ConsumptionPaceAssessment, ConsumptionPaceLevel, DailyUsage, ForecastPolicy,
+    ForecastResult, SafeDiagnostic, UsageForecastService, UsageHistory, UsageHistoryOperation,
+    UsageHistoryStore, UsageProfileId, UsageSample, UsageSampleSink, UsageWindow, WindowKind,
 };
 
 static TEST_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -44,6 +44,7 @@ fn usage(kind: WindowKind, percent: f64, reset: SystemTime, observed_at: SystemT
         secondary: (kind == WindowKind::Secondary).then_some(window),
         reset_credits: None,
         fetched_at: observed_at,
+        daily_token_usage: Vec::new(),
     }
 }
 
@@ -55,6 +56,7 @@ fn two_window_usage(reset: SystemTime, observed_at: SystemTime) -> CodexUsage {
         ),
         reset_credits: None,
         fetched_at: observed_at,
+        daily_token_usage: Vec::new(),
     }
 }
 
@@ -113,6 +115,52 @@ fn wait_for_pace(
         assert!(Instant::now() < deadline, "pace was not cached in time");
         thread::yield_now();
     }
+}
+
+fn wait_for_daily_usage(
+    service: &UsageForecastService,
+    id: UsageProfileId,
+    kind: WindowKind,
+    minimum_days: usize,
+) -> Vec<DailyUsage> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(daily) = service.daily_usage_at(id, kind) {
+            if daily.len() >= minimum_days {
+                return daily;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daily usage was not cached in time"
+        );
+        thread::yield_now();
+    }
+}
+
+#[test]
+fn daily_usage_is_exposed_from_cached_history() {
+    let root = TestRoot::new("daily-usage");
+    let service = UsageForecastService::start(
+        UsageHistoryStore::for_root(&root.0),
+        [UsageProfileId::System],
+        ForecastPolicy::default(),
+    );
+    let reset = UNIX_EPOCH + Duration::from_secs(3 * 86_400);
+    for (day, offset, percent) in [(0, 3_600, 10.0), (0, 7_200, 20.0), (1, 3_600, 25.0)] {
+        let observed_at = UNIX_EPOCH + Duration::from_secs(day * 86_400 + offset);
+        service.record_success(
+            UsageProfileId::System,
+            &usage(WindowKind::Secondary, percent, reset, observed_at),
+            observed_at,
+        );
+    }
+
+    let daily = wait_for_daily_usage(&service, UsageProfileId::System, WindowKind::Secondary, 2);
+    assert_eq!(daily.len(), 2);
+    assert_eq!(daily[0].increase_percent(), 10.0);
+    assert_eq!(daily[1].increase_percent(), 0.0);
+    service.stop();
 }
 
 #[test]

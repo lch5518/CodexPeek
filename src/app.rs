@@ -1041,6 +1041,18 @@ impl UiBackend for AppRuntime {
                     secondary_forecast.clone(),
                 )
             });
+        let daily_usage = if settings.usage_forecast_enabled {
+            daily_usage_window_kind(secondary.is_some(), primary.is_some())
+                .and_then(|kind| self.usage_forecast().daily_usage_at(selected, kind))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let daily_token_usage = snapshot
+            .usage
+            .as_ref()
+            .map(|usage| usage.daily_token_usage.clone())
+            .unwrap_or_default();
         let weekly = secondary.as_ref().or(primary.as_ref());
         let reset_credits_text = snapshot
             .usage
@@ -1072,6 +1084,8 @@ impl UiBackend for AppRuntime {
             reset_credits_text,
             data_state,
             consumption_pace,
+            daily_usage,
+            daily_token_usage,
         }
     }
 
@@ -1269,6 +1283,12 @@ fn data_state_for_snapshot(
     } else {
         WidgetDataState::Ready
     }
+}
+
+fn daily_usage_window_kind(has_secondary: bool, has_primary: bool) -> Option<WindowKind> {
+    has_secondary
+        .then_some(WindowKind::Secondary)
+        .or_else(|| has_primary.then_some(WindowKind::Primary))
 }
 
 fn ui_settings(
@@ -2744,9 +2764,9 @@ mod tests {
 
     use super::{
         append_consumption_pace_tooltip, append_forecast_tooltip, compact_decimal,
-        consumption_pace_view, data_state_for_snapshot, diagnostic_status, forecast_duration_text,
-        forecast_view, is_official_release_marker, last_success_text, pass_fail,
-        profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
+        consumption_pace_view, daily_usage_window_kind, data_state_for_snapshot, diagnostic_status,
+        forecast_duration_text, forecast_view, is_official_release_marker, last_success_text,
+        pass_fail, profile_usage_presentation_for_snapshot, profile_usage_presentation_for_window,
         proxy_presence, relaunch_args_for_mode, row_view, row_view_with_reset_time,
         status_with_update, taskbar_copy, taskbar_risk_text, AppRuntime, DiagnosticSummary,
     };
@@ -2786,6 +2806,19 @@ mod tests {
     }
 
     #[test]
+    fn daily_usage_prefers_secondary_and_falls_back_to_primary() {
+        assert_eq!(
+            daily_usage_window_kind(true, true),
+            Some(WindowKind::Secondary)
+        );
+        assert_eq!(
+            daily_usage_window_kind(false, true),
+            Some(WindowKind::Primary)
+        );
+        assert_eq!(daily_usage_window_kind(false, false), None);
+    }
+
+    #[test]
     fn profile_usage_presentation_keeps_summary_and_typed_consumed_usage() {
         let presentation = profile_usage_presentation_for_window(Some(&usage_window(81.4)));
         assert_eq!(presentation.used_percent, Some(81));
@@ -2807,6 +2840,7 @@ mod tests {
                 secondary: Some(usage_window(81.4)),
                 reset_credits: None,
                 fetched_at: std::time::UNIX_EPOCH,
+                daily_token_usage: Vec::new(),
             }),
             last_error: Some(UsageError::RequestFailed),
             ..PollSnapshot::default()
@@ -2834,6 +2868,7 @@ mod tests {
                     nearest_expiry: None,
                 }),
                 fetched_at: std::time::UNIX_EPOCH,
+                daily_token_usage: Vec::new(),
             }),
             ..PollSnapshot::default()
         };

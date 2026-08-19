@@ -72,15 +72,18 @@ pub(crate) struct PopupForecastLine {
 }
 
 /// 네이티브 렌더러가 문자열을 해석하지 않고 소비하는 사용량 상세 표현입니다.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UsagePopupPresentation {
     pub(crate) profile_label: String,
     pub(crate) reset_label: String,
     pub(crate) reset_text: Option<String>,
     pub(crate) forecast_label: String,
+    pub(crate) daily_usage_label: String,
     pub(crate) pace_summary: String,
     pub(crate) pace_detail: Option<String>,
     pub(crate) forecasts: Vec<PopupForecastLine>,
+    pub(crate) daily_usage: Vec<crate::DailyUsage>,
+    pub(crate) daily_token_usage: Vec<crate::DailyTokenUsage>,
 }
 
 /// 현재 위젯 복사본을 상세 팝업 전용 구조로 변환합니다.
@@ -108,6 +111,8 @@ pub(crate) fn usage_popup_presentation(
             .and_then(|row| (!row.reset_text.is_empty()).then(|| row.reset_text.clone())),
         forecast_label: crate::localized_text(crate::LocalizationKey::MenuUsageForecast, language)
             .to_owned(),
+        daily_usage_label: crate::localization::localized_daily_token_usage_label(language)
+            .to_owned(),
         pace_summary: view.consumption_pace.summary.clone(),
         pace_detail: view.consumption_pace.detail.clone(),
         forecasts: [
@@ -117,6 +122,8 @@ pub(crate) fn usage_popup_presentation(
         .into_iter()
         .flatten()
         .collect(),
+        daily_usage: view.daily_usage.clone(),
+        daily_token_usage: view.daily_token_usage.clone(),
     }
 }
 
@@ -200,7 +207,7 @@ mod tests {
     use crate::windows::{
         ConsumptionPaceState, ConsumptionPaceView, ForecastView, UsageRowView, WidgetDataState,
     };
-    use crate::UsageLevel;
+    use crate::{DailyUsage, UsageLevel};
 
     fn row(
         label: &str,
@@ -254,6 +261,14 @@ mod tests {
                 summary: "Usage pace: Comfortable".to_owned(),
                 detail: Some("Used 2% over the last 2 hours".to_owned()),
             },
+            daily_usage: vec![
+                DailyUsage::from_parts(0, 5.0),
+                DailyUsage::from_parts(1, 12.0),
+            ],
+            daily_token_usage: vec![
+                crate::DailyTokenUsage::new("2026-08-17", 5_000),
+                crate::DailyTokenUsage::new("2026-08-18", 12_000),
+            ],
         }
     }
 
@@ -264,6 +279,11 @@ mod tests {
         assert_eq!(presentation.profile_label, "Work");
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-18 10:23"));
         assert_eq!(presentation.forecast_label, "Usage forecasting");
+        assert_eq!(presentation.daily_usage_label, "Daily token usage");
+        assert_eq!(presentation.daily_usage.len(), 2);
+        assert_eq!(presentation.daily_usage[1].increase_percent(), 12.0);
+        assert_eq!(presentation.daily_token_usage.len(), 2);
+        assert_eq!(presentation.daily_token_usage[1].tokens, 12_000);
         assert_eq!(
             presentation.forecasts,
             vec![

@@ -117,6 +117,8 @@ fn taskbar_view(
             summary: String::new(),
             detail: None,
         },
+        daily_usage: Vec::new(),
+        daily_token_usage: Vec::new(),
     }
 }
 
@@ -1277,6 +1279,8 @@ fn detached_widget_persistently_consumes_the_selected_profile_label() {
         reset_credits_text: None,
         data_state: WidgetDataState::Loading,
         consumption_pace: measuring_pace_view(),
+        daily_usage: Vec::new(),
+        daily_token_usage: Vec::new(),
     };
     let attached = widget_surface_layout(208, 48, 96, true);
     let detached = widget_surface_layout(208, 48, 96, false);
@@ -1712,6 +1716,8 @@ fn attachment_failure_keeps_one_detached_widget_and_later_reuses_it() {
         reset_credits_text: None,
         data_state: WidgetDataState::Loading,
         consumption_pace: measuring_pace_view(),
+        daily_usage: Vec::new(),
+        daily_token_usage: Vec::new(),
     };
     let surface = widget_surface_layout(208, 72, 96, false);
     assert_eq!(profile_header_text(&view, surface), Some("Work"));
@@ -1780,6 +1786,8 @@ fn partial_multi_monitor_failure_keeps_one_fallback_and_reuses_every_live_window
         reset_credits_text: None,
         data_state: WidgetDataState::Loading,
         consumption_pace: measuring_pace_view(),
+        daily_usage: Vec::new(),
+        daily_token_usage: Vec::new(),
     };
     let detached = widget_surface_layout(208, 72, 96, false);
     assert_eq!(profile_header_text(&view, detached), Some("Work"));

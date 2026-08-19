@@ -1897,6 +1897,43 @@ pub fn localized_text(key: LocalizationKey, language: Language) -> &'static str 
     }
 }
 
+/// 일별 사용량 그래프 제목을 현재 UI 언어에 맞춰 반환합니다.
+#[allow(dead_code)]
+pub(crate) fn localized_daily_usage_label(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "일별 사용량",
+        Language::English => "Daily usage",
+        Language::Spanish => "Uso diario",
+        Language::PortugueseBrazil => "Uso diário",
+        Language::Indonesian => "Penggunaan harian",
+        Language::Japanese => "日別使用量",
+        Language::Hindi => "दैनिक उपयोग",
+        Language::German => "Tägliche Nutzung",
+        Language::French => "Utilisation quotidienne",
+        Language::Vietnamese => "Mức sử dụng hằng ngày",
+        Language::Turkish => "Günlük kullanım",
+        Language::Arabic => "الاستخدام اليومي",
+    }
+}
+
+/// 일별 토큰 사용량 그래프의 제목을 현재 UI 언어에 맞춰 반환합니다.
+pub(crate) fn localized_daily_token_usage_label(language: Language) -> &'static str {
+    match language {
+        Language::Korean => "일별 토큰 사용량",
+        Language::English => "Daily token usage",
+        Language::Spanish => "Tokens usados por día",
+        Language::PortugueseBrazil => "Tokens usados por dia",
+        Language::Indonesian => "Token harian",
+        Language::Japanese => "日別トークン使用量",
+        Language::Hindi => "दैनिक टोकन उपयोग",
+        Language::German => "Täglicher Tokenverbrauch",
+        Language::French => "Tokens utilisés par jour",
+        Language::Vietnamese => "Token đã dùng mỗi ngày",
+        Language::Turkish => "Günlük token kullanımı",
+        Language::Arabic => "استخدام الرموز اليومي",
+    }
+}
+
 /// 갱신 간격 값을 하위 메뉴의 짧은 선택 문구로 만듭니다.
 ///
 /// `minutes`는 지원되는 자동 갱신 간격이며, 호출자가 메뉴 동작 검증을 별도로 수행합니다.
@@ -1919,6 +1956,7 @@ pub(crate) fn localized_refresh_interval_choice_text(minutes: u32, language: Lan
 #[cfg(test)]
 mod tests {
     use super::{
+        localized_daily_token_usage_label, localized_daily_usage_label,
         localized_refresh_interval_choice_text, localized_text, Language, LocalizationKey,
     };
 
@@ -1945,5 +1983,26 @@ mod tests {
             let text = localized_refresh_interval_choice_text(15, *language);
             assert!(text.contains("15"), "{language:?}: {text}");
         }
+    }
+
+    #[test]
+    fn daily_usage_label_keeps_korean_and_english_copy() {
+        assert_eq!(localized_daily_usage_label(Language::Korean), "일별 사용량");
+        assert_eq!(
+            localized_daily_usage_label(Language::English),
+            "Daily usage"
+        );
+    }
+
+    #[test]
+    fn daily_token_usage_label_mentions_tokens() {
+        assert_eq!(
+            localized_daily_token_usage_label(Language::Korean),
+            "일별 토큰 사용량"
+        );
+        assert_eq!(
+            localized_daily_token_usage_label(Language::English),
+            "Daily token usage"
+        );
     }
 }

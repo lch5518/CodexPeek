@@ -6,9 +6,9 @@ use std::{
 };
 
 use crate::{
-    CodexUsage, ConsumptionPaceAssessment, ForecastAnalysis, ForecastEngine, ForecastPolicy,
-    ForecastResult, SafeDiagnostic, UsageHistory, UsageHistoryOperation, UsageHistoryStore,
-    UsageProfileId, UsageSample, UsageSampleSink, WindowKind,
+    CodexUsage, ConsumptionPaceAssessment, DailyUsage, ForecastAnalysis, ForecastEngine,
+    ForecastPolicy, ForecastResult, SafeDiagnostic, UsageHistory, UsageHistoryOperation,
+    UsageHistoryStore, UsageProfileId, UsageSample, UsageSampleSink, WindowKind,
 };
 
 const COMMAND_CAPACITY: usize = 64;
@@ -42,6 +42,7 @@ struct ForecastShared {
 struct CachedAnalysis {
     observed_at: SystemTime,
     analysis: ForecastAnalysis,
+    daily_usage: Vec<DailyUsage>,
 }
 
 struct ForecastSample {
@@ -255,6 +256,25 @@ impl UsageForecastService {
                 cached.analysis.pace.clone()
             }
         })
+    }
+
+    /// 지정한 프로필과 사용량 창의 캐시된 최근 일별 증가량을 반환합니다.
+    ///
+    /// 파일을 직접 읽지 않고 마지막 성공 관측으로 갱신된 캐시만 사용합니다. 서비스가
+    /// 비활성화되었거나 해당 창의 성공 관측이 아직 없으면 `None`을 반환합니다.
+    pub fn daily_usage_at(
+        &self,
+        profile_id: UsageProfileId,
+        window_kind: WindowKind,
+    ) -> Option<Vec<DailyUsage>> {
+        let shared = lock(&self.shared);
+        if !shared.enabled || !shared.active.contains_key(&profile_id) {
+            return None;
+        }
+        shared
+            .cache
+            .get(&(profile_id, window_kind))
+            .map(|cached| cached.daily_usage.clone())
     }
 
     /// worker에서 발생한 민감정보 없는 이력 진단을 가져옵니다.
@@ -555,6 +575,7 @@ fn cache_usage(
                 CachedAnalysis {
                     observed_at,
                     analysis,
+                    daily_usage: history.daily_usage_for(profile_id, window.kind),
                 },
             );
         }

@@ -8,13 +8,15 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use std::collections::BTreeMap;
 #[cfg(test)]
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CodexUsage, ProfileExecutionContext, ResetCredits, UsageError, UsageWindow, WindowKind,
+    CodexUsage, DailyTokenUsage, ProfileExecutionContext, ResetCredits, UsageError, UsageWindow,
+    WindowKind,
 };
 
 use super::{
@@ -27,6 +29,7 @@ const CLIENT_TITLE: &str = "Codex Usage Monitor";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const MAX_JSONL_FRAME_BYTES: usize = 256 * 1024;
+const MAX_DAILY_TOKEN_USAGE_DAYS: usize = 14;
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// app-server가 제공한 로그인 페이지를 안전하게 여는 콜백입니다.
@@ -400,6 +403,19 @@ struct CreditDto {
     expires_at: Option<ResetCreditExpiryDto>,
 }
 
+#[derive(Deserialize)]
+struct TokenUsageResult {
+    #[serde(rename = "dailyUsageBuckets", default)]
+    daily_usage_buckets: Option<Vec<TokenUsageBucketDto>>,
+}
+
+#[derive(Deserialize)]
+struct TokenUsageBucketDto {
+    #[serde(rename = "startDate")]
+    start_date: String,
+    tokens: i64,
+}
+
 /// app-server 버전별 리셋권 만료 시각 표현입니다.
 ///
 /// 숫자 Unix 초와 RFC 3339 UTC 문자열만 보관하며, 다른 JSON 형식은 응답 전체를 안전하게
@@ -443,18 +459,25 @@ fn run_jsonl_session_until<T: JsonlTransport>(
     }
 
     next_id += 1;
-    match read_rate_limits(transport, next_id, deadline) {
-        Ok(usage) => Ok(usage),
+    let usage = match read_rate_limits(transport, next_id, deadline) {
+        Ok(usage) => usage,
         Err(UsageError::RequestFailed) if allow_auth_refresh => {
             next_id += 1;
             if !read_account(transport, next_id, true, deadline)? {
                 return Err(UsageError::AuthenticationExpired);
             }
             next_id += 1;
-            read_rate_limits(transport, next_id, deadline)
+            read_rate_limits(transport, next_id, deadline)?
         }
-        Err(error) => Err(error),
-    }
+        Err(error) => return Err(error),
+    };
+    next_id += 1;
+    let daily_token_usage =
+        read_daily_token_usage(transport, next_id, deadline).unwrap_or_default();
+    Ok(CodexUsage {
+        daily_token_usage,
+        ..usage
+    })
 }
 
 fn initialize_session<T: JsonlTransport>(
@@ -654,7 +677,55 @@ fn read_rate_limits<T: JsonlTransport>(
         secondary,
         reset_credits: reset_credits.and_then(into_reset_credits),
         fetched_at: SystemTime::now(),
+        daily_token_usage: Vec::new(),
     })
+}
+
+fn read_daily_token_usage<T: JsonlTransport>(
+    transport: &mut T,
+    id: u64,
+    deadline: Instant,
+) -> Result<Vec<DailyTokenUsage>, UsageError> {
+    send_request(
+        transport,
+        &NoParamsRequest {
+            id: Some(id),
+            method: "account/usage/read",
+        },
+        deadline,
+    )?;
+    let result = receive_result::<_, TokenUsageResult>(transport, id, deadline)?;
+    Ok(normalize_daily_token_usage(
+        result.daily_usage_buckets.unwrap_or_default(),
+    ))
+}
+
+fn normalize_daily_token_usage(buckets: Vec<TokenUsageBucketDto>) -> Vec<DailyTokenUsage> {
+    let mut by_date: BTreeMap<String, u64> = BTreeMap::new();
+    for bucket in buckets {
+        if bucket.start_date.is_empty()
+            || bucket.start_date.len() > 64
+            || bucket.start_date.chars().any(char::is_control)
+            || bucket.tokens < 0
+        {
+            continue;
+        }
+        let tokens = u64::try_from(bucket.tokens).unwrap_or_default();
+        by_date
+            .entry(bucket.start_date)
+            .and_modify(|total| *total = total.saturating_add(tokens))
+            .or_insert(tokens);
+    }
+    let mut recent = by_date
+        .into_iter()
+        .rev()
+        .take(MAX_DAILY_TOKEN_USAGE_DAYS)
+        .collect::<Vec<_>>();
+    recent.reverse();
+    recent
+        .into_iter()
+        .map(|(start_date, tokens)| DailyTokenUsage::new(start_date, tokens))
+        .collect()
 }
 
 fn into_usage_window(dto: UsageWindowDto, kind: WindowKind) -> Result<UsageWindow, UsageError> {
@@ -994,6 +1065,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","method":"codex/event","params":{"refreshToken":"never retain"}}"#,
             r#"{"jsonrpc":"2.0","id":2,"result":{"account":{"type":"chatgpt","email":"never retain","id":"never retain"}}}"#,
             r#"{"jsonrpc":"2.0","id":3,"result":{"rateLimits":{"primary":{"usedPercent":125.5,"windowDurationMins":300,"resetsAt":1700000000,"accessToken":"never retain"},"secondary":{"usedPercent":25.0,"windowDurationMins":10080,"resetsAt":1700003600,"refreshToken":"never retain"}}}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"result":{"summary":{},"dailyUsageBuckets":[{"startDate":"2026-08-18","tokens":12345,"accessToken":"never retain"}]}}"#,
         ]);
 
         let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
@@ -1015,8 +1087,66 @@ mod tests {
                 r#"{"method":"initialized","params":{}}"#,
                 r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
                 r#"{"id":3,"method":"account/rateLimits/read"}"#,
+                r#"{"id":4,"method":"account/usage/read"}"#,
             ]
         );
+    }
+
+    #[test]
+    fn session_parses_daily_token_buckets_and_keeps_the_latest_fourteen_days() {
+        let mut buckets = String::new();
+        for day in 1..=16 {
+            if day > 1 {
+                buckets.push(',');
+            }
+            buckets.push_str(&format!(
+                r#"{{"startDate":"2026-08-{day:02}","tokens":{day}}}"#
+            ));
+        }
+        let token_response = format!(
+            r#"{{"id":4,"result":{{"summary":{{}},"dailyUsageBuckets":[{}]}}}}"#,
+            buckets
+        );
+        let mut transport = ScriptedTransport::new([
+            r#"{"id":1,"result":{}}"#,
+            r#"{"id":2,"result":{"account":{"type":"chatgpt"}}}"#,
+            r#"{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":1.0,"windowDurationMins":60,"resetsAt":1},"secondary":null}}}"#,
+            token_response.as_str(),
+        ]);
+
+        let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+
+        assert_eq!(usage.daily_token_usage.len(), 14);
+        assert_eq!(usage.daily_token_usage[0].start_date, "2026-08-03");
+        assert_eq!(usage.daily_token_usage[0].tokens, 3);
+        assert_eq!(usage.daily_token_usage[13].start_date, "2026-08-16");
+        assert_eq!(usage.daily_token_usage[13].tokens, 16);
+    }
+
+    #[test]
+    fn daily_token_normalization_merges_duplicates_and_discards_invalid_buckets() {
+        let daily = super::normalize_daily_token_usage(vec![
+            super::TokenUsageBucketDto {
+                start_date: "2026-08-18".to_owned(),
+                tokens: 10,
+            },
+            super::TokenUsageBucketDto {
+                start_date: "2026-08-18".to_owned(),
+                tokens: 5,
+            },
+            super::TokenUsageBucketDto {
+                start_date: "2026-08-17".to_owned(),
+                tokens: -1,
+            },
+            super::TokenUsageBucketDto {
+                start_date: "2026-08-16\n".to_owned(),
+                tokens: 99,
+            },
+        ]);
+
+        assert_eq!(daily.len(), 1);
+        assert_eq!(daily[0].start_date, "2026-08-18");
+        assert_eq!(daily[0].tokens, 15);
     }
 
     #[test]
@@ -1218,6 +1348,7 @@ mod tests {
                     secondary: None,
                     reset_credits: None,
                     fetched_at: SystemTime::now(),
+                    daily_token_usage: Vec::new(),
                 })
             })
             .map(|_| ()),
@@ -1297,6 +1428,7 @@ mod tests {
                 r#"{"id":3,"method":"account/rateLimits/read"}"#,
                 r#"{"id":4,"method":"account/read","params":{"refreshToken":true}}"#,
                 r#"{"id":5,"method":"account/rateLimits/read"}"#,
+                r#"{"id":6,"method":"account/usage/read"}"#,
             ]
         );
     }
