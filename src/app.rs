@@ -1895,18 +1895,12 @@ fn forecast_duration_text(duration: Duration, language: Language) -> Option<Stri
 
 fn append_forecast_tooltip(
     tooltip: &str,
-    primary: Option<&UsageRowView>,
+    _primary: Option<&UsageRowView>,
     secondary: Option<&UsageRowView>,
     language: Language,
 ) -> String {
     let mut result = tooltip.to_owned();
     let mut lines = Vec::new();
-    if let Some(line) = primary.and_then(|row| row.forecast.line()) {
-        lines.push(format!(
-            "{}: {line}",
-            localized_text(LocalizationKey::PrimaryWindowLabel, language)
-        ));
-    }
     if let Some(line) = secondary.and_then(|row| row.forecast.line()) {
         lines.push(format!(
             "{}: {line}",
@@ -3625,7 +3619,7 @@ mod tests {
     }
 
     #[test]
-    fn pace_tooltip_precedes_per_window_forecasts() {
+    fn pace_tooltip_omits_primary_only_forecast() {
         let pace = ConsumptionPaceView {
             state: ConsumptionPaceState::Comfortable,
             summary: "Usage pace: Comfortable".to_owned(),
@@ -3653,8 +3647,7 @@ mod tests {
             tooltip,
             "Codex usage\nStatus: Polling\n\nUsage pace: Comfortable\n\
              Used 3% over the last 2 hours · about 1.5% per hour\n\
-             At this pace, about 42% will remain at reset\n\n\
-             Primary window: primary estimate"
+             At this pace, about 42% will remain at reset"
         );
     }
 
@@ -3751,7 +3744,7 @@ mod tests {
     }
 
     #[test]
-    fn forecast_tooltip_lines_keep_primary_before_secondary() {
+    fn forecast_tooltip_includes_only_secondary_window() {
         let primary = UsageRowView {
             label: "5h".to_owned(),
             used_percent: 50.0,
@@ -3775,11 +3768,9 @@ mod tests {
             Some(&secondary),
             Language::English,
         );
-        assert!(tooltip.contains("Status: Polling\n\nPrimary window:"));
-        assert!(tooltip
-            .ends_with("Primary window: primary estimate\nSecondary window: secondary collecting"));
-        assert!(
-            tooltip.find("Primary window").unwrap() < tooltip.find("Secondary window").unwrap()
+        assert_eq!(
+            tooltip,
+            "Codex usage\nStatus: Polling\n\nSecondary window: secondary collecting"
         );
     }
 

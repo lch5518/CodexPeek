@@ -76,8 +76,8 @@ instead of overwriting an existing release or asset.
 ### User-facing release note
 
 This release streamlines the widget hover popup. It removes the duplicated weekly usage meter,
-places the reset time below the account name, and groups pace plus Short and Weekly forecasts in
-one section. Long Korean, English, and RTL forecast text now wraps without ellipsis or overlap.
+places the reset time below the account name, and groups pace plus the Weekly forecast in one
+section. Long Korean, English, and RTL forecast text now wraps without ellipsis or overlap.
 
 ## Installer Verification
 
@@ -129,9 +129,9 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Tray icon cleanup on every normal exit path
 - [ ] Hover the taskbar and floating widgets in light and dark mode; verify the Fluent detail popup
       stays inside the active monitor, shows account/reset followed by one usage-forecast section,
-      does not repeat the weekly usage metric or progress bar, keeps Short and Weekly rows in that
-      section, remains open past the native five-second tooltip timeout while the pointer stays over
-      the widget, and closes without flicker after the pointer leaves.
+      does not repeat the weekly usage metric or progress bar, keeps only the Weekly forecast row,
+      remains open past the native five-second tooltip timeout while the pointer stays over the
+      widget, and closes without flicker after the pointer leaves.
 - [ ] Verify the hover popup omits the profile sign-in scope note and routine polling status while
       profile login confirmations still explain the unchanged Codex CLI and IDE sign-ins.
 - [ ] At 100/125/150/200% DPI, verify long Korean, English, and RTL pace and forecast details wrap

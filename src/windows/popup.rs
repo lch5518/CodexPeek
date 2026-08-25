@@ -95,14 +95,15 @@ pub(crate) fn usage_popup_presentation(
     language: Language,
 ) -> UsagePopupPresentation {
     let row = view.secondary.as_ref().or(view.primary.as_ref());
-    let forecast =
-        |kind: crate::WindowKind, row: Option<&super::UsageRowView>| -> Option<PopupForecastLine> {
-            row.and_then(|row| row.forecast.line())
-                .map(|detail| PopupForecastLine {
-                    label: crate::domain::window_kind_label(kind, language).to_owned(),
-                    detail: detail.to_owned(),
-                })
-        };
+    let forecast = view
+        .secondary
+        .as_ref()
+        .and_then(|row| row.forecast.line())
+        .map(|detail| PopupForecastLine {
+            label: crate::domain::window_kind_label(crate::WindowKind::Secondary, language)
+                .to_owned(),
+            detail: detail.to_owned(),
+        });
 
     UsagePopupPresentation {
         profile_label: view.usage_profile_label.clone(),
@@ -115,13 +116,7 @@ pub(crate) fn usage_popup_presentation(
             .to_owned(),
         pace_summary: view.consumption_pace.summary.clone(),
         pace_detail: view.consumption_pace.detail.clone(),
-        forecasts: [
-            forecast(crate::WindowKind::Primary, view.primary.as_ref()),
-            forecast(crate::WindowKind::Secondary, view.secondary.as_ref()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect(),
+        forecasts: forecast.into_iter().collect(),
         daily_usage: view.daily_usage.clone(),
         daily_token_usage: view.daily_token_usage.clone(),
     }
@@ -273,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn presentation_prefers_weekly_reset_and_uses_semantic_forecast_rows() {
+    fn presentation_prefers_weekly_reset_and_forecast() {
         let presentation = usage_popup_presentation(&ready_view(), Language::English);
 
         assert_eq!(presentation.profile_label, "Work");
@@ -286,16 +281,10 @@ mod tests {
         assert_eq!(presentation.daily_token_usage[1].tokens, 12_000);
         assert_eq!(
             presentation.forecasts,
-            vec![
-                PopupForecastLine {
-                    label: "Short".to_owned(),
-                    detail: "Collecting primary samples".to_owned(),
-                },
-                PopupForecastLine {
-                    label: "Weekly".to_owned(),
-                    detail: "About 52% will remain".to_owned(),
-                },
-            ]
+            vec![PopupForecastLine {
+                label: "Weekly".to_owned(),
+                detail: "About 52% will remain".to_owned(),
+            }]
         );
     }
 
@@ -307,6 +296,7 @@ mod tests {
         let presentation = usage_popup_presentation(&view, Language::English);
 
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-11 15:00"));
+        assert!(presentation.forecasts.is_empty());
     }
 
     #[test]
