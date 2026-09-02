@@ -1,8 +1,8 @@
 /target/
 ## Internal planning and task records are kept locally only.
 /.superpowers/
+/.github/
 /docs/superpowers/
 /.worktrees/
 *.pdb
 *.log
-.superpowers/
