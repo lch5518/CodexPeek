@@ -85,7 +85,7 @@ use super::super::{
         TaskbarTarget, WidgetSurface, WidgetSurfaceBackend, TASKBAR_LAYOUT_CHANGED,
     },
     taskbar_widget::{
-        profile_header_text, progress_fill_width, select_weekly_row, taskbar_visual_state,
+        profile_header_text, progress_fill_width, taskbar_rows, taskbar_visual_state,
         tooltip_text_needs_update, widget_surface_layout, HoverTransition, TaskbarIndicator,
         TaskbarLayout, TaskbarLayoutMode, TaskbarRisk, TASKBAR_WIDTH_LOGICAL,
     },
@@ -1789,7 +1789,8 @@ unsafe fn paint_compact_taskbar_content(
 ) {
     let width = client.right - client.left;
     let height = client.bottom - client.top;
-    let layout = TaskbarLayout::for_size(width, height, dpi);
+    let rows = taskbar_rows(view.primary.as_ref(), view.secondary.as_ref());
+    let layout = TaskbarLayout::for_rows(width, height, dpi, rows[1].is_some());
     let positioned = |rect: Rect| {
         Rect::new(
             rect.left + client.left,
@@ -1798,10 +1799,8 @@ unsafe fn paint_compact_taskbar_content(
             rect.bottom + client.top,
         )
     };
-    let row = select_weekly_row(view.primary.as_ref(), view.secondary.as_ref());
     let visual = taskbar_visual_state(view);
     let indicator_accent = taskbar_indicator_color(visual.indicator);
-    let progress_accent = taskbar_risk_color(visual.progress_risk);
 
     let background = CreateSolidBrush(COLORREF(palette.material));
     FillRect(dc, &client, background);
@@ -1849,47 +1848,130 @@ unsafe fn paint_compact_taskbar_content(
         let _ = DeleteObject(HGDIOBJ(brush.0));
     }
 
-    if let Some(label) = layout.label {
-        let label_font = CreateFontW(
-            -logical_to_physical(12, dpi),
-            0,
-            0,
-            0,
-            FW_NORMAL.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS,
-            PROOF_QUALITY,
-            u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-            w!("Segoe UI Variable"),
-        );
-        let old_font = SelectObject(dc, HGDIOBJ(label_font.0));
-        let mut label = native_rect(positioned(label));
-        let alignment = if rtl {
-            DT_RIGHT | DT_RTLREADING
-        } else {
-            DT_LEFT
+    let label_rects = [layout.label, layout.secondary_label];
+    let percent_rects = [Some(layout.percent), layout.secondary_percent];
+    let progress_rects = [Some(layout.progress), layout.secondary_progress];
+    let text_size = taskbar_text_size(height, dpi, rows[1].is_some());
+    let label_alignment = if rtl {
+        DT_RIGHT | DT_RTLREADING
+    } else {
+        DT_LEFT
+    };
+    let primary_font = create_taskbar_font(dpi, text_size, FW_MEDIUM.0 as i32);
+    let secondary_font = create_taskbar_font(dpi, text_size, FW_NORMAL.0 as i32);
+    for (index, ((row, label_rect), percent_rect)) in rows
+        .into_iter()
+        .zip(label_rects)
+        .zip(percent_rects)
+        .enumerate()
+    {
+        let Some(row) = row else {
+            continue;
         };
-        draw_text(
-            dc,
-            &view.taskbar_label,
-            &mut label,
-            alignment | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-            COLORREF(palette.label),
-        );
-        SelectObject(dc, old_font);
-        let _ = DeleteObject(HGDIOBJ(label_font.0));
+        if let Some(label_rect) = label_rect {
+            paint_taskbar_text(
+                dc,
+                positioned(label_rect),
+                &row.label,
+                if index == 0 {
+                    primary_font
+                } else {
+                    secondary_font
+                },
+                label_alignment | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                COLORREF(palette.label),
+            );
+        }
+        if let Some(percent_rect) = percent_rect {
+            let percent_text = if index == 0 {
+                compact_percent_text(
+                    layout.mode,
+                    visual.indicator,
+                    Some(row.percent_text.as_str()),
+                )
+            } else {
+                row.percent_text.as_str()
+            };
+            let percent_alignment = if layout.mode == TaskbarLayoutMode::Minimal {
+                DT_CENTER
+            } else {
+                DT_RIGHT
+            };
+            let percent_color = if index == 0
+                && layout.mode == TaskbarLayoutMode::Minimal
+                && visual.indicator == TaskbarIndicator::Error
+            {
+                indicator_accent
+            } else if index == 0 {
+                COLORREF(palette.percent)
+            } else {
+                COLORREF(palette.label)
+            };
+            paint_taskbar_text(
+                dc,
+                positioned(percent_rect),
+                percent_text,
+                if index == 0 {
+                    primary_font
+                } else {
+                    secondary_font
+                },
+                percent_alignment | DT_SINGLELINE | DT_VCENTER,
+                percent_color,
+            );
+        }
     }
 
-    let percent_font = CreateFontW(
-        -logical_to_physical(12, dpi),
+    for (row, progress_rect) in rows.into_iter().zip(progress_rects) {
+        let Some(progress_rect) = progress_rect else {
+            continue;
+        };
+        if row.is_none() && progress_rect != layout.progress {
+            continue;
+        }
+        let progress = positioned(progress_rect);
+        let track = CreateSolidBrush(COLORREF(palette.track));
+        FillRect(dc, &native_rect(progress), track);
+        let _ = DeleteObject(HGDIOBJ(track.0));
+        if let Some(row) = row {
+            let fill_width = progress_fill_width(progress_rect.width(), row.display_percent);
+            if fill_width > 0 {
+                let fill = CreateSolidBrush(taskbar_risk_color(TaskbarRisk::from_percent(
+                    row.used_percent,
+                )));
+                FillRect(
+                    dc,
+                    &RECT {
+                        right: progress.left + fill_width,
+                        ..native_rect(progress)
+                    },
+                    fill,
+                );
+                let _ = DeleteObject(HGDIOBJ(fill.0));
+            }
+        }
+    }
+    let _ = DeleteObject(primary_font);
+    let _ = DeleteObject(secondary_font);
+}
+
+fn taskbar_text_size(height: i32, dpi: u32, include_secondary: bool) -> i32 {
+    if !include_secondary {
+        12
+    } else if height < logical_to_physical(42, dpi) {
+        10
+    } else {
+        11
+    }
+}
+
+unsafe fn create_taskbar_font(dpi: u32, size: i32, weight: i32) -> HGDIOBJ {
+    let font = CreateFontW(
+        -logical_to_physical(size, dpi),
         0,
         0,
         0,
-        FW_MEDIUM.0 as i32,
+        weight,
         0,
         0,
         0,
@@ -1900,54 +1982,21 @@ unsafe fn paint_compact_taskbar_content(
         u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
         w!("Segoe UI Variable"),
     );
-    let old_font = SelectObject(dc, HGDIOBJ(percent_font.0));
-    let mut percent = native_rect(positioned(layout.percent));
-    let percent_alignment = if layout.mode == TaskbarLayoutMode::Minimal {
-        DT_CENTER
-    } else {
-        DT_RIGHT
-    };
-    let minimal_error =
-        layout.mode == TaskbarLayoutMode::Minimal && visual.indicator == TaskbarIndicator::Error;
-    let percent_text = compact_percent_text(
-        layout.mode,
-        visual.indicator,
-        row.map(|row| row.percent_text.as_str()),
-    );
-    let percent_color = if minimal_error {
-        indicator_accent
-    } else {
-        COLORREF(palette.percent)
-    };
-    draw_text(
-        dc,
-        percent_text,
-        &mut percent,
-        percent_alignment | DT_SINGLELINE | DT_VCENTER,
-        percent_color,
-    );
-    SelectObject(dc, old_font);
-    let _ = DeleteObject(HGDIOBJ(percent_font.0));
+    HGDIOBJ(font.0)
+}
 
-    let track = CreateSolidBrush(COLORREF(palette.track));
-    let progress = positioned(layout.progress);
-    FillRect(dc, &native_rect(progress), track);
-    let _ = DeleteObject(HGDIOBJ(track.0));
-    if let Some(row) = row {
-        let fill_width = progress_fill_width(layout.progress.width(), row.display_percent);
-        if fill_width > 0 {
-            let fill = CreateSolidBrush(progress_accent);
-            FillRect(
-                dc,
-                &RECT {
-                    right: progress.left + fill_width,
-                    ..native_rect(progress)
-                },
-                fill,
-            );
-            let _ = DeleteObject(HGDIOBJ(fill.0));
-        }
-    }
+unsafe fn paint_taskbar_text(
+    dc: HDC,
+    rect: Rect,
+    text: &str,
+    font: HGDIOBJ,
+    format: windows::Win32::Graphics::Gdi::DRAW_TEXT_FORMAT,
+    color: COLORREF,
+) {
+    let old_font = SelectObject(dc, font);
+    let mut rect = native_rect(rect);
+    draw_text(dc, text, &mut rect, format, color);
+    SelectObject(dc, old_font);
 }
 
 unsafe fn paint_profile_header(
@@ -2313,9 +2362,9 @@ mod tests {
         material_surface_alpha, rounded_material_alpha, run_with_shell_com, should_open_tray_menu,
         should_open_widget_menu, show_diagnostic_summary_with_presenter,
         show_profile_dialog_error_with_presenter, show_update_notice_with_presenter,
-        taskbar_indicator_color, taskbar_palette, update_dialog_in_progress, update_dialog_style,
-        NativeMessagePresenter, TaskbarIndicator, TaskbarLayoutMode, TaskbarRefreshSchedule,
-        UpdateChoice, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
+        taskbar_indicator_color, taskbar_palette, taskbar_text_size, update_dialog_in_progress,
+        update_dialog_style, NativeMessagePresenter, TaskbarIndicator, TaskbarLayoutMode,
+        TaskbarRefreshSchedule, UpdateChoice, UpdateDialogGuard, NIN_SELECT, WM_CONTEXTMENU,
     };
     use crate::{
         windows::profile_dialog::ProfileMessageRoute, AvailableUpdate, Language, UpdateCheckNotice,
@@ -2679,6 +2728,12 @@ mod tests {
             ),
             "42%"
         );
+    }
+
+    #[test]
+    fn single_taskbar_row_keeps_the_previous_readable_font_size() {
+        assert_eq!(taskbar_text_size(24, 96, false), 12);
+        assert_eq!(taskbar_text_size(48, 96, false), 12);
     }
 
     #[test]

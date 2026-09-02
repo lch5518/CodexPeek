@@ -1,4 +1,4 @@
-//! 작업 표시줄 전용 주간 사용량 표현과 DPI 레이아웃입니다.
+//! 작업 표시줄 전용 사용량 창 표현과 DPI 레이아웃입니다.
 
 use super::{
     widget::logical_to_physical, ConsumptionPaceState, UsageRowView, WidgetDataState,
@@ -191,6 +191,20 @@ pub fn select_weekly_row<'a>(
     secondary.or(primary)
 }
 
+/// 작업 표시줄 본문에 표시할 두 사용량 창을 5시간 우선 순서로 반환합니다.
+///
+/// `primary`가 있으면 첫 번째 행에, `secondary`가 있으면 두 번째 행에 배치합니다. 기본 창이
+/// 없는 계정은 보조 창을 첫 번째 행으로 올려 빈 행을 만들지 않습니다.
+pub fn taskbar_rows<'a>(
+    primary: Option<&'a UsageRowView>,
+    secondary: Option<&'a UsageRowView>,
+) -> [Option<&'a UsageRowView>; 2] {
+    match primary {
+        Some(primary) => [Some(primary), secondary],
+        None => [secondary, None],
+    }
+}
+
 /// 진행 막대 너비와 표시 비율을 사용해 실제 채움 너비를 계산합니다.
 ///
 /// 표시 비율은 0~100%로 제한되며, 잘못된 음수나 초과 값이 레이아웃 밖으로 그려지지 않게 합니다.
@@ -201,11 +215,11 @@ pub(crate) fn progress_fill_width(width: i32, display_percent: f64) -> i32 {
 /// 사용 가능한 너비에 맞춘 작업 표시줄 위젯 표현 단계입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TaskbarLayoutMode {
-    /// 상태점, 기간 라벨, 사용률을 모두 표시합니다.
+    /// 상태점과 두 사용량 창의 기간 라벨·사용률을 표시합니다.
     Full,
-    /// 기간 라벨을 생략하고 상태점과 사용률을 표시합니다.
+    /// 기간 라벨을 생략하고 상태점과 두 사용량 창의 사용률을 표시합니다.
     Compact,
-    /// 사용률을 중앙에 크게 표시하고 나머지 텍스트를 생략합니다.
+    /// 첫 번째 사용량 창의 사용률만 중앙에 표시합니다.
     Minimal,
 }
 
@@ -218,17 +232,28 @@ pub struct TaskbarLayout {
     pub window: Rect,
     /// 상태 점 영역입니다.
     pub dot: Option<Rect>,
-    /// 주간 사용량 레이블 영역입니다.
+    /// 첫 번째 사용량 창(보통 5시간)의 레이블 영역입니다.
     pub label: Option<Rect>,
-    /// 오른쪽 고정 퍼센트 영역입니다.
+    /// 두 번째 사용량 창(보통 주간)의 레이블 영역입니다.
+    pub secondary_label: Option<Rect>,
+    /// 첫 번째 사용량 창의 오른쪽 고정 퍼센트 영역입니다.
     pub percent: Rect,
-    /// 진행 막대 영역입니다.
+    /// 두 번째 사용량 창의 오른쪽 고정 퍼센트 영역입니다.
+    pub secondary_percent: Option<Rect>,
+    /// 첫 번째 사용량 창의 진행 막대 영역입니다.
     pub progress: Rect,
+    /// 두 번째 사용량 창의 진행 막대 영역입니다.
+    pub secondary_progress: Option<Rect>,
 }
 
 impl TaskbarLayout {
     /// 실제 클라이언트 크기와 DPI에 맞춰 고정 영역을 계산합니다.
     pub fn for_size(width: i32, height: i32, dpi: u32) -> Self {
+        Self::for_rows(width, height, dpi, true)
+    }
+
+    /// 실제 클라이언트 크기와 표시할 행 수에 맞춰 고정 영역을 계산합니다.
+    pub(crate) fn for_rows(width: i32, height: i32, dpi: u32, include_secondary: bool) -> Self {
         let scale = |value| logical_to_physical(value, dpi);
         let mode = if width >= scale(140) {
             TaskbarLayoutMode::Full
@@ -238,35 +263,105 @@ impl TaskbarLayout {
             TaskbarLayoutMode::Minimal
         };
         let inset = scale(11).min((width / 4).max(1));
-        let dot_size = scale(6).min((height / 3).max(1));
-        let top = scale(9).min((height - dot_size - 4).max(1));
-        let progress_height = scale(3).min((height / 4).max(1));
-        let progress_bottom = (height - scale(8)).max(top + dot_size + progress_height);
-        let progress_top = (progress_bottom - progress_height).max(top + dot_size + 2);
+        let row_count = if mode == TaskbarLayoutMode::Minimal || !include_secondary {
+            1
+        } else {
+            2
+        };
+        let top_padding = scale(2).max(1).min(height.max(1));
+        let bottom_padding = scale(3)
+            .max(1)
+            .min(height.saturating_sub(top_padding).max(1));
+        let row_gap = if row_count == 2 { scale(2).max(1) } else { 0 };
+        let available_height = height
+            .saturating_sub(top_padding)
+            .saturating_sub(bottom_padding)
+            .saturating_sub(row_gap)
+            .max(row_count);
+        let primary_row_height = (available_height / row_count).max(1);
+        let secondary_row_height = (available_height - primary_row_height).max(1);
+        let primary_top = top_padding;
+        let primary_bottom = primary_top + primary_row_height;
+        let secondary_top = primary_bottom + row_gap;
+        let secondary_bottom = secondary_top + secondary_row_height;
+        let progress_height = scale(2).max(1).min(
+            (primary_row_height
+                .min(secondary_row_height)
+                .saturating_sub(2))
+            .max(1),
+        );
+        let primary_progress_top = primary_bottom.saturating_sub(progress_height);
+        let secondary_progress_top = secondary_bottom.saturating_sub(progress_height);
+        let primary_text_bottom = primary_progress_top
+            .saturating_sub(1)
+            .max(primary_top + 1)
+            .min(primary_progress_top);
+        let secondary_text_bottom = secondary_progress_top
+            .saturating_sub(1)
+            .max(secondary_top + 1)
+            .min(secondary_progress_top);
+        let dot_size = scale(6).min(primary_row_height.max(1));
+        let dot_top = primary_top + primary_row_height.saturating_sub(dot_size) / 2;
         let label_left = inset + dot_size + scale(8);
         let percent_width = scale(42).min((width / 3).max(1));
         let full_percent_left = (width - inset - percent_width).max(label_left + scale(8));
-        let text_bottom = progress_top - 2;
-        let (dot, label, percent) = match mode {
+        let label_right = full_percent_left.saturating_sub(scale(4).max(1));
+        let (dot, label, percent, secondary_label, secondary_percent) = match mode {
             TaskbarLayoutMode::Full => (
-                Some(Rect::new(inset, top, inset + dot_size, top + dot_size)),
+                Some(Rect::new(
+                    inset,
+                    dot_top,
+                    inset + dot_size,
+                    dot_top + dot_size,
+                )),
                 Some(Rect::new(
                     label_left,
-                    scale(5),
-                    full_percent_left - scale(4),
-                    text_bottom,
+                    primary_top,
+                    label_right,
+                    primary_text_bottom,
                 )),
-                Rect::new(full_percent_left, scale(5), width - inset, text_bottom),
+                Rect::new(
+                    full_percent_left,
+                    primary_top,
+                    width - inset,
+                    primary_text_bottom,
+                ),
+                Some(Rect::new(
+                    label_left,
+                    secondary_top,
+                    label_right,
+                    secondary_text_bottom,
+                )),
+                Some(Rect::new(
+                    full_percent_left,
+                    secondary_top,
+                    width - inset,
+                    secondary_text_bottom,
+                )),
             ),
             TaskbarLayoutMode::Compact => (
-                Some(Rect::new(inset, top, inset + dot_size, top + dot_size)),
+                Some(Rect::new(
+                    inset,
+                    dot_top,
+                    inset + dot_size,
+                    dot_top + dot_size,
+                )),
                 None,
-                Rect::new(label_left, scale(5), width - inset, text_bottom),
+                Rect::new(label_left, primary_top, width - inset, primary_text_bottom),
+                None,
+                Some(Rect::new(
+                    label_left,
+                    secondary_top,
+                    width - inset,
+                    secondary_text_bottom,
+                )),
             ),
             TaskbarLayoutMode::Minimal => (
                 None,
                 None,
-                Rect::new(inset, scale(5), width - inset, text_bottom),
+                Rect::new(inset, primary_top, width - inset, primary_text_bottom),
+                None,
+                None,
             ),
         };
 
@@ -275,15 +370,118 @@ impl TaskbarLayout {
             window: Rect::new(0, 0, width, height),
             dot,
             label,
+            secondary_label,
             percent,
-            progress: Rect::new(inset, progress_top, width - inset, progress_bottom),
+            secondary_percent,
+            progress: Rect::new(inset, primary_progress_top, width - inset, primary_bottom),
+            secondary_progress: (row_count == 2).then_some(Rect::new(
+                inset,
+                secondary_progress_top,
+                width - inset,
+                secondary_bottom,
+            )),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{progress_fill_width, tooltip_text_needs_update};
+    use crate::{windows::UsageRowView, UsageLevel};
+
+    use super::{progress_fill_width, tooltip_text_needs_update, TaskbarLayout};
+
+    #[test]
+    fn full_layout_reserves_two_usage_rows() {
+        let layout = TaskbarLayout::for_size(208, 48, 96);
+
+        let secondary_label = layout
+            .secondary_label
+            .expect("full layout should include a secondary label");
+        let secondary_percent = layout
+            .secondary_percent
+            .expect("full layout should include a secondary percent");
+        let secondary_progress = layout
+            .secondary_progress
+            .expect("full layout should include a secondary progress bar");
+
+        assert!(layout.progress.bottom <= secondary_progress.top);
+        for rect in [
+            layout
+                .label
+                .expect("full layout should include a primary label"),
+            secondary_label,
+            layout.percent,
+            secondary_percent,
+            layout.progress,
+            secondary_progress,
+        ] {
+            assert!(rect.is_inside(layout.window));
+        }
+    }
+
+    #[test]
+    fn minimal_layout_keeps_only_the_primary_usage_row() {
+        let layout = TaskbarLayout::for_size(99, 48, 96);
+
+        assert!(layout.secondary_label.is_none());
+        assert!(layout.secondary_percent.is_none());
+        assert!(layout.secondary_progress.is_none());
+    }
+
+    #[test]
+    fn single_row_layout_uses_the_available_body_height() {
+        let layout = TaskbarLayout::for_rows(208, 48, 96, false);
+
+        assert!(layout.secondary_progress.is_none());
+        assert!(layout.progress.bottom > 30);
+        assert!(layout.progress.is_inside(layout.window));
+    }
+
+    #[test]
+    fn two_row_layout_stays_inside_the_minimum_taskbar_height_at_supported_dpis() {
+        for dpi in [96, 120, 144, 192] {
+            let width = crate::windows::widget::logical_to_physical(208, dpi);
+            let height = crate::windows::widget::logical_to_physical(36, dpi);
+            let layout = TaskbarLayout::for_size(width, height, dpi);
+            let secondary_progress = layout
+                .secondary_progress
+                .expect("full layout should include a secondary progress bar");
+
+            assert!(layout.progress.is_inside(layout.window));
+            assert!(secondary_progress.is_inside(layout.window));
+            assert!(layout.progress.bottom <= secondary_progress.top);
+        }
+    }
+
+    #[test]
+    fn taskbar_rows_prioritize_primary_and_promote_secondary_when_missing() {
+        let primary = UsageRowView {
+            label: "5h".to_owned(),
+            used_percent: 10.0,
+            display_percent: 10.0,
+            percent_text: "10%".to_owned(),
+            reset_text: "later".to_owned(),
+            level: UsageLevel::Stable,
+            forecast: super::super::ForecastView::Hidden,
+        };
+        let secondary = UsageRowView {
+            label: "7d".to_owned(),
+            used_percent: 20.0,
+            display_percent: 20.0,
+            percent_text: "20%".to_owned(),
+            reset_text: "tomorrow".to_owned(),
+            level: UsageLevel::Stable,
+            forecast: super::super::ForecastView::Hidden,
+        };
+
+        let rows = super::taskbar_rows(Some(&primary), Some(&secondary));
+        assert!(std::ptr::eq(rows[0].expect("primary row"), &primary));
+        assert!(std::ptr::eq(rows[1].expect("secondary row"), &secondary));
+
+        let promoted = super::taskbar_rows(None, Some(&secondary));
+        assert!(std::ptr::eq(promoted[0].expect("promoted row"), &secondary));
+        assert!(promoted[1].is_none());
+    }
 
     #[test]
     fn progress_fill_width_follows_the_display_percent_and_clamps_it() {
