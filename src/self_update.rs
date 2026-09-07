@@ -112,21 +112,29 @@ impl SelfUpdateHttpClient for UreqSelfUpdateHttpClient {
         if status / 100 != 2 || !is_trusted_download_url(&final_url) {
             return Err(SelfUpdateError::Network);
         }
-        let body = response
-            .body_mut()
-            .with_config()
-            .limit(max_bytes)
-            .read_to_vec()
-            .map_err(|_| SelfUpdateError::TooLarge)?;
-        if u64::try_from(body.len()).map_err(|_| SelfUpdateError::TooLarge)? > max_bytes {
-            return Err(SelfUpdateError::TooLarge);
-        }
+        let body = read_download_body(response.body_mut(), max_bytes)?;
         Ok(DownloadResponse {
             status,
             final_url,
             body,
         })
     }
+}
+
+/// EOF 확인용 한 바이트만 추가로 읽고, 상한 이하의 본문만 반환합니다.
+/// `ureq::BodyWithConfig::limit`는 정확히 상한 크기인 본문도 EOF 확인 중 거절하므로
+/// 표준 `Read::take`로 읽기를 제한하고 실제 길이를 별도로 검사합니다.
+fn read_download_body(body: &mut ureq::Body, max_bytes: u64) -> Result<Vec<u8>, SelfUpdateError> {
+    let read_limit = max_bytes.checked_add(1).ok_or(SelfUpdateError::TooLarge)?;
+    let mut bytes = Vec::new();
+    body.as_reader()
+        .take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| SelfUpdateError::Network)?;
+    if u64::try_from(bytes.len()).map_err(|_| SelfUpdateError::TooLarge)? > max_bytes {
+        return Err(SelfUpdateError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 /// 검증된 GitHub Release asset 메타데이터입니다.
@@ -1152,6 +1160,74 @@ fn is_trusted_download_url(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_body_accepts_the_exact_limit_with_known_or_unknown_length() {
+        let bytes = b"release executable";
+        for mut body in [
+            ureq::Body::builder().data(bytes.to_vec()),
+            ureq::Body::builder().reader(std::io::Cursor::new(bytes.to_vec())),
+        ] {
+            assert_eq!(
+                read_download_body(&mut body, bytes.len() as u64),
+                Ok(bytes.to_vec())
+            );
+        }
+    }
+
+    #[test]
+    fn download_body_accepts_below_limit_and_rejects_oversized_responses() {
+        for length in [0, 3, 5, 100] {
+            let mut body = ureq::Body::builder().data(vec![b'x'; length]);
+            let expected = if length <= 4 {
+                Ok(vec![b'x'; length])
+            } else {
+                Err(SelfUpdateError::TooLarge)
+            };
+            assert_eq!(read_download_body(&mut body, 4), expected);
+        }
+    }
+
+    #[test]
+    fn download_body_preserves_transport_failure_classification() {
+        struct BrokenReader;
+        impl Read for BrokenReader {
+            fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(std::io::ErrorKind::ConnectionReset))
+            }
+        }
+        let mut body = ureq::Body::builder().reader(BrokenReader);
+        assert_eq!(
+            read_download_body(&mut body, 4),
+            Err(SelfUpdateError::Network)
+        );
+    }
+
+    #[test]
+    fn download_body_bounds_an_unending_stream_and_rejects_limit_overflow() {
+        use std::sync::Arc;
+
+        struct CountingReader(Arc<AtomicU64>);
+        impl Read for CountingReader {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                buffer.fill(b'x');
+                self.0.fetch_add(buffer.len() as u64, Ordering::Relaxed);
+                Ok(buffer.len())
+            }
+        }
+        let count = Arc::new(AtomicU64::new(0));
+        let mut body = ureq::Body::builder().reader(CountingReader(count.clone()));
+        assert_eq!(
+            read_download_body(&mut body, 4),
+            Err(SelfUpdateError::TooLarge)
+        );
+        assert_eq!(count.load(Ordering::Relaxed), 5);
+        assert_eq!(
+            read_download_body(&mut body, u64::MAX),
+            Err(SelfUpdateError::TooLarge)
+        );
+        assert_eq!(count.load(Ordering::Relaxed), 5);
+    }
 
     #[test]
     fn checksum_parser_requires_one_exact_safe_asset_name() {
