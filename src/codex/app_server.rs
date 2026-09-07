@@ -367,6 +367,7 @@ struct AccountResult {
 struct AccountDto {
     #[serde(rename = "type")]
     account_type: String,
+    email: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -454,18 +455,16 @@ fn run_jsonl_session_until<T: JsonlTransport>(
     let mut next_id = 1;
     initialize_session(transport, next_id, deadline)?;
     next_id += 1;
-    if !read_account(transport, next_id, false, deadline)? {
-        return Err(UsageError::NotLoggedIn);
-    }
+    let mut account =
+        read_account(transport, next_id, false, deadline)?.ok_or(UsageError::NotLoggedIn)?;
 
     next_id += 1;
     let usage = match read_rate_limits(transport, next_id, deadline) {
         Ok(usage) => usage,
         Err(UsageError::RequestFailed) if allow_auth_refresh => {
             next_id += 1;
-            if !read_account(transport, next_id, true, deadline)? {
-                return Err(UsageError::AuthenticationExpired);
-            }
+            account = read_account(transport, next_id, true, deadline)?
+                .ok_or(UsageError::AuthenticationExpired)?;
             next_id += 1;
             read_rate_limits(transport, next_id, deadline)?
         }
@@ -475,6 +474,11 @@ fn run_jsonl_session_until<T: JsonlTransport>(
     let daily_token_usage =
         read_daily_token_usage(transport, next_id, deadline).unwrap_or_default();
     Ok(CodexUsage {
+        account_email: if account.account_type == "chatgpt" {
+            account.email.and_then(crate::AccountEmail::new)
+        } else {
+            None
+        },
         daily_token_usage,
         ..usage
     })
@@ -626,7 +630,7 @@ fn read_account<T: JsonlTransport>(
     id: u64,
     refresh_token: bool,
     deadline: Instant,
-) -> Result<bool, UsageError> {
+) -> Result<Option<AccountDto>, UsageError> {
     send_request(
         transport,
         &Request {
@@ -638,9 +642,9 @@ fn read_account<T: JsonlTransport>(
     )?;
     let account = receive_result::<_, AccountResult>(transport, id, deadline)?.account;
     match account {
-        None => Ok(false),
+        None => Ok(None),
         Some(account) if account.account_type.is_empty() => Err(UsageError::InvalidResponse),
-        Some(_) => Ok(true),
+        Some(account) => Ok(Some(account)),
     }
 }
 
@@ -674,6 +678,7 @@ fn read_rate_limits<T: JsonlTransport>(
     }
     Ok(CodexUsage {
         primary,
+        account_email: None,
         secondary,
         reset_credits: reset_credits.and_then(into_reset_credits),
         fetched_at: SystemTime::now(),
@@ -1059,6 +1064,38 @@ mod tests {
     }
 
     #[test]
+    fn session_keeps_only_a_valid_chatgpt_email_and_redacts_debug_output() {
+        for (account, expected) in [
+            (
+                r#"{"type":"chatgpt","email":"work@example.invalid","id":"never retain","accessToken":"never retain"}"#,
+                Some("work@example.invalid"),
+            ),
+            (r#"{"type":"chatgpt"}"#, None),
+            (r#"{"type":"chatgpt","email":null}"#, None),
+            (r#"{"type":"chatgpt","email":"not an email"}"#, None),
+            (r#"{"type":"chatgpt","email":"a@example.invalid\n"}"#, None),
+            (r#"{"type":"apiKey","email":"work@example.invalid"}"#, None),
+        ] {
+            let response = format!(r#"{{"id":2,"result":{{"account":{account}}}}}"#);
+            let mut transport = ScriptedTransport::new([
+                r#"{"id":1,"result":{}}"#,
+                &response,
+                r#"{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":25},"secondary":null}}}"#,
+            ]);
+            let usage = run_jsonl_session(&mut transport, false, Duration::from_secs(1)).unwrap();
+            assert_eq!(
+                usage
+                    .account_email
+                    .as_ref()
+                    .map(crate::AccountEmail::as_str),
+                expected
+            );
+            assert!(!format!("{usage:?}").contains("example.invalid"));
+            assert!(!format!("{usage:?}").contains("never retain"));
+        }
+    }
+
+    #[test]
     fn session_ignores_sensitive_extra_fields_and_interleaved_notifications() {
         let mut transport = ScriptedTransport::new([
             r#"{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"codex"},"accessToken":"never retain"}}"#,
@@ -1344,6 +1381,7 @@ mod tests {
         assert_eq!(
             run_serialized_operation(in_flight, Instant::now() + Duration::from_secs(1), || {
                 Ok(CodexUsage {
+                    account_email: None,
                     primary: None,
                     secondary: None,
                     reset_credits: None,
@@ -1410,15 +1448,16 @@ mod tests {
     fn session_forces_one_refresh_then_retries_rate_limits_once() {
         let mut transport = ScriptedTransport::new([
             r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
-            r#"{"jsonrpc":"2.0","id":2,"result":{"account":{"type":"chatgpt"}}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"result":{"account":{"type":"chatgpt","email":"old@example.invalid"}}}"#,
             r#"{"jsonrpc":"2.0","id":3,"error":{"code":-32099}}"#,
-            r#"{"jsonrpc":"2.0","id":4,"result":{"account":{"type":"chatgpt"}}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"result":{"account":{"type":"chatgpt","email":"new@example.invalid"}}}"#,
             r#"{"jsonrpc":"2.0","id":5,"result":{"rateLimits":{"primary":{"usedPercent":9.0,"windowDurationMins":60,"resetsAt":1},"secondary":null}}}"#,
         ]);
 
         let usage = run_jsonl_session(&mut transport, true, Duration::from_secs(1)).unwrap();
 
         assert_eq!(usage.primary.unwrap().used_percent, 9.0);
+        assert_eq!(usage.account_email.unwrap().as_str(), "new@example.invalid");
         assert_eq!(
             transport.requests(),
             [

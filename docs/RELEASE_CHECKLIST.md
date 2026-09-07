@@ -117,6 +117,10 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 
 ### Windows shell and layout matrix
 
+- [ ] In the profile manager, verify each profile shows its own login email below its name,
+      missing/stale/failed data shows `—`, and login/logout clears the old email. At common DPI
+      scales and in RTL, verify all four text rows and progress remain separate; screen readers
+      receive the email, while settings, history, diagnostics, and debug output do not contain it.
 - [ ] Windows 10 x64 and Windows 11 x64
 - [ ] 100%, 125%, 150%, and 200% display scaling, including a scale change while running
 - [ ] Single monitor and multiple monitors with primary-monitor changes

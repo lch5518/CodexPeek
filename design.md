@@ -190,11 +190,12 @@ status model as the widgets while preserving Win32 behavior.
 
 The profile manager uses the Native Refined direction:
 
-- Use 56 logical-pixel profile rows with 16 px horizontal padding.
+- Use 94 logical-pixel profile rows with 16 px horizontal padding.
 - The selected row has a subtle theme-appropriate green tint and a 3 px green
   selection bar.
-- The first line is the profile name. The second line is the existing localized
-  usage, loading, unavailable, or login-required summary.
+- The first line is the profile name, followed by the login email, localized status summary,
+  and usage details. Missing or unverified email uses `—`. Keep email reading left-to-right
+  even in RTL layouts; native accessibility text includes the available email.
 - When valid usage exists, show a thin semantic progress indicator at the edge
   appropriate for the current layout direction.
 - Indicate the system/default account and currently displayed account with text,

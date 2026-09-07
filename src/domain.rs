@@ -184,9 +184,52 @@ impl UsageWindow {
     }
 }
 
-/// 기본 및 보조 사용량 창을 한 번에 전달하는 조회 결과입니다.
+/// 프로필 관리 화면에만 표시하는 검증된 로그인 이메일입니다.
+///
+/// 실행 중 메모리에만 보관하며 설정·사용량 기록에 직렬화하지 않습니다. `Debug` 출력은
+/// 내용을 숨기므로 실제 주소는 화면을 그릴 때만 `as_str`로 꺼냅니다.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AccountEmail(String);
+
+impl AccountEmail {
+    /// RPC에서 받은 이메일이 단일 행으로 표시 가능한 경우에만 보관합니다.
+    ///
+    /// `value`가 254바이트를 넘거나 공백·제어 문자·방향 제어 문자를 포함하거나 `@` 앞뒤가
+    /// 비어 있으면 `None`을 반환합니다. 주소의 유효성이나 계정 소유권을 별도로 확인하지 않습니다.
+    pub fn new(value: String) -> Option<Self> {
+        let (local, domain) = value.split_once('@')?;
+        if value.len() > 254
+            || local.is_empty()
+            || domain.is_empty()
+            || domain.contains('@')
+            || value.chars().any(|c| {
+                c.is_whitespace()
+                    || c.is_control()
+                    || matches!(c, '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')
+            })
+        {
+            return None;
+        }
+        Some(Self(value))
+    }
+
+    /// 프로필 관리 화면과 보조 기술에 전달할 이메일을 빌립니다. 로그에는 사용하지 않습니다.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AccountEmail {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AccountEmail([redacted])")
+    }
+}
+
+/// 기본 및 보조 사용량 창과 메모리 전용 계정 표시 정보를 전달하는 조회 결과입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CodexUsage {
+    /// 같은 조회의 `account/read`에서 확인한 로그인 이메일이며 파일에 저장하지 않습니다.
+    pub account_email: Option<AccountEmail>,
     /// 짧은 주기의 기본 사용량 창입니다.
     pub primary: Option<UsageWindow>,
     /// 긴 주기의 보조 사용량 창입니다.

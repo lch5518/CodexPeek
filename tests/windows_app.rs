@@ -67,6 +67,7 @@ use windows::Win32::Foundation::HWND;
 
 fn system_profile_view() -> UsageProfileView {
     UsageProfileView {
+        account_email: None,
         id: UsageProfileId::System,
         label: "Default Codex account".to_string(),
         summary: "Displayed".to_string(),
@@ -323,6 +324,7 @@ fn profile_manager_add_enablement_follows_can_add_exactly() {
     let mut full_profiles = vec![system_profile_view()];
     for sequence in 1..8 {
         full_profiles.push(UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(sequence),
             label: format!("Profile {sequence}"),
             summary: String::new(),
@@ -463,6 +465,7 @@ fn pending_profile_mutation_disables_every_mutating_control() {
 #[test]
 fn profile_manager_reenables_selected_profile_actions_after_pending_operation_finishes() {
     let profile = UsageProfileView {
+        account_email: None,
         id: UsageProfileId::Managed(1),
         label: "Work".to_string(),
         summary: String::new(),
@@ -487,6 +490,7 @@ fn profile_manager_reenables_selected_profile_actions_after_pending_operation_fi
     assert!(controller.command_enabled(ProfileDialogCommand::Delete));
 
     let signed_in = UsageProfileView {
+        account_email: None,
         login_required: false,
         ..profile
     };
@@ -548,6 +552,7 @@ fn profile_dialog_enforces_the_eight_profile_limit() {
     let mut profiles = vec![system_profile_view()];
     for sequence in 1..8 {
         profiles.push(UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(sequence),
             label: format!("Profile {sequence}"),
             summary: String::new(),
@@ -570,6 +575,7 @@ fn profile_dialog_controls_follow_the_selected_profile_state() {
     let profiles = vec![
         system_profile_view(),
         UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(1),
             label: "Signed in".to_string(),
             summary: String::new(),
@@ -581,6 +587,7 @@ fn profile_dialog_controls_follow_the_selected_profile_state() {
             managed: true,
         },
         UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(2),
             label: "Signed out".to_string(),
             summary: String::new(),
@@ -618,6 +625,7 @@ fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
     let profiles = vec![
         system_profile_view(),
         UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(11),
             label: "One".to_string(),
             summary: String::new(),
@@ -629,6 +637,7 @@ fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
             managed: true,
         },
         UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(12),
             label: "Two".to_string(),
             summary: String::new(),
@@ -666,6 +675,7 @@ fn profile_dialog_actions_use_the_current_selection_without_stale_identity() {
 #[test]
 fn dialog_controller_emits_only_confirmed_typed_profile_actions() {
     let managed = UsageProfileView {
+        account_email: None,
         id: UsageProfileId::Managed(7),
         label: "Work".to_string(),
         summary: "Displayed".to_string(),
@@ -1127,6 +1137,7 @@ fn tray_settings(language: Language) -> UiSettings {
         usage_forecast_enabled: true,
         login_required: false,
         usage_profiles: vec![UsageProfileView {
+            account_email: None,
             id: UsageProfileId::System,
             label: codex_usage_monitor::localized_text(
                 codex_usage_monitor::LocalizationKey::UsageProfileSystem,
@@ -1152,6 +1163,7 @@ fn tray_settings(language: Language) -> UiSettings {
 fn tray_settings_with_profiles() -> UiSettings {
     let mut settings = tray_settings(Language::English);
     settings.usage_profiles.push(UsageProfileView {
+        account_email: None,
         id: UsageProfileId::Managed(1),
         label: "Work".to_string(),
         summary: "Weekly 72% remaining".to_string(),
@@ -1194,6 +1206,7 @@ fn usage_profile_submenu_offers_manage_but_not_duplicate_add() {
 #[test]
 fn manager_marks_only_the_custom_system_profile_as_default() {
     let system = UsageProfileView {
+        account_email: None,
         id: UsageProfileId::System,
         label: "Main".to_owned(),
         summary: String::new(),
@@ -1210,6 +1223,7 @@ fn manager_marks_only_the_custom_system_profile_as_default() {
     );
 
     let default_system = UsageProfileView {
+        account_email: None,
         label: "Default Codex account".to_owned(),
         ..system.clone()
     };
@@ -1219,6 +1233,7 @@ fn manager_marks_only_the_custom_system_profile_as_default() {
     );
 
     let managed = UsageProfileView {
+        account_email: None,
         id: UsageProfileId::Managed(1),
         ..system.clone()
     };

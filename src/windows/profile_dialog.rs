@@ -813,9 +813,11 @@ pub fn profile_manager_row_label(profile: &UsageProfileView, language: Language)
 /// 프로필 관리자 owner-draw 행에 전달할 안전한 표시 문자열 모음입니다.
 ///
 /// 이름과 기존 지역화 summary는 그대로 복사하며, 시스템 계정과 현재 표시 프로필의 역할은
-/// 별도 표식으로 반환합니다. 계정·인증·경로 정보에 접근하거나 입력을 변경하지 않습니다.
+/// 별도 표식으로 반환합니다. 조회된 이메일은 메모리에만 보관하고 `Debug`에서 숨깁니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileManagerRowText {
+    /// 프로필 이름 아래에 표시할 로그인 이메일입니다. 조회할 수 없으면 `None`입니다.
+    pub account_email: Option<crate::AccountEmail>,
     /// 사용자가 지정했거나 지역화된 프로필 표시 이름입니다.
     pub name: String,
     /// 호출자가 이미 안전하게 구성한 사용량 또는 로그인 상태 요약입니다.
@@ -828,7 +830,7 @@ pub struct ProfileManagerRowText {
 
 /// 프로필 관리자 owner-draw 행의 이름, summary, 역할 표식을 만듭니다.
 ///
-/// `profile`은 민감하지 않은 표시 모델이어야 합니다. 시스템 프로필의 이름이 이미 현재 언어의
+/// `profile`은 검증된 표시 모델이어야 합니다. 시스템 프로필의 이름이 이미 현재 언어의
 /// 시스템 이름과 같으면 중복 표식을 생략하고, 현재 표시 프로필에는 별도의 텍스트 표식을
 /// 추가합니다. 반환값은 소유 문자열과 정적 지역화 표식만 포함하며 I/O를 수행하지 않습니다.
 pub fn profile_manager_row_text(
@@ -847,6 +849,7 @@ pub fn profile_manager_row_text(
         ));
     }
     ProfileManagerRowText {
+        account_email: profile.account_email.clone(),
         name: profile.label.clone(),
         summary: profile.summary.clone(),
         details: profile.details.clone(),
@@ -858,13 +861,18 @@ pub fn profile_manager_row_text(
 ///
 /// `profile`의 표시 이름, 지역화된 시스템·현재 표식, 기존 안전 summary만 포함합니다. 표식은
 /// 괄호 안에서 쉼표로 구분하고 summary는 em dash 뒤에 보존합니다. 빈 표식이나 빈 summary는
-/// 생략하며 인증·계정·경로 데이터에 접근하거나 I/O를 수행하지 않습니다.
+/// 생략하며 조회된 이메일이 있으면 이름 다음에 넣습니다. 반환값은 보조 기술용이며 로그에
+/// 기록하지 않습니다. 인증 파일 접근이나 I/O는 수행하지 않습니다.
 pub fn profile_manager_accessible_row_text(
     profile: &UsageProfileView,
     language: Language,
 ) -> String {
     let copy = profile_manager_row_text(profile, language);
     let mut text = copy.name;
+    if let Some(email) = copy.account_email {
+        text.push_str(" — ");
+        text.push_str(email.as_str());
+    }
     if !copy.markers.is_empty() {
         text.push_str(" (");
         text.push_str(&copy.markers.join(", "));
@@ -934,7 +942,8 @@ pub fn profile_delete_confirmation(label: &str, language: Language) -> String {
 
 /// 프로필 목록을 소유 모달 대화상자로 표시하고 한 개의 타입 지정 작업을 반환합니다.
 ///
-/// `profiles`는 민감 정보가 없는 표시 복사본이며 `mutation_pending`이 참이면 모든 변경
+/// `profiles`는 검증된 이메일을 포함할 수 있는 메모리 전용 표시 복사본이며 파일·로그에
+/// 기록하지 않습니다. `mutation_pending`이 참이면 모든 변경
 /// 컨트롤을 비활성화합니다. 비 Windows 플랫폼에서는 부작용 없이 `Unsupported`를 반환합니다.
 pub fn show_profile_manager(
     profiles: &[UsageProfileView],

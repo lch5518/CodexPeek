@@ -638,6 +638,7 @@ mod tests {
             usage_forecast_enabled: true,
             login_required: false,
             usage_profiles: vec![UsageProfileView {
+                account_email: None,
                 id: UsageProfileId::System,
                 label: crate::localized_text(
                     crate::LocalizationKey::UsageProfileSystem,

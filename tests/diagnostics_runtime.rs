@@ -139,6 +139,7 @@ fn diagnostic_usage() -> CodexUsage {
     use std::time::SystemTime;
 
     CodexUsage {
+        account_email: None,
         primary: None,
         secondary: None,
         reset_credits: None,

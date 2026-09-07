@@ -24,7 +24,9 @@ pub use diagnostics::{
     AsyncDiagnosticWriter, DiagnosticCode, DiagnosticLogger, ProfileDiagnosticRun,
     ProfileDiagnosticSnapshot, SafeDiagnostic, UsageHistoryOperation,
 };
-pub use domain::{CodexUsage, DailyTokenUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind};
+pub use domain::{
+    AccountEmail, CodexUsage, DailyTokenUsage, ResetCredits, UsageLevel, UsageWindow, WindowKind,
+};
 pub use errors::UsageError;
 pub use forecast::{
     ConsumptionPaceAssessment, ConsumptionPaceLevel, ConsumptionPaceMetrics, Forecast,

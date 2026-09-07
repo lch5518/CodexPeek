@@ -77,6 +77,7 @@ pub(crate) struct UsagePopupPresentation {
     pub(crate) profile_label: String,
     pub(crate) reset_label: String,
     pub(crate) reset_text: Option<String>,
+    pub(crate) reset_credits_text: Option<String>,
     pub(crate) forecast_label: String,
     pub(crate) daily_usage_label: String,
     pub(crate) pace_summary: String,
@@ -110,6 +111,7 @@ pub(crate) fn usage_popup_presentation(
         reset_label: crate::app::reset_at_label(language).to_owned(),
         reset_text: row
             .and_then(|row| (!row.reset_text.is_empty()).then(|| row.reset_text.clone())),
+        reset_credits_text: view.reset_credits_text.clone(),
         forecast_label: crate::localized_text(crate::LocalizationKey::MenuUsageForecast, language)
             .to_owned(),
         daily_usage_label: crate::localization::localized_daily_token_usage_label(language)
@@ -273,6 +275,7 @@ mod tests {
 
         assert_eq!(presentation.profile_label, "Work");
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-18 10:23"));
+        assert_eq!(presentation.reset_credits_text, None);
         assert_eq!(presentation.forecast_label, "Usage forecasting");
         assert_eq!(presentation.daily_usage_label, "Daily token usage");
         assert_eq!(presentation.daily_usage.len(), 2);
@@ -297,6 +300,19 @@ mod tests {
 
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-11 15:00"));
         assert!(presentation.forecasts.is_empty());
+    }
+
+    #[test]
+    fn presentation_carries_reset_credit_summary_to_hover_popup() {
+        let mut view = ready_view();
+        view.reset_credits_text = Some("Full reset: 2 (expires 2026-08-20 10:00)".to_owned());
+
+        let presentation = usage_popup_presentation(&view, Language::English);
+
+        assert_eq!(
+            presentation.reset_credits_text.as_deref(),
+            Some("Full reset: 2 (expires 2026-08-20 10:00)")
+        );
     }
 
     #[test]

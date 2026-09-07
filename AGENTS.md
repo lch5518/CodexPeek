@@ -56,9 +56,12 @@ build.rs, build_support.rs Windows 아이콘, 매니페스트, 버전 리소스 
 1. `%USERPROFILE%\\.codex\\auth.json`의 **내용을 읽거나 파싱하지 않습니다**. 존재 여부만
    안전 진단에서 확인할 수 있습니다. 사용량과 로그인 상태는 설치된 Codex CLI의
    `app-server` RPC만 사용합니다.
-2. 토큰, 계정 ID, 이메일, 인증 파일 내용, 프록시 URL/자격 증명, 원본 RPC payload를
+2. 토큰, 계정 ID, 인증 파일 내용, 프록시 URL/자격 증명, 원본 RPC payload를
    구조체·로그·오류 메시지·테스트 fixture에 보관하지 않습니다. 필요한 필드만 즉시 역직렬화하고
    `UsageError`와 `SafeDiagnostic`의 안정적인 분류로 변환합니다.
+   프로필 관리 화면의 로그인 이메일만 예외로, `account/read`의 검증된 값을 메모리에 보관할 수
+   있습니다. `AccountEmail`로 Debug 출력을 숨기고 파일·로그·예측 기록에는 저장하지 않습니다.
+   이메일 테스트는 실제 계정 대신 `.invalid` 주소만 사용합니다.
 3. `app-server` 작업은 단일 요청만 허용하고, 시간 제한·JSONL 프레임 크기 제한·자식 프로세스
    정리를 유지합니다. 새 RPC를 추가할 때도 `ProcessGuard`와 Job Object를 우회하지 않습니다.
 4. 폴링 실패 시 마지막 정상 사용량을 유지합니다. 현재 백오프는 1/2/4/8/15분이며, 수동 새로

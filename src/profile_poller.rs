@@ -493,6 +493,9 @@ fn handle_command(
             }
         }
         ProfilePollCommand::Login(id, open) => {
+            if let Some(poll) = lock(shared).states.get_mut(&id) {
+                poll.clear_account_email();
+            }
             let result = match context_for_operation(shared, id) {
                 Some(context) => match begin_operation(lifecycle) {
                     Some(cancellation) => provider.login_profile(&context, open, cancellation),
@@ -505,6 +508,9 @@ fn handle_command(
                 .push(ProfilePollEvent::LoginFinished { id, result });
         }
         ProfilePollCommand::Logout(id) => {
+            if let Some(poll) = lock(shared).states.get_mut(&id) {
+                poll.clear_account_email();
+            }
             let result = match context_for_operation(shared, id) {
                 Some(context) => match begin_operation(lifecycle) {
                     Some(cancellation) => provider.logout_profile(&context, cancellation),

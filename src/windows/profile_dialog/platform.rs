@@ -930,6 +930,11 @@ unsafe fn relayout_manager_dialog(
     let client_width = layout.client.width();
 
     move_dialog_control(list, layout.list, client_width, rtl)?;
+    // 최초 1픽셀 목록에서 정해진 스크롤 위치를 실제 행 높이에 맞춰 선택 행으로 복구합니다.
+    let selected = SendMessageW(list, LB_GETCURSEL, None, None).0;
+    if selected >= 0 {
+        let _ = SendMessageW(list, LB_SETCURSEL, Some(WPARAM(selected as usize)), None);
+    }
     if let Ok(add) = GetDlgItem(Some(dialog), OPEN_ADD_ID) {
         move_dialog_control(add, layout.add_control, client_width, rtl)?;
     }
@@ -1578,6 +1583,7 @@ enum ProfileRowFillStage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileRowTextStage {
     Name,
+    Email,
     Markers,
     Summary,
     Details,
@@ -2006,11 +2012,24 @@ fn paint_profile_row_custom<B: ProfileRowPaintBackend>(
                 base_format,
             )?;
         }
-        let mut summary_rect = RECT {
+        let mut email_rect = RECT {
             left: content_left,
             top: rect.top + scale_logical(26, visuals.dpi),
             right: content_right,
             bottom: rect.top + scale_logical(43, visuals.dpi),
+        };
+        backend.draw_text(
+            ProfileRowTextStage::Email,
+            copy.account_email
+                .as_ref()
+                .map_or("—", crate::AccountEmail::as_str),
+            &mut email_rect,
+            (base_format & !DT_RTLREADING) | DT_END_ELLIPSIS,
+        )?;
+        let mut summary_rect = RECT {
+            top: rect.top + scale_logical(43, visuals.dpi),
+            bottom: rect.top + scale_logical(60, visuals.dpi),
+            ..email_rect
         };
         backend.draw_text(
             ProfileRowTextStage::Summary,
@@ -2020,9 +2039,9 @@ fn paint_profile_row_custom<B: ProfileRowPaintBackend>(
         )?;
         let mut details_rect = RECT {
             left: content_left,
-            top: rect.top + scale_logical(43, visuals.dpi),
+            top: rect.top + scale_logical(60, visuals.dpi),
             right: content_right,
-            bottom: rect.top + scale_logical(60, visuals.dpi),
+            bottom: rect.top + scale_logical(77, visuals.dpi),
         };
         backend.draw_text(
             ProfileRowTextStage::Details,
@@ -4018,6 +4037,7 @@ mod tests {
     #[ignore = "requires a live Windows desktop"]
     fn live_manager_reenables_native_profile_buttons_after_pending_refresh() {
         let profile = UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(1),
             label: "Work".to_string(),
             summary: String::new(),
@@ -4659,6 +4679,7 @@ mod tests {
 
     fn row_paint_fixture() -> (UsageProfileView, super::ProfileManagerRowText, String) {
         let profile = UsageProfileView {
+            account_email: crate::AccountEmail::new("work@example.invalid".to_owned()),
             id: UsageProfileId::System,
             label: "W".repeat(super::PROFILE_LABEL_MAX_UTF16_UNITS),
             summary: "72% remaining".to_string(),
@@ -4682,7 +4703,7 @@ mod tests {
                 left: 0,
                 top: 0,
                 right: 220,
-                bottom: 56,
+                bottom: crate::windows::design::ROW_HEIGHT,
             },
             &profile,
             &copy,
@@ -4970,6 +4991,25 @@ mod tests {
                 assert!(name.right <= markers.left || markers.right <= name.left);
                 assert_ne!(name_format & DT_END_ELLIPSIS.0, 0);
                 assert_eq!(marker_format & DT_END_ELLIPSIS.0, 0);
+                let (_, email_rect, email_format) = draws
+                    .iter()
+                    .find(|(stage, _, _)| *stage == ProfileRowTextStage::Email)
+                    .copied()
+                    .unwrap();
+                let (_, summary_rect, _) = draws
+                    .iter()
+                    .find(|(stage, _, _)| *stage == ProfileRowTextStage::Summary)
+                    .copied()
+                    .unwrap();
+                assert!(email_rect.top >= name.bottom);
+                assert!(email_rect.bottom <= summary_rect.top);
+                assert_eq!(email_format & DT_RTLREADING.0, 0);
+                assert!(accessible.contains("work@example.invalid"));
+                assert!(!format!("{copy:?}").contains("work@example.invalid"));
+                assert!(backend.events.iter().any(|event| matches!(event,
+                    ProfileRowPaintEvent::Draw(ProfileRowTextStage::Email, text, _, _)
+                        if text == "work@example.invalid"
+                )));
                 assert!(backend.events.iter().any(|event| matches!(
                     event,
                     ProfileRowPaintEvent::Draw(ProfileRowTextStage::Details, text, _, _)
@@ -4989,6 +5029,7 @@ mod tests {
     #[test]
     fn profile_row_visual_state_uses_native_selection_and_focus() {
         let profile = UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(1),
             label: "Work".to_string(),
             summary: "Ready".to_string(),
@@ -5017,6 +5058,7 @@ mod tests {
             (255, ProfileUsageStatus::Critical, 100),
         ] {
             let profile = UsageProfileView {
+                account_email: None,
                 id: UsageProfileId::Managed(1),
                 label: "Work".to_string(),
                 summary: "Ready".to_string(),
@@ -5038,6 +5080,7 @@ mod tests {
     #[test]
     fn profile_row_visual_state_requires_complete_usage_and_exposes_text_marker_flags() {
         let profile = UsageProfileView {
+            account_email: None,
             id: UsageProfileId::System,
             label: "Main".to_string(),
             summary: "Login required".to_string(),
@@ -5055,6 +5098,7 @@ mod tests {
         assert!(visual.current_marker);
 
         let incomplete_usage = UsageProfileView {
+            account_email: None,
             login_required: false,
             used_percent: Some(0),
             ..profile
@@ -5422,7 +5466,7 @@ mod tests {
         );
         assert_eq!(resources.body_font.0 as usize, 51);
         assert_eq!(resources.heading_font.0 as usize, 52);
-        assert_eq!(resources.profile_row_height(), 152);
+        assert_eq!(resources.profile_row_height(), 188);
         assert!(!resources.update_in_progress);
         assert!(resources.pending_update.is_none());
     }
@@ -5471,6 +5515,7 @@ mod tests {
     #[test]
     fn manager_validation_path_presents_the_validation_route() {
         let profile = UsageProfileView {
+            account_email: None,
             id: UsageProfileId::Managed(7),
             label: "Work".to_string(),
             summary: "Ready".to_string(),

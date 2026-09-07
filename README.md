@@ -67,9 +67,12 @@ profiles, each with a separate Codex home under
 `%APPDATA%\CodexPeek\profiles`. The limit is eight profiles in total, including
 the system profile.
 
-Profile labels are names you provide. CodexPeek does not inspect account email addresses
-or IDs, so confirm the intended ChatGPT account in the browser when adding or signing in
-again. Selecting a profile changes only the usage that CodexPeek polls and displays. It
+Profile labels are names you provide. The profile manager shows the login email returned by
+Codex CLI's `account/read` below each profile name. Email stays in memory only and is never
+written to settings, history, or logs. Missing, stale, or failed account information shows `—`;
+login and logout clear the previous email until a successful usage refresh. Confirm the intended
+ChatGPT account in the browser when signing in. Selecting a profile changes only the usage that
+CodexPeek polls and displays. It
 does not change sign-in for terminals, IDEs, the Codex app, WSL, Remote SSH, or Dev
 Containers.
 
@@ -259,7 +262,9 @@ The monitor never reads or parses the contents of `%USERPROFILE%\.codex\auth.jso
 Diagnostics check only whether that path exists.
 
 Raw RPC responses are processed only long enough to extract the login type and the displayed rate-limit fields.
-Tokens, account IDs, email addresses, authentication-file contents, and proxy values are not stored or written to logs.
+Tokens, account IDs, authentication-file contents, and proxy values are not retained or logged.
+Login email is kept only in memory for the profile manager, redacted in debug output, and never
+written to settings, usage history, or logs.
 
 CodexPeek never reads, parses, or copies any profile's `auth.json`. For a managed profile,
 only the corresponding child `codex app-server` process receives its isolated

@@ -36,6 +36,12 @@ use crate::windows::{
 };
 
 const USAGE_POPUP_CLASS: PCWSTR = w!("CodexUsageMonitor.UsagePopup.v1");
+const RESET_CREDITS_TOP_LOGICAL: i32 = 56;
+const RESET_CREDITS_GAP_LOGICAL: i32 = 4;
+const SEPARATOR_TOP_LOGICAL: i32 = 68;
+const FORECAST_HEADER_GAP_LOGICAL: i32 = 10;
+const FORECAST_HEADER_HEIGHT_LOGICAL: i32 = 26;
+const PACE_SUMMARY_GAP_LOGICAL: i32 = 2;
 const PACE_SUMMARY_TOP_LOGICAL: i32 = 106;
 const PACE_DETAIL_GAP_LOGICAL: i32 = 4;
 const FORECAST_GAP_LOGICAL: i32 = 8;
@@ -70,6 +76,9 @@ struct DailyUsageLayout {
 struct PopupLayout {
     width: i32,
     height: i32,
+    reset_credits: Option<TextBlockLayout>,
+    separator_top: i32,
+    forecast_header_top: i32,
     pace_summary: TextBlockLayout,
     pace_detail: Option<TextBlockLayout>,
     daily_usage: Option<DailyUsageLayout>,
@@ -89,7 +98,15 @@ fn popup_height_for_content(content_bottom: i32, dpi: u32) -> i32 {
 }
 
 fn pace_detail_top(summary_height: i32, dpi: u32) -> i32 {
-    logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi)
+    pace_detail_top_at(
+        logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi),
+        summary_height,
+        dpi,
+    )
+}
+
+fn pace_detail_top_at(summary_top: i32, summary_height: i32, dpi: u32) -> i32 {
+    summary_top
         .saturating_add(summary_height.max(0))
         .saturating_add(logical_to_physical(PACE_DETAIL_GAP_LOGICAL, dpi))
 }
@@ -245,8 +262,30 @@ pub(super) unsafe fn show(
         .saturating_sub(logical_to_physical(36, dpi))
         .saturating_sub(logical_to_physical(12, dpi))
         .max(1);
+    let reset_credits = presentation
+        .reset_credits_text
+        .as_deref()
+        .filter(|text| !text.is_empty())
+        .map(|text| TextBlockLayout {
+            top: logical_to_physical(RESET_CREDITS_TOP_LOGICAL, dpi),
+            height: measure_wrapped_text_height(text, text_width, 10, FW_NORMAL.0 as i32, dpi, rtl),
+        });
+    let separator_top = reset_credits
+        .map(|layout| {
+            layout
+                .top
+                .saturating_add(layout.height)
+                .saturating_add(logical_to_physical(RESET_CREDITS_GAP_LOGICAL, dpi))
+        })
+        .unwrap_or_else(|| logical_to_physical(SEPARATOR_TOP_LOGICAL, dpi))
+        .max(logical_to_physical(SEPARATOR_TOP_LOGICAL, dpi));
+    let forecast_header_top =
+        separator_top.saturating_add(logical_to_physical(FORECAST_HEADER_GAP_LOGICAL, dpi));
+    let pace_summary_top = forecast_header_top
+        .saturating_add(logical_to_physical(FORECAST_HEADER_HEIGHT_LOGICAL, dpi))
+        .saturating_add(logical_to_physical(PACE_SUMMARY_GAP_LOGICAL, dpi));
     let pace_summary = TextBlockLayout {
-        top: logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi),
+        top: pace_summary_top.max(logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi)),
         height: measure_wrapped_text_height(
             &presentation.pace_summary,
             text_width,
@@ -256,7 +295,11 @@ pub(super) unsafe fn show(
             rtl,
         ),
     };
-    let pace_detail_top = pace_detail_top(pace_summary.height, dpi);
+    let pace_detail_top = if reset_credits.is_some() {
+        pace_detail_top_at(pace_summary.top, pace_summary.height, dpi)
+    } else {
+        pace_detail_top(pace_summary.height, dpi)
+    };
     let pace_detail = presentation
         .pace_detail
         .as_deref()
@@ -304,6 +347,9 @@ pub(super) unsafe fn show(
     let layout = PopupLayout {
         width,
         height: popup_height_for_content(content_bottom, dpi),
+        reset_credits,
+        separator_top,
+        forecast_header_top,
         pace_summary,
         pace_detail,
         daily_usage,
@@ -583,13 +629,36 @@ unsafe fn paint_content(
         rtl,
         true,
     );
-    separator(dc, section(68), width, padding, palette.separator);
+    if let (Some(reset_credits), Some(layout)) = (
+        presentation.reset_credits_text.as_deref(),
+        layout.reset_credits,
+    ) {
+        draw_formatted_text(
+            dc,
+            reset_credits,
+            text_rect(layout.top, layout.top.saturating_add(layout.height)),
+            popup_font(dc, 10, FW_NORMAL.0 as i32, dpi),
+            palette.secondary_text,
+            wrapped_text_format(rtl),
+        );
+    }
+    separator(dc, layout.separator_top, width, padding, palette.separator);
 
-    draw_icon(dc, icon_rect(section(80)), "\u{E95E}", palette, dpi);
+    let forecast_header_top = layout.forecast_header_top;
+    draw_icon(
+        dc,
+        icon_rect(forecast_header_top.saturating_add(section(2))),
+        "\u{E95E}",
+        palette,
+        dpi,
+    );
     draw_text(
         dc,
         &presentation.forecast_label,
-        text_rect(section(78), section(104)),
+        text_rect(
+            forecast_header_top,
+            forecast_header_top.saturating_add(section(FORECAST_HEADER_HEIGHT_LOGICAL)),
+        ),
         popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
         palette.text,
         rtl,

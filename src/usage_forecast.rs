@@ -80,10 +80,12 @@ impl UsageSampleSink for UsageForecastService {
                 .flatten()
         };
         if let Some(generation) = generation {
+            let mut usage = usage.clone();
+            usage.account_email = None;
             let _ = self.samples.try_send(ForecastSample {
                 profile_id: id,
                 generation,
-                usage: usage.clone(),
+                usage,
                 observed_at,
             });
         }

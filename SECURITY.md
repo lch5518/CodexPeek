@@ -24,11 +24,15 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
 
 - Raw RPC payloads are handled only transiently for bounded parsing. They are not retained,
   copied to durable storage, persisted, or logged; only the required typed fields are
-  deserialized. Authentication tokens, account IDs, email addresses, authentication-file
+  deserialized. Authentication tokens, account IDs, authentication-file
   contents, and proxy values are not deserialized into application data, persisted, or logged.
+- The profile manager may display the validated login email returned by `account/read`. This is
+  a narrow exception for in-memory UI data: `AccountEmail` redacts debug output, and email is never
+  written to settings, usage history, or logs. Login/logout clears the prior email; authentication
+  errors clear it and stale or failed polls hide it. Missing email does not block usage display.
 - Diagnostics inspect only whether `%USERPROFILE%\.codex\auth.json` and proxy-related
   environment variables exist; their contents and values are not read into diagnostics.
-- The UI consumes only the login kind and the primary/secondary rate-limit window fields
+- The UI consumes only the login kind, profile-manager email, and primary/secondary rate-limit window fields
   needed for display. Settings are stored under `%APPDATA%\CodexPeek`; a bounded,
   rotating diagnostic log is stored at `%TEMP%\codex-peek.log`.
 - When usage forecasting is enabled, a separate `%APPDATA%\CodexPeek\usage-history.json`
@@ -69,7 +73,7 @@ GitHub 비공개 취약점 신고를 사용할 수 있으면 해당 기능을 �
 - CodexPeek never opens, reads, parses, imports, exports, or copies any system or managed
   profile `auth.json`. Authentication files are created and consumed only by the Codex CLI
   inside the selected child-process context. Profile labels are user-provided because the
-  monitor does not inspect account email addresses or IDs.
+  monitor never reads account IDs; the manager displays only the email supplied by `account/read`.
 - Managed-profile creation and deletion derive the exact path from a validated internal
   profile ID and the application-owned root. Path separators, traversal, arbitrary
   absolute paths, and reparse points are rejected. Deletion quiesces profile work, moves
@@ -99,7 +103,9 @@ The complete storage layout, migration policy, and at-rest limitations are docum
   설정, Codex CLI 로그인은 변경하지 않습니다.
 - CodexPeek은 시스템 또는 관리 프로필의 `auth.json`을 열거나 읽거나 파싱하거나 가져오기·내보내기·
   복사하지 않습니다. 인증 파일은 선택한 자식 프로세스 문맥 안에서 Codex CLI만 생성하고 사용합니다.
-  계정 이메일이나 ID를 확인하지 않으므로 프로필 표시명은 사용자가 직접 지정합니다.
+  프로필 표시명은 사용자가 직접 지정합니다. 로그인 이메일만 `account/read`에서 받아 관리자
+  화면에 표시하고 메모리에 보관하며, Debug 출력·설정 파일·사용량 기록·로그에는 남기지 않습니다.
+  로그인·로그아웃 또는 인증 만료 시 이전 이메일을 지우고 오래되거나 실패한 조회에서는 숨깁니다.
 - 관리 프로필 생성·삭제 경로는 검증된 내부 ID와 앱 전용 루트에서만 계산합니다. 경로 구분자, 상위
   경로 이동, 임의 절대 경로, reparse point를 거절합니다. 삭제는 작업을 중단한 뒤 정확히 검증된
   디렉터리만 내부 tombstone으로 이동하고 설정을 저장합니다. 저장 실패 시 원래 위치로 되돌리며,

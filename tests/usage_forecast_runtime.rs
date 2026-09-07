@@ -40,6 +40,7 @@ impl Drop for TestRoot {
 fn usage(kind: WindowKind, percent: f64, reset: SystemTime, observed_at: SystemTime) -> CodexUsage {
     let window = UsageWindow::new(kind, percent, Some(60), Some(reset)).unwrap();
     CodexUsage {
+        account_email: None,
         primary: (kind == WindowKind::Primary).then_some(window.clone()),
         secondary: (kind == WindowKind::Secondary).then_some(window),
         reset_credits: None,
@@ -50,6 +51,7 @@ fn usage(kind: WindowKind, percent: f64, reset: SystemTime, observed_at: SystemT
 
 fn two_window_usage(reset: SystemTime, observed_at: SystemTime) -> CodexUsage {
     CodexUsage {
+        account_email: None,
         primary: Some(UsageWindow::new(WindowKind::Primary, 12.0, Some(60), Some(reset)).unwrap()),
         secondary: Some(
             UsageWindow::new(WindowKind::Secondary, 34.0, Some(60), Some(reset)).unwrap(),
@@ -276,10 +278,16 @@ fn one_successful_two_window_response_persists_both_streams() {
     let now = SystemTime::now();
     let reset = now + Duration::from_secs(60 * 60);
 
-    service.record_success(UsageProfileId::System, &two_window_usage(reset, now), now);
+    let mut sample = two_window_usage(reset, now);
+    sample.account_email =
+        codex_usage_monitor::AccountEmail::new("work@example.invalid".to_owned());
+    service.record_success(UsageProfileId::System, &sample, now);
     service.stop();
 
     let history = store.load(SystemTime::now()).unwrap();
+    let stored = std::fs::read_to_string(store.path()).unwrap();
+    assert!(!stored.contains("example.invalid"));
+    assert!(!stored.contains("email"));
     assert_eq!(
         history
             .samples_for(UsageProfileId::System, WindowKind::Primary)

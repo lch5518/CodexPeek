@@ -1329,8 +1329,9 @@ fn ui_settings(
 
 /// 프로필 행의 안전한 사용량 요약과 진행 표시 값을 함께 전달합니다.
 ///
-/// 이 값은 폴링 스냅샷의 표시 가능한 필드만 보관하며 계정 식별자나 인증 정보는 포함하지 않습니다.
+/// 이 값은 폴링 스냅샷의 표시 필드와 메모리 전용 이메일을 보관하며 파일·로그에 쓰지 않습니다.
 struct ProfileUsagePresentation {
+    account_email: Option<crate::AccountEmail>,
     summary: String,
     details: String,
     login_required: bool,
@@ -1345,6 +1346,7 @@ struct ProfileUsagePresentation {
 fn profile_usage_presentation_for_window(window: Option<&UsageWindow>) -> ProfileUsagePresentation {
     let Some(window) = window else {
         return ProfileUsagePresentation {
+            account_email: None,
             summary: String::new(),
             details: String::new(),
             login_required: false,
@@ -1354,6 +1356,7 @@ fn profile_usage_presentation_for_window(window: Option<&UsageWindow>) -> Profil
     };
 
     ProfileUsagePresentation {
+        account_email: None,
         summary: String::new(),
         details: String::new(),
         login_required: false,
@@ -1373,6 +1376,7 @@ fn profile_usage_presentation_for_snapshot(
 ) -> ProfileUsagePresentation {
     if login_required {
         return ProfileUsagePresentation {
+            account_email: None,
             summary: localized_text(LocalizationKey::UsageProfileLoginRequired, language)
                 .to_string(),
             details: String::new(),
@@ -1385,6 +1389,10 @@ fn profile_usage_presentation_for_snapshot(
     let usage = snapshot.and_then(|snapshot| snapshot.usage.as_ref());
     let window = usage.and_then(|usage| usage.secondary.as_ref().or(usage.primary.as_ref()));
     let mut presentation = profile_usage_presentation_for_window(window);
+    presentation.account_email = snapshot
+        .filter(|snapshot| !snapshot.is_stale && snapshot.last_error.is_none())
+        .and_then(|snapshot| snapshot.usage.as_ref())
+        .and_then(|usage| usage.account_email.clone());
     presentation.summary = if snapshot.is_some_and(|snapshot| snapshot.is_fetching) {
         localized_text(LocalizationKey::Refreshing, language).to_string()
     } else if let Some(usage) = usage {
@@ -1480,6 +1488,7 @@ fn usage_profile_views(
     };
     let system_presentation = presentation_for(UsageProfileId::System);
     let mut profiles = vec![UsageProfileView {
+        account_email: system_presentation.account_email,
         id: UsageProfileId::System,
         label: system_profile_display_label(settings, language),
         summary: system_presentation.summary,
@@ -1494,6 +1503,7 @@ fn usage_profile_views(
         let id = profile.id();
         let presentation = presentation_for(id);
         UsageProfileView {
+            account_email: presentation.account_email,
             id,
             label: profile.label().to_string(),
             summary: presentation.summary,
@@ -2813,6 +2823,39 @@ mod tests {
     }
 
     #[test]
+    fn profile_email_is_visible_only_for_a_current_authenticated_snapshot() {
+        let mut snapshot = PollSnapshot {
+            usage: Some(CodexUsage {
+                account_email: crate::AccountEmail::new("work@example.invalid".to_owned()),
+                primary: Some(usage_window(25.0)),
+                secondary: None,
+                reset_credits: None,
+                fetched_at: std::time::UNIX_EPOCH,
+                daily_token_usage: Vec::new(),
+            }),
+            ..PollSnapshot::default()
+        };
+        let present = |snapshot: &PollSnapshot, login_required| {
+            profile_usage_presentation_for_snapshot(
+                Some(snapshot),
+                login_required,
+                Language::English,
+            )
+            .account_email
+        };
+        assert_eq!(
+            present(&snapshot, false).unwrap().as_str(),
+            "work@example.invalid"
+        );
+        assert!(present(&snapshot, true).is_none());
+        snapshot.is_stale = true;
+        assert!(present(&snapshot, false).is_none());
+        snapshot.is_stale = false;
+        snapshot.last_error = Some(UsageError::RpcTimeout);
+        assert!(present(&snapshot, false).is_none());
+    }
+
+    #[test]
     fn profile_usage_presentation_keeps_summary_and_typed_consumed_usage() {
         let presentation = profile_usage_presentation_for_window(Some(&usage_window(81.4)));
         assert_eq!(presentation.used_percent, Some(81));
@@ -2830,6 +2873,7 @@ mod tests {
     fn profile_usage_presentation_keeps_retained_usage_after_a_transient_error() {
         let snapshot = PollSnapshot {
             usage: Some(CodexUsage {
+                account_email: None,
                 primary: None,
                 secondary: Some(usage_window(81.4)),
                 reset_credits: None,
@@ -2851,6 +2895,7 @@ mod tests {
     fn profile_usage_presentation_summarizes_reset_credits_and_both_limit_windows() {
         let snapshot = PollSnapshot {
             usage: Some(CodexUsage {
+                account_email: None,
                 primary: Some(
                     UsageWindow::new(WindowKind::Primary, 28.0, Some(300), None).unwrap(),
                 ),

@@ -156,6 +156,9 @@ fn usage_for(id: UsageProfileId) -> CodexUsage {
         UsageProfileId::Managed(sequence) => f64::from(sequence),
     };
     CodexUsage {
+        account_email: codex_usage_monitor::AccountEmail::new(format!(
+            "profile-{used_percent}@example.invalid"
+        )),
         primary: Some(
             UsageWindow::new(WindowKind::Primary, used_percent, Some(300), None).unwrap(),
         ),
@@ -241,6 +244,54 @@ fn successful_fetches_are_forwarded_to_the_sample_sink_but_failures_are_not() {
         Some(20.0)
     );
     service.stop();
+}
+
+#[test]
+fn account_operations_clear_only_the_target_email_before_the_provider_returns() {
+    for (operation, result) in [
+        ("login", ProviderResult::Login(Ok(true))),
+        ("logout", ProviderResult::Logout(Ok(()))),
+    ] {
+        let id = UsageProfileId::Managed(1);
+        let provider = FakeProfileProvider::with_steps([
+            fetch_step(id),
+            fetch_step(UsageProfileId::System),
+            ProviderStep {
+                operation,
+                result,
+                waits_for_release: true,
+            },
+        ]);
+        let service = ProfilePollingService::start(
+            Arc::new(provider.clone()),
+            vec![managed_context(1), ProfileExecutionContext::system()],
+            id,
+            5,
+            false,
+        )
+        .unwrap();
+        provider.wait_for_completed(2);
+        if operation == "login" {
+            service.login(id, no_opener()).unwrap();
+        } else {
+            service.logout(id).unwrap();
+        }
+        provider.wait_for_calls(3);
+        let target = service.snapshot(id).unwrap().usage.unwrap();
+        let other = service
+            .snapshot(UsageProfileId::System)
+            .unwrap()
+            .usage
+            .unwrap();
+        provider.release_one();
+        service.stop();
+        assert!(target.account_email.is_none());
+        assert_eq!(target.primary.unwrap().used_percent, 1.0);
+        assert_eq!(
+            other.account_email.unwrap().as_str(),
+            "profile-20@example.invalid"
+        );
+    }
 }
 
 #[test]

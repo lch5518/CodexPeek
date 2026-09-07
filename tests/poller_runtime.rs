@@ -16,6 +16,7 @@ fn usage(
     secondary_reset: Option<SystemTime>,
 ) -> CodexUsage {
     CodexUsage {
+        account_email: None,
         primary: Some(
             UsageWindow::new(WindowKind::Primary, 25.0, Some(300), primary_reset).unwrap(),
         ),
@@ -25,6 +26,40 @@ fn usage(
         reset_credits: None,
         fetched_at,
         daily_token_usage: Vec::new(),
+    }
+}
+
+#[test]
+fn account_email_is_validated_redacted_and_cleared_on_authentication_failure() {
+    use codex_usage_monitor::AccountEmail;
+    for invalid in [
+        "",
+        "plain",
+        "@example.invalid",
+        "a@",
+        "a@@example.invalid",
+        "a\n@example.invalid",
+        "a\u{202e}@example.invalid",
+        "a\u{200b}@example.invalid",
+    ] {
+        assert!(AccountEmail::new(invalid.to_owned()).is_none());
+    }
+    assert!(AccountEmail::new(format!("{}@example.invalid", "a".repeat(254))).is_none());
+    let email = AccountEmail::new("work@example.invalid".to_owned()).unwrap();
+    assert_eq!(email.as_str(), "work@example.invalid");
+    assert!(!format!("{email:?}").contains("work@"));
+
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+    for error in [UsageError::NotLoggedIn, UsageError::AuthenticationExpired] {
+        let mut state = PollState::new(5, now).unwrap();
+        let mut good = usage(now, None, None);
+        good.account_email = Some(email.clone());
+        state.finish(Ok(good), now);
+        state.finish(Err(error), now);
+        let snapshot = state.snapshot(now);
+        let retained = snapshot.usage.unwrap();
+        assert!(retained.account_email.is_none());
+        assert_eq!(retained.primary.unwrap().used_percent, 25.0);
     }
 }
 

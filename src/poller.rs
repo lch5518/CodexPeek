@@ -113,7 +113,7 @@ impl PollState {
     /// 완료 결과를 반영하고 다음 자동 요청 시각을 계산합니다.
     ///
     /// 성공한 `result`만 마지막 정상 사용량과 성공 시각을 갱신합니다. 실패는 마지막 정상 값을 보존하고
-    /// 1/2/4/8/15분 백오프를 적용합니다.
+    /// 1/2/4/8/15분 백오프를 적용합니다. 인증 만료·로그아웃 오류에서는 이메일만 즉시 지웁니다.
     pub fn finish(&mut self, result: Result<CodexUsage, UsageError>, now: SystemTime) {
         self.in_flight = false;
         match result {
@@ -133,12 +133,25 @@ impl PollState {
                 }
             }
             Err(error) => {
+                if matches!(
+                    error,
+                    UsageError::NotLoggedIn | UsageError::AuthenticationExpired
+                ) {
+                    self.clear_account_email();
+                }
                 self.failure_count = self.failure_count.saturating_add(1);
                 self.last_error = Some(error);
                 let minutes = [1_u64, 2, 4, 8, 15][self.failure_count.saturating_sub(1).min(4)];
                 self.next_poll_at = now + Duration::from_secs(minutes * 60);
                 self.schedule_pending_reset(now);
             }
+        }
+    }
+
+    /// 계정 작업 시작이나 인증 만료 시 이전 이메일만 지우고 마지막 정상 사용량은 보존합니다.
+    pub(crate) fn clear_account_email(&mut self) {
+        if let Some(usage) = self.last_good.as_mut() {
+            usage.account_email = None;
         }
     }
 
