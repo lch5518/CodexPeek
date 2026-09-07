@@ -136,6 +136,9 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
       profile login confirmations still explain the unchanged Codex CLI and IDE sign-ins.
 - [ ] At 100/125/150/200% DPI, verify long Korean, English, and RTL pace and forecast details wrap
       without ellipsis, clipping, or overlapping the following row.
+- [ ] With 1, 2, and 14 daily token buckets, verify dates align with their bars in LTR and RTL,
+      zero-token days show only the baseline, small positive values remain visible, and bars and
+      labels stay inside the chart at 100/125/150/200% DPI in light and dark mode.
 - [ ] Open every right-click submenu with mouse and keyboard; verify selection, check marks, RTL
       arrows, Escape dismissal, and native high-contrast/screen-reader fallback.
 

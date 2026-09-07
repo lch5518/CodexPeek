@@ -11,6 +11,7 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 
 - Shows primary and secondary Codex usage windows, including reset times.
 - Shows up to 14 days of daily token usage as vertical bars when you hover the widget.
+  Dates follow their bars; zero-token days show only the baseline.
 - Estimates when each window may be exhausted from recent successful observations and shows the
   estimate in the usage details and taskbar tooltip.
 - Keeps update checks inside the app: current, failed, and available-release results are shown in

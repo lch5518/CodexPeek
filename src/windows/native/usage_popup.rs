@@ -46,7 +46,7 @@ const DAILY_USAGE_TITLE_HEIGHT_LOGICAL: i32 = 18;
 const DAILY_USAGE_CHART_GAP_LOGICAL: i32 = 4;
 const DAILY_USAGE_DATE_GAP_LOGICAL: i32 = 3;
 const DAILY_USAGE_DATE_HEIGHT_LOGICAL: i32 = 14;
-const DAILY_USAGE_MIN_BAR_HEIGHT_PX: i32 = 4;
+const DAILY_USAGE_DATE_WIDTH_LOGICAL: i32 = 44;
 const WRAPPED_TEXT_FALLBACK_HEIGHT_LOGICAL: i32 = 80;
 
 #[derive(Clone, Copy)]
@@ -144,13 +144,43 @@ fn daily_date_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
 }
 
 fn daily_usage_bar_height(value: u64, maximum: u64, chart_height: i32) -> i32 {
-    let ratio = if maximum > 0 {
-        (value.min(maximum) as f64 / maximum as f64).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    ((f64::from(chart_height.max(0)) * ratio).round() as i32)
-        .max(DAILY_USAGE_MIN_BAR_HEIGHT_PX.min(chart_height.max(0)))
+    if value == 0 || maximum == 0 || chart_height <= 0 {
+        return 0;
+    }
+    let ratio = value.min(maximum) as f64 / maximum as f64;
+    ((f64::from(chart_height) * ratio).round() as i32).max(1)
+}
+
+/// 날짜 인덱스에 대응하는 물리 픽셀 열을 계산해 막대와 날짜가 같은 위치를 사용하게 합니다.
+///
+/// `area`를 `count`개로 나누고 `rtl`이면 순서를 뒤집습니다. 잘못된 인덱스나 면적이 없는
+/// 열은 `None`을 반환하며, 나눗셈 나머지를 분산해 마지막 열까지 영역 안에 배치합니다.
+fn daily_usage_slot(area: Rect, index: usize, count: usize, rtl: bool) -> Option<Rect> {
+    if index >= count || area.width() <= 0 || area.height() <= 0 {
+        return None;
+    }
+    let count = i64::from(i32::try_from(count).ok()?);
+    let index = i64::try_from(index).ok()?;
+    let visual_index = if rtl { count - 1 - index } else { index };
+    let width = i64::from(area.width());
+    let left = area.left + (width * visual_index / count) as i32;
+    let right = area.left + (width * (visual_index + 1) / count) as i32;
+    (left < right).then_some(Rect::new(left, area.top, right, area.bottom))
+}
+
+fn daily_date_bounds(area: Rect, slot: Rect, count: usize, dpi: u32) -> Rect {
+    let width = logical_to_physical(DAILY_USAGE_DATE_WIDTH_LOGICAL, dpi)
+        .min(area.width() / count.clamp(1, 3) as i32);
+    let center = slot.left + slot.width() / 2;
+    let left = (center - width / 2).clamp(area.left, area.right - width);
+    Rect::new(left, area.top, left + width, area.bottom)
+}
+
+fn daily_chart_bounds(area: Rect, dpi: u32) -> Rect {
+    // 양 끝 날짜가 막대 중앙에 놓이도록 레이블 너비의 절반을 여백으로 남깁니다.
+    let inset =
+        logical_to_physical(DAILY_USAGE_DATE_WIDTH_LOGICAL, dpi).min(area.width().max(0)) / 2;
+    Rect::new(area.left + inset, area.top, area.right - inset, area.bottom)
 }
 
 fn popup_render_size(requested: (i32, i32), bounds: Rect) -> Option<(i32, i32)> {
@@ -679,6 +709,7 @@ unsafe fn paint_daily_usage(
     dpi: u32,
     rtl: bool,
 ) {
+    let chart = daily_chart_bounds(chart, dpi);
     if daily_usage.is_empty() || chart.width() <= 0 || chart.height() <= 0 {
         return;
     }
@@ -686,27 +717,7 @@ unsafe fn paint_daily_usage(
         .iter()
         .map(|daily| daily.tokens)
         .max()
-        .unwrap_or(1)
-        .max(1);
-    let gap = logical_to_physical(4, dpi).max(1);
-    let count = i32::try_from(daily_usage.len()).unwrap_or(i32::MAX).max(1);
-    let total_gap = gap.saturating_mul(count.saturating_sub(1));
-    let bar_width = chart.width().saturating_sub(total_gap).max(count) / count;
-    for (index, daily) in daily_usage.iter().enumerate() {
-        let index = i32::try_from(index).unwrap_or(i32::MAX);
-        let visual_index = if rtl { count - 1 - index } else { index };
-        let left = chart
-            .left
-            .saturating_add(visual_index.saturating_mul(bar_width.saturating_add(gap)));
-        let height = daily_usage_bar_height(daily.tokens, maximum, chart.height());
-        let bar = Rect::new(
-            left,
-            chart.bottom.saturating_sub(height),
-            left.saturating_add(bar_width),
-            chart.bottom,
-        );
-        fill(dc, bar, palette.accent);
-    }
+        .unwrap_or(0);
     let baseline_height = logical_to_physical(1, dpi).max(1);
     fill(
         dc,
@@ -718,6 +729,24 @@ unsafe fn paint_daily_usage(
         ),
         palette.separator,
     );
+    let gap = logical_to_physical(4, dpi).max(1);
+    for (index, daily) in daily_usage.iter().enumerate() {
+        let Some(slot) = daily_usage_slot(chart, index, daily_usage.len(), rtl) else {
+            continue;
+        };
+        let gap = gap.min(slot.width() - 1);
+        let height = daily_usage_bar_height(daily.tokens, maximum, chart.height());
+        if height == 0 {
+            continue;
+        }
+        let bar = Rect::new(
+            slot.left + gap / 2,
+            chart.bottom.saturating_sub(height),
+            slot.right - (gap - gap / 2),
+            chart.bottom,
+        );
+        fill(dc, bar, palette.accent);
+    }
 }
 
 unsafe fn paint_daily_dates(
@@ -732,31 +761,17 @@ unsafe fn paint_daily_dates(
     if indices.is_empty() || area.width() <= 0 || area.height() <= 0 {
         return;
     }
-    let slot_count = i32::try_from(indices.len()).unwrap_or(i32::MAX).max(1);
-    for (slot, index) in indices.into_iter().enumerate() {
-        let slot = i32::try_from(slot).unwrap_or(i32::MAX);
-        let visual_slot = if rtl {
-            slot_count.saturating_sub(1).saturating_sub(slot)
-        } else {
-            slot
+    for index in indices {
+        let Some(slot) =
+            daily_usage_slot(daily_chart_bounds(area, dpi), index, daily_usage.len(), rtl)
+        else {
+            continue;
         };
-        let left = area.left.saturating_add(
-            area.width()
-                .saturating_mul(visual_slot)
-                .checked_div(slot_count)
-                .unwrap_or(0),
-        );
-        let right = area.left.saturating_add(
-            area.width()
-                .saturating_mul(visual_slot.saturating_add(1))
-                .checked_div(slot_count)
-                .unwrap_or(area.width()),
-        );
         let label = daily_date_label(&daily_usage[index].start_date);
         draw_formatted_text(
             dc,
             &label,
-            Rect::new(left, area.top, right, area.bottom),
+            daily_date_bounds(area, slot, daily_usage.len(), dpi),
             popup_font(dc, 9, FW_NORMAL.0 as i32, dpi),
             palette.secondary_text,
             daily_date_text_format(rtl),
@@ -965,8 +980,9 @@ mod tests {
     };
 
     use super::{
-        daily_date_indices, daily_date_label, daily_date_text_format, daily_usage_bar_height,
-        daily_usage_chart_height, daily_usage_height, daily_usage_top, forecast_row_height,
+        daily_chart_bounds, daily_date_bounds, daily_date_indices, daily_date_label,
+        daily_date_text_format, daily_usage_bar_height, daily_usage_chart_height,
+        daily_usage_height, daily_usage_slot, daily_usage_top, forecast_row_height,
         icon_text_format, pace_detail_top, popup_height_for_content, popup_render_size,
         rounded_surface_alpha, wrapped_text_format,
     };
@@ -1021,9 +1037,57 @@ mod tests {
     }
 
     #[test]
-    fn daily_usage_bar_height_scales_to_the_largest_day_and_keeps_zero_visible() {
+    fn daily_usage_bar_height_preserves_zero_and_scales_positive_values() {
         assert_eq!(daily_usage_bar_height(50, 100, 80), 40);
-        assert_eq!(daily_usage_bar_height(0, 0, 80), 4);
+        assert_eq!(daily_usage_bar_height(0, 0, 80), 0);
+        assert_eq!(daily_usage_bar_height(0, 100, 80), 0);
+        assert_eq!(daily_usage_bar_height(1, u64::MAX, 80), 1);
+        assert_eq!(daily_usage_bar_height(u64::MAX, u64::MAX, 80), 80);
+        assert_eq!(daily_usage_bar_height(200, 100, 80), 80);
+        assert_eq!(daily_usage_bar_height(50, 0, 80), 0);
+        assert_eq!(daily_usage_bar_height(50, 100, 0), 0);
+        assert_eq!(daily_usage_bar_height(50, 100, -1), 0);
+    }
+
+    #[test]
+    fn daily_chart_columns_and_dates_stay_aligned_across_dpi_and_direction() {
+        for dpi in [96, 120, 144, 192] {
+            let width = crate::windows::widget::logical_to_physical(272, dpi);
+            let area = Rect::new(20, 0, 20 + width, 28);
+            let chart = daily_chart_bounds(area, dpi);
+            for count in [1, 2, 3, 5, 14] {
+                for rtl in [false, true] {
+                    let mut labels = Vec::new();
+                    for index in 0..count {
+                        let slot = daily_usage_slot(chart, index, count, rtl).unwrap();
+                        let mirrored =
+                            daily_usage_slot(chart, count - 1 - index, count, !rtl).unwrap();
+                        assert_eq!(slot, mirrored);
+                        assert!(slot.is_inside(area));
+                        if daily_date_indices(count).contains(&index) {
+                            let label = daily_date_bounds(area, slot, count, dpi);
+                            assert!(label.is_inside(area));
+                            let center = slot.left + slot.width() / 2;
+                            assert!(label.left <= center && center <= label.right);
+                            assert_eq!(label.left + label.width() / 2, center);
+                            assert!(labels.iter().all(|other| !label.intersects(*other)));
+                            labels.push(label);
+                        }
+                    }
+                }
+            }
+        }
+        let tiny = Rect::new(0, 0, 5, 10);
+        for rtl in [false, true] {
+            let slots: Vec<_> = (0..14)
+                .filter_map(|index| daily_usage_slot(tiny, index, 14, rtl))
+                .collect();
+            assert_eq!(slots.len(), 5);
+            assert!(slots.iter().all(|slot| slot.is_inside(tiny)));
+        }
+        assert_eq!(daily_usage_slot(tiny, 0, 0, false), None);
+        assert_eq!(daily_usage_slot(tiny, 14, 14, false), None);
+        assert_eq!(daily_usage_slot(Rect::new(0, 0, 0, 10), 0, 1, false), None);
     }
 
     #[test]
