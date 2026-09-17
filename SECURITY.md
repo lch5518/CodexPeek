@@ -139,9 +139,9 @@ Codex account and usage access is delegated to the installed Codex CLI. The moni
 not send raw OpenAI HTTP requests itself; the CLI may contact OpenAI services according
 to the CLI's own authentication, configuration, and network policy.
 
-Official builds check release metadata at startup through
+Official builds check release metadata at startup and every 24 hours while running through
 `https://api.github.com/repos/lch5518/CodexPeek/releases/latest`. The request enforces
-HTTPS and response size/time limits. After startup, an available update is offered only after
+HTTPS and response size/time limits. Failed checks retry after 15 minutes. An available update is offered only after
 the app is running. Skipping a version records that version locally and suppresses it until a
 newer release appears. With explicit approval, the updater accepts only the expected raw Windows
 x64 executable and `SHA256SUMS.txt` assets from the validated GitHub Release, checks the exact
@@ -161,7 +161,8 @@ updater disabled and show a once-per-version warning because replacing them with
 binary would omit locally compiled changes. This marker is a build-channel guard, not a
 cryptographic signature or trust boundary.
 
-공식 빌드는 시작할 때 위 GitHub API에서 릴리스 메타데이터를 확인합니다.
+공식 빌드는 시작 시와 실행 중 24시간마다 위 GitHub API에서 릴리스 메타데이터를 확인하며,
+확인 실패 시 15분 뒤 재시도합니다.
 HTTPS와 응답 크기·시간 제한을 적용하며 앱이 실행된 뒤에만 새 버전을 안내합니다. 특정 버전을
 건너뛰면 로컬 설정에 기록해 더 새 버전이 나올 때까지 다시 묻지 않습니다. 사용자가 명시적으로
 동의한 경우에만 검증된 GitHub Release의 예상 Windows x64 원본 EXE와 `SHA256SUMS.txt`를 받고,

@@ -75,11 +75,11 @@ instead of overwriting an existing release or asset.
 
 ### User-facing release note
 
-Version 0.4.7 adopts the native allowance design: a 400-DIP hover panel groups each window's
-percentage, bar, and reset time, followed by usage pace, forecasts, and the daily token chart.
-The right-click menu and profile manager use system fonts and blue selection/action cues,
-separate from usage-status colors. The hover popup remains a non-activating, read-only preview.
-The release also includes the upstream correction for exact-size self-update downloads.
+Version 0.4.8 checks for releases every 24 hours while running and retries failed checks
+after 15 minutes, including when the widget is hidden. Installation still requires approval;
+skipping a version and the official-build restriction remain unchanged. The top of the
+right-click menu now displays the running executable's version as a non-interactive row.
+Users running 0.4.7 can use Check for updates or restart the app to discover this release.
 
 ## Installer Verification
 

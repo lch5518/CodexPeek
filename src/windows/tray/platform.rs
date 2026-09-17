@@ -448,10 +448,11 @@ unsafe fn populate_native_menu(
     entries: &[TrayMenuEntry],
     reset_credits_text: Option<&str>,
 ) -> Option<()> {
+    add_info_banner(menu, crate::localization::APP_VERSION_LABEL)?;
     if let Some(text) = reset_credits_text {
         add_info_banner(menu, text)?;
-        separator(menu)?;
     }
+    separator(menu)?;
     append_entries(menu, entries)
 }
 
@@ -462,19 +463,29 @@ unsafe fn populate_owner_draw_menu(
     render: &mut MenuRenderState,
 ) -> Option<()> {
     configure_owner_draw_menu(menu, render)?;
+    add_owner_item(
+        menu,
+        0,
+        crate::localization::APP_VERSION_LABEL,
+        MenuItemKind::Info,
+        false,
+        true,
+        None,
+        render,
+    )?;
     if let Some(text) = reset_credits_text {
         add_owner_item(menu, 0, text, MenuItemKind::Info, false, true, None, render)?;
-        add_owner_item(
-            menu,
-            0,
-            "",
-            MenuItemKind::Separator,
-            false,
-            true,
-            None,
-            render,
-        )?;
     }
+    add_owner_item(
+        menu,
+        0,
+        "",
+        MenuItemKind::Separator,
+        false,
+        true,
+        None,
+        render,
+    )?;
     append_owner_entries(menu, entries, render)
 }
 
@@ -953,7 +964,12 @@ mod tests {
                 unsafe {
                     let menu = CreatePopupMenu().unwrap();
                     let mut render = MenuRenderState::new(light, 96, rtl);
-                    configure_owner_draw_menu(menu, &render).unwrap();
+                    populate_owner_draw_menu(menu, &[], Some("Credits: 10"), &mut render).unwrap();
+                    assert_eq!(
+                        String::from_utf16_lossy(&render.items[0].text).trim_end_matches('\0'),
+                        format!("CodexPeek v{}", env!("CARGO_PKG_VERSION"))
+                    );
+                    assert!(render.items[0].disabled);
                     for (index, (text, kind, checked)) in [
                         ("새로 고침", MenuItemKind::Command, false),
                         ("사용량 프로필", MenuItemKind::Submenu, false),

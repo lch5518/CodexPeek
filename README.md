@@ -204,8 +204,12 @@ The Installer and Portable editions use `%APPDATA%\CodexPeek\settings.json`, so
 settings are shared if you switch between them. The installer adds a Start Menu shortcut
 but does not enable Windows startup by default.
 
+The top of the right-click menu shows the running app version, such as `CodexPeek v0.4.8`.
+
 After the app starts—whether launched manually or with Windows—official builds check for a newer
-GitHub Release. If one is available, CodexPeek opens normally before asking whether to update.
+GitHub Release. While running, they check again every 24 hours and retry failed checks after
+15 minutes, including when the widget is hidden. If one is available, CodexPeek opens normally
+before asking whether to update.
 Choosing **Skip this version** suppresses that prompt for the same release; a later release is
 offered again. Choosing **Update now** downloads the release's raw Windows x64 executable and
 `SHA256SUMS.txt`, verifies the executable's SHA-256, replaces the executable at its current path,

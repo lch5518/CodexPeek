@@ -1,3 +1,6 @@
+/// 모든 언어에서 동일하게 표시하는 앱 이름과 현재 실행 파일의 빌드 버전입니다.
+pub(crate) const APP_VERSION_LABEL: &str = concat!("CodexPeek v", env!("CARGO_PKG_VERSION"));
+
 /// 사용자에게 표시할 문구의 언어를 나타냅니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Language {

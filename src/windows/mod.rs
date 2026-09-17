@@ -682,6 +682,10 @@ pub fn profile_taskbar_tooltip(
 
 /// 플랫폼 메시지 루프가 애플리케이션 상태와 통신하는 최소 경계입니다.
 pub trait UiBackend {
+    /// UI 타이머의 `now`를 기준으로 만료된 백그라운드 작업을 예약합니다.
+    /// 네트워크 I/O는 작업자에서 수행하며 숨겨진 위젯에서도 호출해야 합니다.
+    fn poll_background_tasks(&mut self, _now: std::time::SystemTime) {}
+
     /// Signals a self-update helper only after the tray and initial windows are ready.
     fn signal_restart_ready(&mut self) -> std::io::Result<()> {
         Ok(())

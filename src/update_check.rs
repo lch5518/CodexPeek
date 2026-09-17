@@ -7,7 +7,8 @@ use semver::Version;
 use serde::Deserialize;
 use ureq::tls::{TlsConfig, TlsProvider};
 
-const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+/// 정상 확인 후 자동 검사를 다시 예약하는 간격입니다.
+pub(crate) const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const USER_AGENT: &str = "CodexUsageMonitor/0.1 update-check";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -138,7 +139,7 @@ pub enum UpdateCheckIntent {
 pub enum UpdateCheckStart {
     /// 호출자가 새 검사 작업자를 시작해야 합니다.
     Started,
-    /// 검사가 이미 실행 중이므로 새 작업자를 만들지 않습니다.
+    /// 검사 또는 설치가 이미 실행 중이므로 새 검사 작업자를 만들지 않습니다.
     AlreadyRunning,
 }
 
@@ -199,6 +200,7 @@ impl UpdatePresentation {
     ///
     /// 이미 자동 검사가 실행 중일 때 `UserInitiated`가 들어오면 새 작업자를 만들지 않고
     /// 완료 결과를 사용자 요청으로 처리하도록 승격합니다.
+    /// 설치 중에는 검사 시작을 거절해 다운로드 상태와 재시작 알림을 보존합니다.
     pub fn begin_check(&self, intent: UpdateCheckIntent) -> UpdateCheckStart {
         let mut inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         begin_check_locked(&mut inner, intent)
@@ -411,6 +413,9 @@ fn begin_check_locked(
     inner: &mut UpdatePresentationInner,
     intent: UpdateCheckIntent,
 ) -> UpdateCheckStart {
+    if inner.install_in_progress {
+        return UpdateCheckStart::AlreadyRunning;
+    }
     if inner.running_intent.is_some() {
         if intent == UpdateCheckIntent::UserInitiated {
             inner.pending_user_intent = true;

@@ -276,12 +276,21 @@ fn install_preparation_exposes_downloading_ready_and_failure_states() {
 
     assert!(presentation.queue_install_request(update.clone()));
     assert_eq!(presentation.status(), UpdatePresentationStatus::Downloading);
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::AlreadyRunning
+    );
+    assert_eq!(presentation.status(), UpdatePresentationStatus::Downloading);
     assert_eq!(presentation.take_install_request(), Some(update.clone()));
     assert_eq!(
         presentation.begin_user_action(),
         UpdateUserAction::WaitForRunning
     );
     presentation.record_install_notice(UpdateCheckNotice::InstallReady);
+    assert_eq!(
+        presentation.begin_check(UpdateCheckIntent::Automatic),
+        UpdateCheckStart::AlreadyRunning
+    );
     assert_eq!(presentation.status(), UpdatePresentationStatus::Installing);
     assert!(!presentation.queue_install_request(update.clone()));
     assert_eq!(

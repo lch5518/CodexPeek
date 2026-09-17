@@ -397,6 +397,9 @@ unsafe extern "system" fn owner_proc(
                 }
                 return LRESULT(0);
             }
+            (*pointer)
+                .backend
+                .poll_background_tasks(std::time::SystemTime::now());
             let settings = (*pointer).backend.settings();
             let language_changed =
                 settings.resolved_language != (*pointer).settings.resolved_language;

@@ -541,6 +541,7 @@ struct AppRuntime {
     diagnostics: Option<AsyncDiagnosticWriter>,
     startup_hidden: bool,
     update_presentation: UpdatePresentation,
+    update_client: Arc<dyn crate::ReleaseHttpClient>,
     official_release_build: bool,
     relaunch_args: Vec<OsString>,
     restart_ready: Option<PathBuf>,
@@ -605,6 +606,7 @@ impl AppRuntime {
             startup_hidden,
             update_presentation: UpdatePresentation::default(),
             official_release_build: is_official_release_build(),
+            update_client: Arc::new(UreqHttpClient),
             relaunch_args,
             restart_ready,
         })
@@ -618,6 +620,10 @@ impl AppRuntime {
     }
 
     fn start_automatic_update_check(&mut self) {
+        self.start_automatic_update_check_at(SystemTime::now());
+    }
+
+    fn start_automatic_update_check_at(&mut self, now: SystemTime) {
         if !self.official_release_build {
             self.queue_unofficial_build_warning(false);
             return;
@@ -625,7 +631,6 @@ impl AppRuntime {
         let Some(checker) = update_checker() else {
             return;
         };
-        let now = SystemTime::now();
         let dismissed_version = self.settings_snapshot().dismissed_update_version;
         if self
             .update_presentation
@@ -692,8 +697,9 @@ impl AppRuntime {
         });
         self.save_settings();
         let presentation = self.update_presentation.clone();
+        let client = Arc::clone(&self.update_client);
         thread::spawn(move || {
-            let result = checker.check_if_due(&UreqHttpClient, None, now);
+            let result = checker.check_if_due(client.as_ref(), None, now);
             presentation.record_result_with_dismissed_version(result, dismissed_version.as_deref());
         });
     }
@@ -955,6 +961,29 @@ impl AppRuntime {
 }
 
 impl UiBackend for AppRuntime {
+    fn poll_background_tasks(&mut self, now: SystemTime) {
+        if !self.official_release_build {
+            return;
+        }
+        let interval = if self.update_presentation.status() == UpdatePresentationStatus::Failed {
+            Duration::from_secs(15 * 60)
+        } else {
+            crate::update_check::CHECK_INTERVAL
+        };
+        let last_check = self
+            .settings_snapshot()
+            .last_update_check_unix
+            .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)));
+        // 시계가 뒤로 조정되었으면 새 기준으로 한 번 확인해 무기한 대기를 막습니다.
+        if last_check.is_some_and(|last| {
+            now.duration_since(last)
+                .is_ok_and(|elapsed| elapsed < interval)
+        }) {
+            return;
+        }
+        self.start_automatic_update_check_at(now);
+    }
+
     fn signal_restart_ready(&mut self) -> io::Result<()> {
         let Some(path) = self.restart_ready.take() else {
             return Ok(());
@@ -3112,6 +3141,7 @@ mod tests {
             startup_hidden: false,
             update_presentation: UpdatePresentation::default(),
             official_release_build: true,
+            update_client: Arc::new(crate::UreqHttpClient),
             relaunch_args: Vec::new(),
             restart_ready: None,
         }
@@ -3127,6 +3157,138 @@ mod tests {
             ),
             "Usage request failed · Update check failed"
         );
+    }
+
+    struct ScheduledReleaseClient {
+        responses: std::sync::Mutex<
+            std::collections::VecDeque<Result<crate::HttpResponse, crate::UpdateCheckError>>,
+        >,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::ReleaseHttpClient for ScheduledReleaseClient {
+        fn get(
+            &self,
+            _url: &str,
+            _agent: &str,
+            _timeout: Duration,
+            _max_bytes: usize,
+        ) -> Result<crate::HttpResponse, crate::UpdateCheckError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.responses.lock().unwrap().pop_front().unwrap()
+        }
+    }
+
+    fn release_response(version: &str) -> Result<crate::HttpResponse, crate::UpdateCheckError> {
+        Ok(crate::HttpResponse {
+            status: 200,
+            body: serde_json::to_vec(&serde_json::json!({
+                "tag_name": format!("v{version}"),
+                "html_url": format!("https://github.com/lch5518/CodexPeek/releases/tag/v{version}")
+            }))
+            .unwrap(),
+        })
+    }
+
+    fn wait_for_update_worker(runtime: &AppRuntime) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while runtime.update_presentation.status() == UpdatePresentationStatus::Checking {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "update worker stalled"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn periodic_update_checks_notify_after_release_and_retry_failure() {
+        let client = Arc::new(ScheduledReleaseClient {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from([
+                release_response(env!("CARGO_PKG_VERSION")),
+                Err(crate::UpdateCheckError::Network),
+                release_response("99.0.0"),
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut runtime = test_app_runtime_with_store(
+            Settings::default(),
+            SettingsStore::for_root(
+                std::env::temp_dir()
+                    .join(format!("codex-peek-update-schedule-{}", std::process::id())),
+            ),
+            None,
+        );
+        runtime.update_client = client.clone();
+        runtime.start_automatic_update_check();
+        wait_for_update_worker(&runtime);
+        assert!(runtime.take_update_notice().is_none());
+        let start = std::time::UNIX_EPOCH
+            + Duration::from_secs(runtime.settings_snapshot().last_update_check_unix.unwrap());
+        let day = Duration::from_secs(24 * 60 * 60);
+        runtime.poll_background_tasks(start + day - Duration::from_secs(1));
+        assert_eq!(client.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        runtime.poll_background_tasks(start + day);
+        wait_for_update_worker(&runtime);
+        assert_eq!(
+            runtime.update_presentation.status(),
+            UpdatePresentationStatus::Failed
+        );
+        assert!(runtime.take_update_notice().is_none());
+        runtime.poll_background_tasks(start + day + Duration::from_secs(899));
+        assert_eq!(client.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        runtime.poll_background_tasks(start + day + Duration::from_secs(900));
+        wait_for_update_worker(&runtime);
+        assert!(
+            matches!(runtime.take_update_notice(), Some(UpdateCheckNotice::Available(update)) if update.version.to_string() == "99.0.0")
+        );
+        assert_eq!(client.calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        runtime.shutdown();
+    }
+
+    #[test]
+    fn periodic_update_checks_respect_skips_build_channel_and_clock_changes() {
+        let client = Arc::new(ScheduledReleaseClient {
+            responses: std::sync::Mutex::new(std::collections::VecDeque::from([
+                release_response("99.0.0"),
+                release_response("100.0.0"),
+            ])),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let mut runtime = test_app_runtime_with_store(
+            Settings {
+                dismissed_update_version: Some("99.0.0".to_owned()),
+                ..Settings::default()
+            },
+            SettingsStore::for_root(std::env::temp_dir().join(format!(
+                "codex-peek-update-skip-schedule-{}",
+                std::process::id()
+            ))),
+            None,
+        );
+        runtime.update_client = client.clone();
+        let now = std::time::UNIX_EPOCH + Duration::from_secs(100_000);
+        runtime.official_release_build = false;
+        runtime.poll_background_tasks(now);
+        assert_eq!(client.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(runtime.take_update_notice().is_none());
+        runtime.official_release_build = true;
+        runtime.poll_background_tasks(now);
+        wait_for_update_worker(&runtime);
+        assert_eq!(
+            runtime.update_presentation.status(),
+            UpdatePresentationStatus::Available
+        );
+        assert!(runtime.take_update_notice().is_none());
+        // 시계가 되돌아가도 다음 릴리스는 한 번 확인하며 매 틱마다 요청하지 않습니다.
+        runtime.poll_background_tasks(now - Duration::from_secs(1));
+        wait_for_update_worker(&runtime);
+        assert!(
+            matches!(runtime.take_update_notice(), Some(UpdateCheckNotice::Available(update)) if update.version.to_string() == "100.0.0")
+        );
+        runtime.poll_background_tasks(now);
+        assert_eq!(client.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        runtime.shutdown();
     }
 
     #[test]
