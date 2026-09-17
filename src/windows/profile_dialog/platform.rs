@@ -197,6 +197,7 @@ struct ProfileRowPaintResources {
     dpi: u32,
     palette: DialogPalette,
     body_font: HFONT,
+    heading_font: HFONT,
 }
 
 struct StagedDialogVisualResources {
@@ -331,6 +332,7 @@ impl DialogVisualResources {
             dpi: self.dpi,
             palette: self.palette,
             body_font: self.body_font,
+            heading_font: self.heading_font,
         }
     }
 
@@ -1312,8 +1314,8 @@ fn paint_primary_button<B: PrimaryButtonPaintBackend>(
         PrimaryButtonSurface::Normal => None,
     };
     let surface = overlay
-        .map(|overlay| composite_dialog_color(overlay, palette.healthy))
-        .unwrap_or(palette.healthy.colorref);
+        .map(|overlay| composite_dialog_color(overlay, palette.text))
+        .unwrap_or(palette.text.colorref);
 
     let mut border_rect = rect;
     let mut previous_font = None;
@@ -1378,7 +1380,7 @@ fn paint_primary_button<B: PrimaryButtonPaintBackend>(
     painted.is_ok() && restored
 }
 
-/// 활성 기본 작업 버튼의 `NM_CUSTOMDRAW`를 건강 상태 녹색으로 한 줄 그립니다.
+/// 활성 기본 작업 버튼의 `NM_CUSTOMDRAW`를 지면의 잉크색으로 한 줄 그립니다.
 ///
 /// 알림이 대상 버튼·prepaint 단계가 아니거나 버튼이 비활성 상태이면 기본 네이티브 렌더링을
 /// 유지합니다. `lparam`은 현재 `WM_NOTIFY`가 제공한 `NMCUSTOMDRAW`여야 하며, GDI 선택 객체와
@@ -1505,20 +1507,14 @@ fn composite_dialog_color(foreground: DialogColor, background: DialogColor) -> u
     blend(0) | (blend(8) << 8) | (blend(16) << 16)
 }
 
-const SELECTED_ROW_TINT_OPACITY: u8 = 20;
-
 /// 프로필 행의 선택 상태에 대응하는 불투명 Win32 표면색을 반환합니다.
 ///
-/// 선택되지 않은 행은 팔레트의 중립 surface를 그대로 사용하고, 선택 행은 healthy green을
-/// 20/255 불투명도로 같은 중립 surface 위에 합성합니다. 밝은·어두운 테마 모두 같은 의미와
-/// 강도를 유지하며 GDI 자원을 만들거나 외부 상태를 변경하지 않습니다.
+/// 일반 행은 단일 지면, 선택 행은 중립 보조 면을 사용합니다. 파란 선택선과 사용량 상태색의
+/// 의미를 분리하며 GDI 자원을 만들거나 외부 상태를 변경하지 않습니다.
 fn profile_row_surface_color(palette: DialogPalette, role: ProfileRowSurfaceRole) -> u32 {
     match role {
-        ProfileRowSurfaceRole::Neutral => palette.surface.colorref,
-        ProfileRowSurfaceRole::Selected => composite_dialog_color(
-            DialogColor::translucent(palette.healthy.colorref, SELECTED_ROW_TINT_OPACITY),
-            palette.surface,
-        ),
+        ProfileRowSurfaceRole::Neutral => palette.background.colorref,
+        ProfileRowSurfaceRole::Selected => palette.elevated_surface.colorref,
     }
 }
 
@@ -1575,6 +1571,7 @@ fn profile_row_first_line_layout(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ProfileRowFillStage {
     Surface,
+    Separator,
     SelectionEdge,
     ProgressTrack,
     ProgressFill,
@@ -1889,6 +1886,15 @@ fn paint_profile_row_custom<B: ProfileRowPaintBackend>(
     let visual = profile_row_visual_state(profile, selected, focused);
     let surface_color = profile_row_surface_color(visuals.palette, visual.surface);
     paint_profile_row_custom_fill(backend, ProfileRowFillStage::Surface, &rect, surface_color)?;
+    paint_profile_row_custom_fill(
+        backend,
+        ProfileRowFillStage::Separator,
+        &RECT {
+            top: rect.bottom - scale_logical(1, visuals.dpi).max(1),
+            ..rect
+        },
+        visuals.palette.subtle_border.colorref,
+    )?;
 
     let edge_width = scale_logical(crate::windows::design::SELECTION_EDGE, visuals.dpi).max(1);
     if selected {
@@ -1995,13 +2001,14 @@ fn paint_profile_row_custom<B: ProfileRowPaintBackend>(
         let marker_width = backend.measure_text_width(&marker_text)?;
         let first_line = profile_row_first_line_layout(first_line, marker_width, visuals.dpi, rtl);
         let mut name_rect = rect_from_logical(first_line.name);
+        backend.select_font(visuals.heading_font)?;
         backend.draw_text(
             ProfileRowTextStage::Name,
             &copy.name,
             &mut name_rect,
             base_format | DT_END_ELLIPSIS,
         )?;
-
+        backend.select_font(visuals.body_font)?;
         backend.set_text_color(COLORREF(visuals.palette.secondary_text.colorref))?;
         if let Some(marker_rect) = first_line.markers {
             let mut marker_rect = rect_from_logical(marker_rect);
@@ -4040,21 +4047,32 @@ mod tests {
             account_email: None,
             id: UsageProfileId::Managed(1),
             label: "Work".to_string(),
-            summary: String::new(),
-            details: String::new(),
+            summary: "Weekly allowance · 72% remaining".into(),
+            details: "5h: 84% remaining · reset at 18:30".into(),
             selected: true,
             login_required: false,
-            used_percent: None,
-            usage_status: None,
+            used_percent: Some(28),
+            usage_status: Some(ProfileUsageStatus::Healthy),
             managed: true,
         };
         let observer = thread::spawn(|| {
+            // 실행 중인 다른 CodexPeek 창에 테스트 명령을 보내지 않습니다.
+            let find_test_dialog = || {
+                let dialog =
+                    unsafe { FindWindowW(DIALOG_CLASS, windows::core::PCWSTR::null()) }.ok()?;
+                let mut process_id = 0;
+                unsafe {
+                    windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+                        dialog,
+                        Some(&mut process_id),
+                    );
+                }
+                (process_id == std::process::id()).then_some(dialog)
+            };
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut saw_disabled = false;
             loop {
-                if let Ok(dialog) =
-                    unsafe { FindWindowW(DIALOG_CLASS, windows::core::PCWSTR::null()) }
-                {
+                if let Some(dialog) = find_test_dialog() {
                     let enabled =
                         [RENAME_ID, LOGIN_ID, LOGOUT_ID, DELETE_ID]
                             .into_iter()
@@ -4064,6 +4082,35 @@ mod tests {
                                     .unwrap_or(false)
                             });
                     if enabled {
+                        if std::env::var_os("CODEX_PEEK_RENDER_DIR").is_some() {
+                            use windows::Win32::UI::WindowsAndMessaging::{
+                                GetWindowRect, SendMessageW, PRF_CHILDREN, PRF_CLIENT,
+                                PRF_ERASEBKGND, PRF_NONCLIENT, WM_PRINT,
+                            };
+                            let mut client = RECT::default();
+                            unsafe {
+                                GetWindowRect(dialog, &mut client).unwrap();
+                            }
+                            crate::windows::test_render::surface(
+                                "profile-manager-native",
+                                client.right - client.left,
+                                client.bottom - client.top,
+                                |dc| unsafe {
+                                    SendMessageW(
+                                        dialog,
+                                        WM_PRINT,
+                                        Some(WPARAM(dc.0 as usize)),
+                                        Some(LPARAM(
+                                            (PRF_CLIENT
+                                                | PRF_CHILDREN
+                                                | PRF_ERASEBKGND
+                                                | PRF_NONCLIENT)
+                                                as isize,
+                                        )),
+                                    );
+                                },
+                            );
+                        }
                         let _ =
                             unsafe { PostMessageW(Some(dialog), WM_CLOSE, WPARAM(0), LPARAM(0)) };
                         return saw_disabled
@@ -4073,9 +4120,7 @@ mod tests {
                     saw_disabled = true;
                 }
                 if Instant::now() >= deadline {
-                    if let Ok(dialog) =
-                        unsafe { FindWindowW(DIALOG_CLASS, windows::core::PCWSTR::null()) }
-                    {
+                    if let Some(dialog) = find_test_dialog() {
                         let _ =
                             unsafe { PostMessageW(Some(dialog), WM_CLOSE, WPARAM(0), LPARAM(0)) };
                     }
@@ -4695,6 +4740,65 @@ mod tests {
         (profile, copy, accessible)
     }
 
+    #[test]
+    fn editorial_profile_rows_render_names_states_and_focus_with_real_fonts() {
+        for theme in [DialogTheme::Light, DialogTheme::Dark] {
+            for dpi in [96, 120, 144, 192] {
+                let resources = DialogVisualResources::new(dpi, theme);
+                let width = crate::windows::design::scale_logical(588, dpi);
+                let height = resources.profile_row_height();
+                crate::windows::test_render::surface(
+                    &format!("profiles-{theme:?}-{dpi}"),
+                    width,
+                    height * 3,
+                    |dc| {
+                        for (index, (label, percent, selected)) in [
+                            ("개인 프로필", 28, true),
+                            ("개발 프로젝트", 78, false),
+                            ("테스트 계정", 95, false),
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        {
+                            let (mut profile, _, _) = row_paint_fixture();
+                            profile.label = label.to_owned();
+                            profile.used_percent = Some(percent);
+                            profile.usage_status =
+                                Some(ProfileUsageStatus::from_used_percent(f64::from(percent)));
+                            profile.summary = format!("주간 한도 · {}% 남음", 100 - percent);
+                            profile.details = "5시간 한도 84% 남음 · 초기화 오늘 18:30".into();
+                            profile.selected = selected;
+                            let copy = super::profile_manager_row_text(&profile, Language::Korean);
+                            let accessible = super::profile_manager_accessible_row_text(
+                                &profile,
+                                Language::Korean,
+                            );
+                            // SAFETY: DC는 테스트 비트맵에서 빌리며 실제 계정이나 UI 동작은 사용하지 않습니다.
+                            let mut backend =
+                                unsafe { super::WindowsProfileRowPaintBackend::new(dc) };
+                            assert!(paint_profile_row_with_fallback(
+                                &mut backend,
+                                RECT {
+                                    left: 0,
+                                    top: index as i32 * height,
+                                    right: width,
+                                    bottom: (index as i32 + 1) * height,
+                                },
+                                &profile,
+                                &copy,
+                                &accessible,
+                                resources.profile_row_snapshot(),
+                                false,
+                                selected,
+                                selected
+                            ));
+                        }
+                    },
+                );
+            }
+        }
+    }
+
     fn paint_profile_row_fixture(backend: &mut RecordingProfileRowPaintBackend) -> bool {
         let (profile, copy, accessible) = row_paint_fixture();
         paint_profile_row_with_fallback(
@@ -4712,6 +4816,7 @@ mod tests {
                 dpi: 96,
                 palette: DialogPalette::for_theme(DialogTheme::Light),
                 body_font: font_handle(1),
+                heading_font: font_handle(2),
             },
             false,
             false,
@@ -4860,6 +4965,7 @@ mod tests {
                     dpi: 96,
                     palette: DialogPalette::for_theme(DialogTheme::Light),
                     body_font: font_handle(1),
+                    heading_font: font_handle(2),
                 },
                 false,
                 true,
@@ -4929,6 +5035,7 @@ mod tests {
                 dpi: 96,
                 palette: DialogPalette::for_theme(DialogTheme::Light),
                 body_font: font_handle(1),
+                heading_font: font_handle(2),
             },
             false,
             false,
@@ -4962,6 +5069,7 @@ mod tests {
                         dpi,
                         palette: DialogPalette::for_theme(DialogTheme::Light),
                         body_font: font_handle(1),
+                        heading_font: font_handle(2),
                     },
                     rtl,
                     false,
@@ -5121,25 +5229,25 @@ mod tests {
     }
 
     #[test]
-    fn profile_row_selected_surface_is_a_subtle_green_tint_on_both_themes() {
+    fn profile_row_selection_uses_neutral_paper_on_both_themes() {
         let light = DialogPalette::for_theme(DialogTheme::Light);
         assert_eq!(
             profile_row_surface_color(light, ProfileRowSurfaceRole::Neutral),
-            0x00ff_ffff
+            light.background.colorref
         );
         assert_eq!(
             profile_row_surface_color(light, ProfileRowSurfaceRole::Selected),
-            0x00f4_fbf1
+            light.elevated_surface.colorref
         );
 
         let dark = DialogPalette::for_theme(DialogTheme::Dark);
         assert_eq!(
             profile_row_surface_color(dark, ProfileRowSurfaceRole::Neutral),
-            0x0026_2626
+            dark.background.colorref
         );
         assert_eq!(
             profile_row_surface_color(dark, ProfileRowSurfaceRole::Selected),
-            0x002c_3329
+            dark.elevated_surface.colorref
         );
     }
 

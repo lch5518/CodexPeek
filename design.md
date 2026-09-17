@@ -1,342 +1,375 @@
-# CodexPeek Design System
+# CodexPeek Design Specification: Taskbar Editorial Widget
 
-## Design context
+> Windows 작업표시줄 위에 잠깐 펼쳐지는 Codex 사용량 미니 신문.
+> 대상: Windows 10/11 x64, Rust 2021 + Win32/GDI 네이티브 앱.
+> 디자인 참조: [TypeSafe Home](https://console.typesafe.ai/home).
+> 참조 관찰일: 2026-09-17. 아래 사이트 관찰은 사용자가 제공한 DOM·계산된 스타일·스크린샷 관찰 기록을 바탕으로 하며, 이 문서 수정에서 재측정한 결과는 아니다.
 
-- Version: 1.0
-- Product: CodexPeek
-- Product type: Native Windows utility
-- Platforms: Windows 10 and Windows 11
-- Primary font: `"Segoe UI Variable", "Segoe UI", system-ui, sans-serif`
-- Fallback font: `"Malgun Gothic", "Noto Sans", sans-serif`
+이 문서는 CodexPeek의 새 **편집 지면형 사용량 상세 패널**과 주변 UI의 설계 기준이다.
+**현재 구현**은 저장소에서 확인한 동작, **목표 설계**는 앞으로 UI 작업에서 구현하고 검증할 요구사항을 뜻한다.
+문서 변경만으로 목표 동작이 구현된 것으로 간주하지 않는다.
 
-CodexPeek is a compact native Windows utility that shows Codex rate-limit usage,
-remaining allowance, reset times, loading state, and connection errors through a
-taskbar widget, floating widget, and system tray.
+## 1. 디자인 방향과 적용 범위
 
-The design principles are glanceable, compact, native, calm, status-driven,
-content-first, accessible, and DPI-aware. The product personality is quiet,
-precise, technical, dependable, and unobtrusive.
+**“작업표시줄에서는 사용량을 한눈에, 펼친 지면에서는 초기화와 소비 속도까지.”**
 
-## Brand and color tokens
+신문 느낌은 종이 질감이나 명조체가 아니라 큰 숫자, 강한 제목 위계, 작은 메타정보,
+비대칭 단 구성과 얇은 괘선에서 만든다. CodexPeek은 뉴스·날씨·일정 대시보드가 아니다.
+선택한 사용량 프로필의 남은 비율 또는 사용한 비율, 초기화 시각, 소비 속도와 예측을 짧게 설명한다.
 
-The brand primary color is healthy green `#48C774`. It means that Codex usage is
-healthy and available; it is not a general decoration color.
+- 하나의 불투명한 지면을 여백과 선으로 구획한다. 독립된 둥근 카드 묶음을 만들지 않는다.
+- 큰 산세리프 숫자 하나와 작은 영문·숫자 메타정보를 대비한다. 한국어 설명은 읽기 쉬운 본문 글꼴을 쓴다.
+- 무채색을 기본으로 하고 파랑은 링크·포커스에 사용한다. 기존 초록·주황·빨강은 사용량과 상태의 의미에만 남긴다.
+- 작업표시줄은 Windows 외관과 기존 축약 표시를 유지한다. 상세 패널의 흰 지면을 작업표시줄 안에 넣지 않는다.
+- 첫눈에 비율과 상태를, 10초 안에 초기화·소비 속도·최근 추이를 읽을 수 있게 한다.
 
-### Status colors
+### 현재 구현과 목표 설계
 
-| State | Color | Meaning |
+| 영역 | 현재 구현 | 목표 설계 / 유지할 계약 |
 | --- | --- | --- |
-| Healthy | `#48C774` | Displayed usage is below 70% |
-| Warning | `#F5A623` | Displayed usage is at least 70% and below 90% |
-| Critical | `#FF5C5C` | Displayed usage is at least 90% |
-| Error | `#FF5C5C` | The latest refresh failed |
-| Loading | `#979797` | No successful value has loaded yet |
+| 표시 호스트 | 작업표시줄에 연결하는 자체 Win32 위젯, 분리된 플로팅 위젯, 트레이 | 기존 호스트와 Explorer 복구 경로 재사용. OS 작업표시줄 버튼 썸네일을 대체하지 않음 |
+| 상세 팝업 | 기본 440 DIP의 편집 지면, 큰 비율·사용량/초기화·예측 열·토큰 그래프, GDI 렌더링 | 긴 문구 측정과 360 DIP 이하 단일 열 적용. 공간 부족 시 보조 설명·그래프를 생략하고 그래도 맞지 않으면 표준 UI 폴백 |
+| 호버 | Windows 툴팁 알림으로 표시, `WS_EX_NOACTIVATE`·`WS_EX_TRANSPARENT`, 위젯 이탈 시 닫힘 | 지연 열기·닫기, 패널까지 유지 영역 확장, 명시적인 Interactive 상태 추가 |
+| 데이터 | 사용량 창, 초기화 정보, 소비 속도, 예측, 제공되는 경우 일별 토큰 사용량 | 같은 표시 모델을 재구성. 디자인을 위해 RPC나 수집 범위를 추가하지 않음 |
+| 접근성 | 고대비·스크린리더 환경 또는 렌더링 실패 시 표준 UI 폴백 | 폴백 유지. 조작 가능한 상세 화면은 별도 키보드·접근성 경로 확보 |
 
-### Dark theme
+트레이 아이콘은 항상 보이는 텍스트 표시를 보장하지 않는다. 작업표시줄 연결 실패 시에도
+플로팅 위젯과 트레이에서 사용량에 접근할 수 있어야 한다. WebView, Electron, Tauri나
+웹 폰트 로딩을 이 디자인의 전제로 추가하지 않는다.
 
-| Token | Value |
+## 2. 참조 사이트의 관찰과 위젯 적용
+
+| 요소 | 제공된 관찰 | CodexPeek 적용 |
+| --- | --- | --- |
+| 구조 | 좌측 내비게이션, 넓은 히어로, 본문 단 구성, Quickstart·Usage 보조 영역 | 내비게이션 없이 사용량 리드 + 초기화·예측 보조란으로 축소 |
+| 큰 제목 | Inter 500. 48/45.6px, 자간 -2.88px 및 70.4/59.84px, 자간 -4.928px인 요소 확인. 가시성·반응형 상태에 따라 다를 수 있음 | 사용량 숫자와 짧은 제목에 위계만 적용. 원본 크기와 좁은 행간을 복제하지 않음 |
+| 섹션 제목·라벨 | 제목 36/34.2px, 500, 자간 -2.16px. 대문자 라벨 14/19.6px, 600, 자간 +0.84px | 작은 섹션 라벨과 괘선. 한글에는 영문용 자간을 강제하지 않음 |
+| 본문·기술 텍스트 | Inter body 16/24px, 자간 -0.32px; 개별 UI 12~14px. Space Mono 코드 안내 14/17.5px | 시스템 산세리프 본문과 짧은 숫자·시각용 모노스페이스 |
+| 형태·강조 | 주요 면과 버튼은 각짐, 일부 사이드바 반경 6px. 옅은 선과 세로 분할, 파란 링크·선형 아이콘, 어두운 CTA | 반경 2 DIP, 얇은 구분선, 절제된 링크. 로고·일러스트·홍보용 히어로 제외 |
+
+### 색상 관찰의 한계
+
+제공된 관찰에는 `--darkreader-*` 변수가 감지되었다. 어두운 화면을 TypeSafe의 공식 다크
+테마로 단정하지 않는다. 관찰된 원본 토큰과 변환된 색상은 참고 자료이며 앱의 실측값이 아니다.
+
+| 원본 토큰 | 관찰값 |
 | --- | --- |
-| Background | `#1F1F1F` |
-| Surface | `#262626` |
-| Elevated surface | `#2C2C2C` |
-| Border | `#404040` |
-| Subtle border | `rgba(255, 255, 255, 0.08)` |
-| Text | `#EEEEEE` |
-| Primary action text | `#202020` |
-| Secondary text | `#C8C8C8` |
-| Muted text | `#979797` |
-| Progress track | `rgba(255, 255, 255, 0.14)` |
-| Hover | `rgba(255, 255, 255, 0.06)` |
-| Pressed | `rgba(255, 255, 255, 0.10)` |
-| Focus | `#48C774` |
+| background / surface | `#FAFAFA` / `#FFFFFF` |
+| muted / ink-strong | `#F3F3ED` / `#171717` |
+| foreground / ink-muted | `#171717` 80% / 50% + transparent |
+| divider / link | `#171717` 8% + transparent / `#2563EB` |
+| 변환된 화면 | body `#1B1D1E`, main `#181A1B`, 강한 제목 `#D9D6D1` |
 
-### Light theme
+## 3. 실제 데이터와 정보 우선순위
 
-| Token | Value |
+### 표시 규칙
+
+| 정보 | 입력·의미 | 설계 규칙 |
+| --- | --- | --- |
+| 프로필 | `WidgetViewModel.usage_profile_label` | 사용자 지정 표시명만 헤더에 표시. 이메일·계정 ID·Codex 홈 경로를 상세 팝업에 추가하지 않음 |
+| 사용량 창 | `primary`, `secondary`의 비율·레이블 | 리드는 기존 선택 규칙대로 Secondary 우선, 없으면 Primary. 실제 창 레이블을 사용하고 모든 계정을 5시간/7일로 단정하지 않음 |
+| 표시 비율 | `show_remaining_percent`, 행의 `display_percent`·`percent_text` | `남음` 또는 `사용`을 숫자 가까이에 명시. 남은 비율이 클 때 위험하다는 식으로 상태를 뒤집지 않음 |
+| 초기화·추가 정보 | 행의 `reset_text`, `reset_credits_text` | 날짜·시각과 해당 창을 함께 표시. 제공되지 않은 값은 추정하지 않음 |
+| 소비 속도·예측 | `consumption_pace`, 행의 `forecast` | 소비 속도와 현재 사용률을 별개로 설명. 예측에는 추정임을 표시하고 수집 중·오래됨·꺼짐 상태 유지 |
+| 최근 추이 | `daily_token_usage` | CLI가 제공한 최근 최대 14일의 일별 토큰 막대. 사용률 증가 기록 `daily_usage`와 단위·출처를 혼동하지 않음 |
+| 최신성·오류 | `last_success`, `is_stale`, `data_state`, 안전한 상태 문구 | 마지막 성공 시각과 지연 상태를 노출. 재시도 실패로 마지막 정상 값을 지우지 않음 |
+
+리드 선택은 데이터가 갱신될 때마다 가장 위험한 창으로 바꾸지 않는다. 두 창의 순서와 숫자
+위치를 안정적으로 유지한다. 같은 프로필 안에서만 마지막 정상 값을 보존하고, 프로필을 바꿀 때
+다른 프로필의 값을 새 이름 아래에 표시하지 않는다.
+
+### 상태 의미의 분리
+
+| 계약 | 현재 의미 | 디자인에서 지킬 점 |
+| --- | --- | --- |
+| `UsageLevel` | 사용률 `<50` Stable, `50~<75` Normal, `75~<90` Caution, `90~<100` Danger, `≥100` Limited | 전역 도메인 분류를 스타일 변경으로 합치거나 바꾸지 않음 |
+| `TaskbarRisk` | **사용한 비율** `<70` Healthy, `70~<90` Warning, `≥90` Critical | 작업표시줄 막대의 기존 분류 유지. 표시 모드 전환과 무관 |
+| `TaskbarIndicator` | 소비 속도의 여유·보통·빠름·판단 불가; 로딩·조회 오류 우선 | 상태점을 단순한 잔량 신호로 재해석하지 않음 |
+
+상태 문구와 숫자 계산은 도메인·표시 모델에서 받고 GDI 그리기 코드에서 재계산하지 않는다.
+막대 길이는 0~100%로 제한하되 원본 비율과 도메인 의미는 보존한다.
+
+## 4. 화면 구성
+
+크기와 간격은 **DIP(96 DPI 논리 픽셀)** 기준이다. 실제 HWND 경계와 GDI 좌표는
+해당 모니터 DPI로 한 번 변환한 물리 픽셀을 사용한다.
+
+### 4.1 작업표시줄·플로팅 표시부
+
+| 항목 | 기준 |
 | --- | --- |
-| Background | `#F3F3F3` |
-| Surface | `#FFFFFF` |
-| Elevated surface | `#FAFAFA` |
-| Border | `#D5D5D5` |
-| Subtle border | `rgba(0, 0, 0, 0.08)` |
-| Text | `#202020` |
-| Primary action text | `#202020` |
-| Secondary text | `#505050` |
-| Muted text | `#737373` |
-| Progress track | `rgba(0, 0, 0, 0.14)` |
-| Hover | `rgba(0, 0, 0, 0.05)` |
-| Pressed | `rgba(0, 0, 0, 0.09)` |
-| Focus | `#27864D` |
+| 작업표시줄 너비 | 기존 기본 208 DIP, 최소 88 DIP 유지 |
+| 반응형 모드 | Full ≥140 DIP, Compact ≥100 DIP, Minimal ≥88 DIP. 기존 행 선택과 축약 규칙 유지 |
+| 내용 | 사용량 창 레이블, 비율, 얇은 진행 막대와 상태 표시. 여유 공간에서는 기존 두 창을 유지 |
+| 숫자·표시 | 비율 13 DIP 전후, 고정 숫자 폭. 상태점 6 DIP, 진행 막대 3 DIP를 기준으로 기존 레이아웃 재사용 |
+| 분리된 플로팅 위젯 | 기존 프로필 헤더와 축약 사용량 본문, 이동·표시/숨기기·복구 유지. 440 DIP 패널과 별개 |
 
-## Typography
+호버·로딩·오류 때문에 표시부 크기를 변경하지 않는다. 숫자와 단위를 우선하고 선택적인
+레이블부터 축약한다. 원안의 아이콘 + 값 하나를 강제하여 현재 두 사용량 창을 없애지 않는다.
+패널 앵커는 실제 위젯 HWND의 화면 경계를 사용한다.
 
-| Style | Size | Weight | Line height | Purpose |
-| --- | --- | --- | --- | --- |
-| Percentage | 13 px | 600 | 1 | Primary taskbar usage value; tabular numbers |
-| Label | 11 px | 500 | 1.15 | Usage-window labels and compact metadata |
-| Body | 12 px | 400 | 1.35 | Floating widget and diagnostics content |
-| Heading | 14 px | 600 | 1.25 | Section headings |
-| Caption | 10 px | 400 | 1.2 | Reset and update times, secondary information |
+### 4.2 상세 패널 치수 — 목표 설계
 
-Percentages use tabular numeric alignment. Text must stay readable before any
-decorative element is preserved.
+| 속성 | 기준 |
+| --- | --- |
+| 너비 | 기본 440 DIP. 360 DIP 이하 또는 번역·텍스트 확대 때문에 열이 부족하면 단일 열 |
+| 높이 | 콘텐츠 기반, 보통 360~480 DIP. 최대 `min(560 DIP, 모니터 작업영역 높이 - 24 DIP)` |
+| 화면 여백 / 앵커 간격 | 작업영역 가장자리 12 DIP / 앵커와 8 DIP |
+| 패딩 / 단 간격 | 기본 20 DIP, 좁은 모드 16 DIP / 16 DIP |
+| 외곽 | 반경 2 DIP, 테두리 1 DIP, 약한 그림자 한 겹. 헤더 아래 2 DIP 괘선 |
 
-## Geometry and motion tokens
+작업영역이 더 작으면 화면 경계를 우선한다. 폭을 줄인 뒤 텍스트를 다시 측정하고,
+비트맵을 단순히 잘라서 맞추지 않는다. 먼저 보조 설명과 그래프 날짜 밀도를 줄이고,
+필수 비율·단위·오류·초기화 시각은 보존한다. 그래도 맞지 않으면 접근 가능한 네이티브 상세
+경로로 전환한다. Interactive 상태의 본문만 필요한 경우 단일 세로 스크롤을 허용한다.
 
-- Base spacing: 2 px
-- Spacing scale: 2, 4, 6, 8, 10, 12, 16, 20, 24 px
-- Corner radii: 3 px small, 6 px medium, 10 px large, 12 px floating widget,
-  and 9999 px pill
-- Borders: 1 px standard, 2 px focus, 1 px status ring
-- Taskbar shadow: none
-- Floating widget shadow: `0 8px 24px rgba(0, 0, 0, 0.22)`
-- Popup shadow: `0 4px 16px rgba(0, 0, 0, 0.20)`
-- Inset highlight: `inset 0 1px 0 rgba(255, 255, 255, 0.06)`
-- Hover duration: 150 ms
-- State duration: 180 ms
-- Popup duration: 200 ms
-- Progress duration: 240 ms
-- Easing: `cubic-bezier(0.2, 0, 0, 1)`
-- Reduced-motion duration: 0 ms
+### 4.3 지면 예시
 
-Motion exists only to clarify feedback. Never use blinking, bouncing, pulsing,
-continuous shimmer, or animations that delay access to information.
+아래는 실제 계정과 무관한 정적 예시다. `×`와 새로 고침은 Interactive 구현 후 조작 가능하다.
 
-## Product intent and information hierarchy
+```text
+┌────────────────────────────────────────────┐
+│ CODEXPEEK                 개인 프로필  [×] │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│ 주간 한도 · 남음                           │
+│ 72%                                        │
+│ 사용 속도 여유 · 최근 관측 기준             │
+│ ────────────────────────────────────────── │
+│ 사용량 창                   │ 다음 초기화  │
+│ 5시간 · 84% 남음             │ 9월 18일     │
+│ 초기화 오늘 18:30            │ 14:30 · 주간 │
+│                             │              │
+│ 주간 · 72% 남음              │ 소진 예측    │
+│ 사용 속도 설명               │ 표본 수집 중 │
+│ ────────────────────────────────────────── │
+│ 일별 토큰 사용량 · 최근 14일                │
+│ ▁ ▃ ▂ ▅ ▂ ▁ ▄ ▆ ▂ ▃ ▅ ▂ ▄ ▂                │
+│ 09.04                                09.17 │
+│ ────────────────────────────────────────── │
+│ 2분 전 갱신 · Codex CLI          새로 고침  │
+└────────────────────────────────────────────┘
+```
 
-CodexPeek is not a dashboard or a general-purpose monitoring suite. It quietly
-answers three questions within one second:
+- **헤더·리드:** CodexPeek과 프로필명, 선택된 창의 큰 비율 하나, 짧은 소비 속도 문구. 장식용 날짜·호수는 생략한다.
+- **주 열:** Primary → Secondary 순서로 최대 두 사용량 창. 각 행은 창 이름·비율·초기화 또는 짧은 설명이며 독립 카드로 감싸지 않는다.
+- **보조 열:** 주 열과 약 2:1 비율, 시작에 세로 괘선. 리드 창의 초기화와 예측, 제공되는 초기화 관련 추가 정보를 짧게 표시한다.
+- **그래프:** 하단 전체 폭을 사용한다. 날짜는 막대 순서와 대응하고 0토큰은 기준선만 표시한다. 빈 데이터는 0으로 꾸미지 않고 제공되지 않음을 알린다.
+- **푸터:** 마지막 성공 시각, 필요할 때 출처, 주 액션 하나. 정상 상태에서는 새로 고침, 로그인 필요 시에는 기존 로그인 경로를 여는 액션을 쓴다.
 
-1. How much Codex usage has been consumed or remains?
-2. Is the state healthy, warning, critical, loading, or failed?
-3. When will the relevant usage window reset?
+예측이 길어지면 보조 열을 넓히거나 한 열로 전환한다. 같은 초기화 시각과 설명을 여러 곳에
+반복하지 않는다. 그래프를 위해 주 사용량을 아래로 밀어내거나 두 번째 큰 숫자를 만들지 않는다.
 
-Prioritize content in this order:
+## 5. 색상·간격 토큰
 
-1. Percentage or remaining allowance
-2. Current health state
-3. Progress bar
-4. Usage-window identity
-5. Reset time
-6. Last updated time
-7. Diagnostics and explanatory text
+**Windows 시스템 테마 연동을 기본으로 유지한다.** 밝은 테마에서는 밝은 종이 지면,
+어두운 테마에서는 아래의 불투명한 어두운 지면을 사용한다. 별도 테마 설정을 새로 만들지 않는다.
+아래 값은 상세 패널의 sRGB 설계 토큰이다. 공통 지면·텍스트·구분선은 `DialogPalette`에서
+메뉴·프로필 관리와 공유한다. TypeSafe 공식 테마를 뜻하지 않는다.
 
-When space is limited, remove lower-priority information instead of shrinking an
-essential value until it is unreadable.
+| 토큰 | Light | Dark | 용도 |
+| --- | --- | --- | --- |
+| paper | `#FAFAFA` | `#181A1B` | 단일 지면 |
+| paper-raised | `#FFFFFF` | `#1B1D1E` | 필요한 입력·제어 면 |
+| paper-muted | `#F3F3ED` | `#232526` | 중립 보조 영역 |
+| ink | `#171717` | `#D9D6D1` | 숫자·제목 |
+| ink-body | `#454545` | `#C1BEB8` | 본문 |
+| ink-secondary | `#666666` | `#A5A39E` | 시각·단위·보조 텍스트 |
+| rule | `#DDDDDA` | `#343738` | 장식용 내부 괘선 |
+| rule-strong | `#B9B9B3` | `#656764` | 지면 외곽·강한 구분 |
+| link | `#2563EB` | `#7CAFFF` | 클릭 가능한 링크 |
+| hover | `#EEEEEA` | `#252829` | 조작 가능한 행의 호버 |
+| focus | `#2563EB` | `#8BB8FF` | 키보드 포커스 |
+| danger-text | `#B42318` | `#FF9A90` | 오류 설명 |
+| shadow | 검정 14%, 오프셋 0/8 DIP, blur 목표 28 DIP | 검정 30%, 동일 치수 | 부유 경계 구분 |
 
-## Taskbar widget
+기존 의미 색상 `#48C774` / `#F5A623` / `#FF5C5C`는 상태점과 진행 막대에 한정해 유지한다.
+작은 본문은 위 ink 계열 또는 danger-text로 그려 밝은 배경에서 색상 대비를 확보한다.
+의미 있는 제어 경계와 상태 표시에는 필요한 대비를 별도로 확보하며 장식용 rule만 의존하지 않는다.
 
-- Preferred width: 208 logical pixels
-- Minimum width: 88 logical pixels
-- Horizontal padding: 11 px
-- Status dot: 6 px
-- Progress height: 3 px
-- Element gap: 8 px
+| 공통 토큰 | 값 |
+| --- | --- |
+| 간격 | 4, 8, 12, 16, 20, 24 DIP. 기존 축약 위젯의 2·6 DIP 간격은 유지 가능 |
+| 반경 | 상세 패널 기본 2 DIP, 범위 0~2 DIP |
+| 괘선 / 포커스 | 일반 1 DIP, 헤더 2 DIP / 두께 2 DIP + 바깥 여유 2 DIP |
+| 조작 영역 | 닫기·액션 최소 32×32 DIP. 아이콘은 14~16 DIP |
+| 모션 | 열림 120ms, 닫힘 80ms, 최대 이동 4 DIP. 구현 비용이 크면 즉시 표시부터 적용 |
 
-The responsive modes are:
+세피아, 노이즈, 그라데이션, Acrylic/Mica 흉내, 내부 카드 그림자는 사용하지 않는다.
+Windows 기본 그림자로 충분하면 별도 블러 렌더러를 만들지 않는다. sRGB `#RRGGBB`를
+Win32 `COLORREF`로 옮길 때 바이트 순서를 변환한다. CSS나 브라우저 토큰 엔진은 필요 없다.
 
-- Full, at 140 logical pixels or wider: status dot, usage-window label,
-  percentage, and progress bar.
-- Compact, at 100 logical pixels or wider: status dot, percentage, and progress
-  bar.
-- Minimal, at 88 logical pixels or wider: percentage and progress bar.
+## 6. 타이포그래피와 다국어
 
-Follow the native Windows taskbar appearance and allow its material to remain
-visible. Do not draw a large opaque card. Widget dimensions must not change on
-hover, loading, or status changes. Preserve alignment when percentages change
-from one to three digits. Prefer one-line content and truncate optional labels
-before reducing percentage readability.
+| 용도 | 크기 / 행간(DIP) | 굵기 | 기준 |
+| --- | --- | --- | --- |
+| 지면명·영문 메타 | 11 / 16 | 500 | 지원할 때만 영문 자간 +0.06em |
+| 짧은 한글 리드 제목 | 28~32 / 1.18배 | 500~600 | 최대 2줄. 큰 비율과 동시에 과도하게 강조하지 않음 |
+| 핵심 비율 | 32~36 / 1.05배 | 500~600 | 패널당 하나, 숫자 폭 고정, 단위 필수 |
+| 섹션 라벨 | 11~12 / 16 | 600 | 영문 +0.06em 선택, 한글 기본 자간 |
+| 항목 제목 | 14 / 20 | 600 | 행 높이를 실제 측정 |
+| 본문 | 13 / 19 | 400 | 최대 2줄 요약, 확대 시 유연하게 증가 |
+| 시각·단위·보조 정보 | 11~12 / 16 | 400 | 잘림보다 줄바꿈 우선 |
 
-The taskbar widget must not contain explanatory paragraphs, multiple buttons,
-large icons, card grids, illustrations, gradients, glow, promotional text, or
-continuously moving animations.
+본문은 설치된 `Segoe UI Variable` 또는 `Segoe UI`, 한글은 `Malgun Gothic`과 시스템
+글꼴 대체를 사용한다. 짧은 영문·숫자 메타에는 설치되어 있으면 `Cascadia Mono`, 아니면
+`Consolas`를 사용한다. 이 이름들은 CSS 폰트 스택이 아니라 네이티브 글꼴 선택 우선순위다.
 
-## Floating widget
+Inter·Space Mono·Pretendard 번들링은 이 설계의 필수 요건이 아니다. 시스템 글꼴로 위계를
+먼저 구현한다. 추후 번들링할 때만 라이선스·배포 크기·다국어 폴백을 별도로 검토한다.
+원본의 강한 음수 자간과 0.85배 행간을 한글이나 GDI에 강제하지 않는다.
 
-- Preferred width: 280 logical pixels
-- Minimum width: 240 logical pixels
-- Maximum width: 340 logical pixels
-- Padding: 16 px
-- Section gap: 12 px
-- Row gap: 8 px
+- GDI 텍스트 측정 후 레이아웃을 계산한다. 사용자 텍스트 확대도 DPI 배율과 별도로 고려한다.
+- 한국어는 가능한 어절 단위로 줄바꿈하고 긴 식별 문자열은 화면 밖으로 넘치지 않게 한다. CSS 줄바꿈 속성을 그대로 구현 지침으로 사용하지 않는다.
+- 비율·남음/사용·초기화 시각·오류 의미를 말줄임으로 숨기지 않는다. 축약한 설명의 전체 내용은 클릭·키보드 상세 경로에서 제공한다.
+- 한국어·영어를 포함한 기존 12개 언어를 유지한다. 새 문구는 `localization.rs`에 두고 기존 언어별 매핑 계약을 지킨다.
+- 아랍어 RTL에서는 읽기 순서와 단 배치를 맞추고 숫자·날짜는 의미가 뒤집히지 않게 한다. 모노스페이스 영문 라벨을 번역 대신 강제하지 않는다.
 
-Its structure is account or connection status, primary usage window, secondary
-usage window, reset times, last-updated time, refresh action, and an error or
-diagnostic message only when needed.
+## 7. 호버와 팝업 동작 — 목표 설계
 
-Use one quiet surface, one border, and a soft shadow. Keep percentages strongest
-and reset times secondary. Do not imitate a web dashboard or put every value in
-its own card. Avoid gradients and fake glass effects.
+현재 팝업은 읽기 전용이며 자체 입력·포커스 상태 기계가 없다. 다음 상태는 **추가 구현이 필요**하다.
 
-## Native dialogs
+`Closed → PendingOpen → Preview → Interactive → Closed`
 
-Dialog layouts use the same typography, colors, spacing scale, and semantic
-status model as the widgets while preserving Win32 behavior.
+| 상태·이벤트 | 요구 동작 |
+| --- | --- |
+| Closed → PendingOpen | 실제 위젯 영역 진입 후 250ms 대기. 그 전에 이탈하면 취소 |
+| PendingOpen → Preview | 캐시 또는 로딩 지면을 즉시 표시. 데이터를 기다리거나 RPC를 새로 시작하지 않음 |
+| Preview 유지 | 앵커·패널·소유 메뉴를 하나의 유지 영역으로 취급. 모두 이탈한 뒤 300ms 후 닫기 |
+| 명시적인 열기 | 표시부 클릭, 패널 내부 클릭 또는 키보드 상세 명령은 대기를 건너뛰고 Interactive 진입 |
+| Interactive | 첫 의미 있는 컨트롤에 포커스. 포인터 이탈로 닫지 않고 Esc·닫기·외부 클릭으로 종료 |
 
-- Use 16 logical pixels of outer padding and gaps from the shared spacing scale.
-- Interactive controls have at least a 32 by 32 logical-pixel target.
-- Place form labels above their inputs.
-- Keep action labels on exactly one line. Do not enable multiline button styles.
-- Measure localized action text using the active dialog font and add horizontal
-  padding before choosing each button width.
-- If the work area cannot hold one action row, wrap the action controls as whole
-  buttons; never wrap or clip text inside a button.
-- Use owner drawing only where native controls cannot express the selected row,
-  semantic progress, or clear primary action. Preserve native focus, keyboard,
-  accessibility, and disabled behavior.
-- Keep system message boxes native.
+### 입력·포커스 계약
 
-### Usage profile manager
+- Preview는 다른 앱의 포커스를 빼앗지 않는다. 앵커와 패널 사이 8 DIP 이동 중에는 닫힘 지연을 사용하고, 어느 영역이든 재진입하면 타이머를 취소한다.
+- 현재 `WS_EX_TRANSPARENT` 읽기 전용 창에 버튼만 그려 넣지 않는다. 실제 hit-test와 입력 처리, Preview에서 Interactive로 전환할 활성화 정책을 함께 구현한다.
+- 호버는 로그인·새로 고침·프로필 변경을 실행하지 않는다. 액션은 명시적인 클릭이나 키보드 명령으로 기존 `UiBackend` 경로를 호출한다.
+- 키보드로 접근 가능한 트레이의 상세 명령 등 동등한 열기 경로를 제공한다. 닫을 때 실제 호출 컨트롤 또는 트레이 호스트가 지원하는 위치로 포커스를 돌린다.
+- 트레이의 기존 선택·우클릭 메뉴 동작과 플로팅 위젯 조작을 보존한다. 패널의 조작 접근성 구현 전에는 기존 상세·트레이 경로를 제거하지 않는다.
 
-The profile manager uses the Native Refined direction:
+### 수명·위치·모션
 
-- Use 94 logical-pixel profile rows with 16 px horizontal padding.
-- The selected row has a subtle theme-appropriate green tint and a 3 px green
-  selection bar.
-- The first line is the profile name, followed by the login email, localized status summary,
-  and usage details. Missing or unverified email uses `—`. Keep email reading left-to-right
-  even in RTL layouts; native accessibility text includes the available email.
-- When valid usage exists, show a thin semantic progress indicator at the edge
-  appropriate for the current layout direction.
-- Indicate the system/default account and currently displayed account with text,
-  not color alone.
-- Place the 32 by 32 logical-pixel `+` control directly below the list and retain
-  its localized tooltip/accessibility description.
-- Keep profile name editing below the list with a label above the edit field.
-- Keep Rename, Login, Logout, and Delete in a restrained action area. Only a
-  clearly primary Login action may use healthy green; destructive and disabled
-  controls remain neutral.
+| 항목 | 요구 동작 |
+| --- | --- |
+| 앵커 | 현재 표시부가 속한 모니터 기준. 위쪽 우선, 불가능하면 아래쪽 또는 작업영역 안에 배치 |
+| 복구 | 자동 숨김·DPI·작업영역 변경 시 재배치. Explorer 재시작으로 앵커가 사라지면 팝업·타이머 정리 후 기존 호스트 복구에 따름 |
+| 다중 모니터 | 주 모니터 고정 금지. 동시에 열린 상세 팝업은 하나로 제한하고 새 앵커에 맞춰 이전 상태 정리 |
+| 종료 | 잠금·세션 전환·앱 종료·소유 창 소멸 시 정리. 이미 닫힌 창이나 오래된 타이머 이벤트는 무시 |
+| 모션 | 가능한 경우 opacity와 4 DIP 이동만 적용. 감소 모션에서는 즉시 표시·닫기. 확대·바운스·상시 애니메이션 금지 |
 
-The add-profile dialog uses the same surface, font, spacing, control height,
-button sizing, theme, DPI, RTL, focus, and validation rules. Add is the primary
-green action when enabled; Cancel is neutral.
+시각 효과가 입력이나 표시를 지연시키지 않게 한다. 같은 진입에 열림 타이머를 중복 생성하지
+않고 정지 상태에서 모션 타이머를 돌리지 않는다. 포인터 유지와 포커스 이동은 HWND 및 상태로
+판단하며 번역된 문자열을 비교하지 않는다.
 
-## System tray
+## 8. 컴포넌트와 기존 네이티브 화면
 
-Use native Windows menu behavior and spacing. Labels are explicit, related
-settings are separated into groups, and selected values use native checked menu
-states. Do not custom-render dark menus unless Windows provides the behavior.
+### 상세 패널
 
-Recommended groups are refresh, refresh interval, widget visibility, remaining
-or used display mode, monitor placement, startup settings, authentication,
-language, diagnostics and updates, and exit.
+| 컴포넌트 | 규칙 |
+| --- | --- |
+| 헤더 | 작은 지면명과 프로필명, 아래 2 DIP 선. 닫기에는 현지화된 접근 가능한 이름과 32 DIP 조작 영역 |
+| 사용량 행 | 기본 배경 없음. 읽기 전용 행에 링크 색·버튼 호버를 주지 않음. 클릭 가능한 행은 중첩 액션 없이 단일 동작 |
+| 숫자·상태 | 큰 숫자 하나, 단위와 표시 모드 함께 읽힘. 상태는 색 + 텍스트 또는 명확한 아이콘 |
+| 그래프 | 전체 폭의 중립적인 막대. 파랑은 선택 가능한 데이터에만 사용. 보조 설명을 생략해도 토큰 단위와 날짜 범위 유지 |
+| 액션 | 텍스트 링크 또는 잉크색 단색 버튼 하나. 근접 직각, 그림자 없음, 명확한 포커스·비활성 상태 |
 
-## State presentation
+### 트레이 메뉴·프로필 관리·시스템 대화 상자
 
-### Healthy
+상세 패널의 신문형 구성은 프로필 관리 폼을 2단 지면으로 바꾸라는 뜻이 아니다.
+현재 메뉴와 프로필 화면의 네이티브 동작을 유지하며 해당 화면을 수정할 때만 글꼴·대비·간격을 맞춘다.
+팝업과 메뉴가 팔레트를 공유하므로 팝업 색상 변경이 메뉴에 미치는 영향도 확인한다.
 
-Use `#48C774` for status dots and progress. Keep the surface neutral and calm.
+- 트레이 메뉴는 기존 명령 그룹, 체크 표시, 키보드·하위 메뉴 동작을 유지한다. 고대비·스크린리더 환경의 기본 메뉴 폴백을 보존한다.
+- 프로필 목록은 94 DIP 행과 16 DIP 가로 패딩, 3 DIP 선택 표시, 이름·이메일·상태·사용량 순서를 유지한다. 이름은 제목 글꼴, 선택 행은 중립 보조 면과 파란 선택선, 행 사이는 얇은 괘선으로 구분한다. 로그인·추가의 주 버튼은 잉크색이며 사용량 막대의 상태색은 유지한다.
+- 이메일은 프로필 관리자에서 검증된 `AccountEmail`만 메모리로 표시한다. 누락 값은 기존 안전한 대체 표시, 실패·오래된 조회에서는 숨김, RTL에서도 이메일 자체는 LTR로 유지한다.
+- 목록 아래 32 DIP 추가 버튼, 이름 필드 위 레이블, Rename/Login/Logout/Delete와 Add/Cancel 동작을 유지한다. 번역 문자열을 실제 측정하고 버튼 글자를 여러 줄로 쪼개지 않는다.
+- 삭제 확인·로그인·업데이트·진단의 기존 네이티브 대화 상자와 안전 장치를 유지한다. 패널 디자인이 인증·업데이트 정책을 새로 정의하지 않는다.
 
-### Warning
+## 9. 로딩·오류·빈 데이터
 
-Use `#F5A623` when displayed usage reaches 70%. Change semantic indicators only;
-do not recolor the entire interface or interrupt the user.
+| 상태 | 표시와 액션 |
+| --- | --- |
+| 첫 로딩 | 최종 지면 공간을 확보하고 `불러오는 중`. 성공한 데이터가 없는데 0%·100%를 표시하지 않음 |
+| 캐시 갱신 | 기존 값 유지. 실제 갱신 상태를 UI 모델에서 알 수 있을 때만 `갱신 중` 표시 |
+| 창 일부 없음 | 존재하는 창만 표시, 하나면 단일 사용량 행. 없는 창을 0으로 생성하지 않음 |
+| 지원되는 사용량 없음 | `표시할 사용량 정보가 없어요`와 실제 원인에 맞는 다음 액션 하나 |
+| CLI 없음·로그인 필요 | 안전하게 분류된 설치·로그인 안내와 기존 도움말·로그인 경로. 인증 파일 내용이나 원본 오류를 표시하지 않음 |
+| 갱신 실패·오래된 데이터 | 마지막 정상 값과 성공 시각 유지, `갱신 실패` 또는 `오래된 정보` 표시. 원인을 확인하지 못한 실패를 무조건 오프라인이라고 쓰지 않음 |
+| 예측 불가·비활성 | 수집 중·관측 부족·꺼짐 등 실제 모델 상태를 표시. 초기화 시각을 소진 예측으로 대체하지 않음 |
+| 토큰 이력 미제공 | 지원되지 않거나 없는 이력임을 짧게 표시. 사용률 증가 기록을 토큰 수로 변환하지 않음 |
 
-### Critical
+표 안의 문구는 의미 예시이며 실제 UI에서는 기존 현지화 표현을 우선 재사용한다.
+수동 새로 고침은 기존 10초 쿨다운과 단일 요청 정책을 따른다. 재시도 중 버튼 상태를
+명확하게 표시하고 중복 요청을 만들지 않는다. 자동 실패 백오프 1/2/4/8/15분은 유지한다.
 
-Use `#FF5C5C` when displayed usage reaches 90%. Make reset timing slightly more
-prominent where it is present. Never flash or pulse.
+## 10. 접근성·Windows·보안 품질 기준
 
-### Loading
+### 접근성
 
-Use neutral `#979797`, reserve the final layout dimensions, and never show a fake
-zero percentage.
+- 클릭·키보드로 호버와 동등한 정보와 액션에 접근한다. Interactive는 비모달 상세 창에 맞는 접근성 정보를 제공하며 복잡한 화면을 tooltip으로만 노출하지 않는다.
+- 일반 텍스트 대비 4.5:1, 큰 텍스트와 의미 있는 제어·상태 경계는 해당 기준 3:1 이상을 실제 조합으로 확인한다. 장식용 괘선과 구분한다.
+- 고대비에서는 시스템 색상과 외곽선을 우선하고 기존 표준 UI 폴백을 유지한다. 스크린리더에서는 시각 그래프 외에 날짜·토큰 값의 접근 가능한 텍스트를 제공한다.
+- 100/125/150/175/200% DPI, Windows 텍스트 확대, 긴 번역, RTL에서 의미 있는 내용과 조작 영역이 잘리지 않아야 한다.
+- 소유 메뉴·상세 창으로 이동할 때 팝업을 오작동으로 닫지 않는다. 포커스 표시·Tab 순서·Esc 복귀를 실제 키보드로 확인한다.
 
-### Error
+### 데이터·실행 경계
 
-Use a concise error indicator. Preserve the last successful values when
-available and mark them stale. Put safe detail outside the taskbar widget. Never
-expose tokens, account IDs, authentication files, or proxy values.
+사용량과 로그인 상태는 설치된 Codex CLI의 제한된 `app-server` 경로로만 얻는다.
+`auth.json`을 읽거나 파싱하지 않으며 토큰·계정 ID·원본 RPC·프록시 값은 UI·로그·fixture에
+보관하지 않는다. 프로필 관리자 이메일 예외를 상세 패널로 확장하지 않는다.
 
-## Progress bars and icons
+UI 스레드에서 RPC·파일·네트워크 I/O를 수행하지 않는다. 기존 워커, `UiBackend`,
+`ProcessGuard`, Job Object, 시간·크기 제한을 유지한다. 호버에 따라 폴링 빈도나 기록량을
+늘리지 않는다. 예측·그래프는 기존 데이터만 사용하며 사용자의 대화·프롬프트 수집을 추가하지 않는다.
+샘플과 스크린샷에 실계정 이메일·계정 정보·사용량을 넣지 않는다.
 
-Taskbar progress height is 3 px and floating progress height is 6 px. Clamp the
-visual percentage to 0 through 100. Use the current status color for fill and the
-theme progress-track color for the remainder. Avoid gradients, stripes, glow,
-and shimmer. Animate only when a newly fetched value changes, never on repaint.
+## 11. 구현 위치와 순서
 
-Icons are simple, geometric, single-weight, and Windows-compatible. Use 6 px for
-taskbar status, 12 px inline, 16 px for actions, and Windows-defined tray sizes.
-Do not use emoji as production icons or mix outline and filled styles.
+지면형 호버 화면·메뉴·프로필 관리의 시각 디자인을 적용했다. 호버는 현재 읽기 전용이며,
+7절의 지연 열기·유지 영역·Interactive·액션 버튼은 후속 동작 구현 요구사항이다.
+아래 경계를 따라 구현과 검증을 이어간다.
 
-## Interaction and accessibility
+| 위치 | 책임 |
+| --- | --- |
+| `src/domain.rs`, `src/localization.rs` | 사용량 의미·창 레이블·현지화. UI에서 규칙 복제 금지 |
+| `src/app.rs`, `src/windows/mod.rs` | 민감 정보 없는 스냅샷, 액션·워커 경계. 필요한 표시 필드만 전달 |
+| `src/windows/popup.rs` | 패널 표현 모델·공통 팔레트 매핑·440 DIP 너비·배치 계산·접근성 폴백 |
+| `src/windows/native/usage_popup.rs` | 실제 글꼴 측정·GDI 렌더링·팝업 HWND 입력·자원 정리 |
+| `src/windows/native/platform.rs` | 위젯 이벤트, 열림·닫힘과 포커스 수명, 툴팁 연동 |
+| `src/windows/taskbar_widget.rs`, `widget.rs`, `taskbar*.rs`, `lifecycle.rs` | 기존 반응형 표시·DPI 변환·작업표시줄 부착과 복구 |
+| `src/windows/design.rs`, `profile_dialog*`, `tray*` | 기존 대화 상자·메뉴 계약. 상세 패널과 공유하는 색상 영향 확인 |
 
-- Hover may subtly brighten a surface within about 150 ms but must never resize
-  or shift content.
-- The taskbar widget opens or focuses the floating detail widget.
-- Refresh requests a manual refresh.
-- Tray interactions follow platform conventions.
-- Provide visible keyboard focus, support Escape where conventional, do not trap
-  focus, and preserve native menu keyboard navigation.
-- Respect Windows reduced-motion preferences when accessible.
-- Target WCAG AA-level contrast where applicable.
-- Pair every status color with text or an icon.
-- Add a contrasting ring when a status dot could blend into the taskbar.
-- Tooltips must not be the only place where essential information is available.
-- Loading and errors must remain understandable without animation.
+1. 기존 호스트의 앵커·이벤트·폴백을 확인하고 현재 동작과 목표 상태의 차이를 테스트로 고정한다.
+2. 시스템 글꼴·토큰·측정 기반 레이아웃으로 정적 지면을 구현한다. 새 브라우저 프레임워크나 의존성 없이 기존 GDI 경로를 사용한다.
+3. `PendingOpen / Preview / Interactive` 전이와 입력·포커스·정리 로직을 구현한다. 조작 가능한 버튼과 접근성 경로는 함께 제공한다.
+4. 기존 스냅샷·현지화·새로 고침 액션을 연결하고 로딩·오류·예측·토큰 이력 상태를 검증한다.
+5. 자동 검사와 Windows 수동 시나리오를 완료하고 실제 구현된 동작에 맞춰 README와 릴리스 문서를 갱신한다.
 
-## Windows integration and localization
+UI 구현 때는 실제 시간·계정에 의존하지 않는 상태 전이·배치·표현 테스트를 기존 테스트 구조에
+추가한다. 250ms 전에 이탈, 300ms 안 재진입, 키보드 열기, 앵커 소멸, 프로필 변경,
+경계 배치, 기본 UI 폴백을 포함한다. public API·복잡한 전이·I/O 변경에는 한국어 rustdoc을 쓴다.
 
-- Use native Win32 behavior; do not add Electron, Tauri, WebView, or a browser UI.
-- Preserve the Rust and Win32 architecture solely for styling.
-- Respect Windows light/dark appearance and per-monitor DPI awareness.
-- Test at 100%, 125%, 150%, 175%, and 200% scaling.
-- Support primary-monitor-only and all-monitor taskbar modes.
-- Survive Explorer restarts and taskbar changes without visual corruption.
-- Avoid unsupported Acrylic or Mica simulations.
-- Maintain low memory usage and negligible idle CPU consumption.
-- Support Korean, English, Spanish, Portuguese, Indonesian, Japanese, Hindi,
-  German, French, Vietnamese, Turkish, and Arabic.
-- Do not assume translations have English widths. Fall back from Full to Compact
-  or Minimal before clipping essential taskbar values.
-- Respect right-to-left layout for Arabic and never put essential meaning in an
-  untranslated image.
+```powershell
+cargo fmt --all -- --check
+cargo test --all-targets
+cargo clippy --all-targets --all-features -- -D warnings
+cargo build --release
+git diff --check
+```
 
-## Implementation constraints
+문서만 수정한 경우에는 문서·소스 계약 대조와 `git diff --check`로 검증한다.
+위 명령과 아래 수동 점검은 실제 UI 구현·배포 검증 시 적용하며, 문서 수정의 완료와 구분한다.
 
-1. Inspect existing Rust and Win32 code before changing UI.
-2. Preserve taskbar, floating widget, tray, polling, localization, diagnostics,
-   and Explorer-recovery behavior.
-3. Use Healthy below 70%, Warning from 70% to below 90%, and Critical from 90%.
-4. Preserve existing responsive taskbar layout modes.
-5. Centralize colors, spacing, fonts, dimensions, and motion durations where
-   practical; do not scatter raw RGB and pixel constants.
-6. Do not introduce a browser framework or replace the native architecture.
-7. Keep idle resource use effectively unchanged.
-8. Preserve the last successful values during transient refresh failure.
-9. Keep sensitive information out of UI, logs, tooltips, and diagnostics.
-10. Prefer the smallest coherent UI change and preserve behavior unless the
-    request explicitly changes it.
+## 12. UI 구현 완료 체크리스트
 
-The repository currently has a more granular legacy `UsageLevel` model. A
-component-specific visual may use the three design-system states without
-silently changing established behavior elsewhere; any future global threshold
-migration requires its own product decision and domain tests.
+아래 항목은 목표 UI의 검수 기준이며 현재 구현 완료 표시가 아니다.
+상세 Windows 시나리오는 [릴리스 체크리스트](docs/RELEASE_CHECKLIST.md)를 함께 따른다.
 
-## Acceptance criteria
+- [ ] **정보·외관:** 단일 지면과 큰 숫자·작은 라벨·본문 위계가 분명하다. 남음/사용·초기화·소비 속도를 구분하고, 상태 임계값과 두 창·예측·토큰 그래프의 의미가 보존된다.
+- [ ] **입력·수명:** 표시부에서 패널로 이동해도 깜빡이지 않는다. 호버는 포커스를 빼앗지 않으며 클릭·키보드·Esc·외부 클릭·소유 메뉴·잠금·종료가 상태 모델대로 동작한다.
+- [ ] **Windows·접근성:** Windows 10/11, 두 테마·고대비·스크린리더, 모든 검증 DPI·텍스트 확대·RTL, 다중 모니터·자동 숨김·Explorer 재시작에서 표시와 폴백이 유지된다.
+- [ ] **데이터·안전:** 첫 로딩·CLI 없음·로그아웃·갱신 실패·빈 이력·오래된 예측을 구분한다. 마지막 정상 값과 프로필 격리, 쿨다운·백오프, 민감 정보 비노출과 기존 자원 정리를 유지한다.
+- [ ] **검증·배포:** 관련 테스트·포맷·Clippy·릴리스 빌드·diff 검사와 수동 검증을 마쳤다. README는 실제 동작과 일치하고 참조 사이트의 로고·브랜드 자산을 복제하지 않았다.
 
-A UI change is complete only when:
+## 구현자용 한 줄 브리프
 
-- State is understandable within one second and without color alone.
-- Healthy, warning, critical, loading, and error are visually distinct.
-- Percentage position remains stable as digit count changes.
-- Hover does not resize or shift content, and taskbar icons are not overlapped.
-- Full, Compact, and Minimal modes remain usable.
-- Light and dark Windows appearances are supported.
-- Common DPI scales render correctly and long translations do not clip essential
-  values.
-- Arabic and other right-to-left content does not corrupt layout.
-- Loading never displays fake zero and refresh failure preserves valid values.
-- No sensitive account or authentication data is exposed.
-- Existing tests pass.
-- `cargo fmt --all -- --check` passes.
-- `cargo clippy --all-targets --all-features -- -D warnings` passes.
-- `cargo test --all-targets` passes.
-- `cargo build --release` succeeds.
-- Final behavior is manually checked on Windows for taskbar, floating widget,
-  tray menu, profile dialogs, common DPI levels, and Explorer restart.
-
-Use this design system for every CodexPeek UI change. Before implementation,
-identify the affected component and state, identify the applicable tokens and
-layout rules, preserve unrelated behavior, make the smallest coherent change,
-and verify every relevant state, theme, DPI level, locale, and layout mode.
+> CodexPeek의 기존 Rust·Win32 작업표시줄 위젯 위에 440 DIP의 각진 사용량 지면을 펼친다. 시스템 테마·글꼴로 큰 비율 하나, 작은 메타정보, 얇은 괘선, 사용량 창과 초기화·예측의 비대칭 단 구성, 기존 토큰 그래프를 표현한다. 기존 데이터·상태 의미·복구·접근성 폴백을 유지하며, 호버는 포커스를 빼앗지 않고 명시적인 클릭·키보드 조작으로만 Interactive 상태에 진입한다.

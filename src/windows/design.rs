@@ -15,11 +15,15 @@ mod tests {
     }
 
     #[test]
-    fn primary_button_text_meets_wcag_aa_on_the_approved_green() {
+    fn editorial_text_and_primary_buttons_meet_wcag_aa() {
         for theme in [DialogTheme::Light, DialogTheme::Dark] {
             let palette = DialogPalette::for_theme(theme);
-            assert_eq!(palette.primary_text.colorref, 0x0020_2020);
-            assert!(contrast_ratio(palette.primary_text.colorref, palette.healthy.colorref) >= 4.5);
+            assert!(contrast_ratio(palette.primary_text.colorref, palette.text.colorref) >= 4.5);
+            assert!(contrast_ratio(palette.text.colorref, palette.background.colorref) >= 4.5);
+            assert!(
+                contrast_ratio(palette.secondary_text.colorref, palette.background.colorref) >= 4.5
+            );
+            assert!(contrast_ratio(palette.muted_text.colorref, palette.surface.colorref) >= 4.5);
         }
     }
 
@@ -201,11 +205,11 @@ pub struct DialogPalette {
     pub elevated_surface: DialogColor,
     /// 표준 테두리색입니다.
     pub border: DialogColor,
-    /// 약한 구분선에 사용하는 반투명 테두리색입니다.
+    /// 지면 내부의 장식용 구분선 색입니다. 제어 경계나 포커스에는 사용하지 않습니다.
     pub subtle_border: DialogColor,
     /// 기본 텍스트색입니다.
     pub text: DialogColor,
-    /// 초록색 기본 작업 버튼 위에 사용하는 고대비 텍스트색입니다.
+    /// 잉크색 기본 작업 버튼 위에 사용하는 고대비 텍스트색입니다.
     pub primary_text: DialogColor,
     /// 보조 텍스트색입니다.
     pub secondary_text: DialogColor,
@@ -232,37 +236,37 @@ impl DialogPalette {
     pub const fn for_theme(theme: DialogTheme) -> Self {
         match theme {
             DialogTheme::Light => Self {
-                background: DialogColor::opaque(0x00f3_f3f3),
+                background: DialogColor::opaque(0x00fa_fafa),
                 surface: DialogColor::opaque(0x00ff_ffff),
-                elevated_surface: DialogColor::opaque(0x00fa_fafa),
-                border: DialogColor::opaque(0x00d5_d5d5),
-                subtle_border: DialogColor::translucent(0x0000_0000, 20),
-                text: DialogColor::opaque(0x0020_2020),
-                primary_text: DialogColor::opaque(0x0020_2020),
-                secondary_text: DialogColor::opaque(0x0050_5050),
-                muted_text: DialogColor::opaque(0x0073_7373),
+                elevated_surface: DialogColor::opaque(0x00ed_f3f3),
+                border: DialogColor::opaque(0x00b3_b9b9),
+                subtle_border: DialogColor::opaque(0x00da_dddd),
+                text: DialogColor::opaque(0x0017_1717),
+                primary_text: DialogColor::opaque(0x00fa_fafa),
+                secondary_text: DialogColor::opaque(0x0045_4545),
+                muted_text: DialogColor::opaque(0x0066_6666),
                 progress_track: DialogColor::translucent(0x0000_0000, 36),
                 hover: DialogColor::translucent(0x0000_0000, 13),
                 pressed: DialogColor::translucent(0x0000_0000, 23),
-                focus: DialogColor::opaque(0x004d_8627),
+                focus: DialogColor::opaque(0x00eb_6325),
                 healthy: DialogColor::opaque(0x0074_c748),
                 warning: DialogColor::opaque(0x0023_a6f5),
                 critical: DialogColor::opaque(0x005c_5cff),
             },
             DialogTheme::Dark => Self {
-                background: DialogColor::opaque(0x001f_1f1f),
-                surface: DialogColor::opaque(0x0026_2626),
-                elevated_surface: DialogColor::opaque(0x002c_2c2c),
-                border: DialogColor::opaque(0x0040_4040),
-                subtle_border: DialogColor::translucent(0x00ff_ffff, 20),
-                text: DialogColor::opaque(0x00ee_eeee),
-                primary_text: DialogColor::opaque(0x0020_2020),
-                secondary_text: DialogColor::opaque(0x00c8_c8c8),
-                muted_text: DialogColor::opaque(0x0097_9797),
+                background: DialogColor::opaque(0x001b_1a18),
+                surface: DialogColor::opaque(0x001e_1d1b),
+                elevated_surface: DialogColor::opaque(0x0026_2523),
+                border: DialogColor::opaque(0x0064_6765),
+                subtle_border: DialogColor::opaque(0x0038_3734),
+                text: DialogColor::opaque(0x00d1_d6d9),
+                primary_text: DialogColor::opaque(0x001b_1a18),
+                secondary_text: DialogColor::opaque(0x00b8_bec1),
+                muted_text: DialogColor::opaque(0x009e_a3a5),
                 progress_track: DialogColor::translucent(0x00ff_ffff, 36),
                 hover: DialogColor::translucent(0x00ff_ffff, 15),
                 pressed: DialogColor::translucent(0x00ff_ffff, 26),
-                focus: DialogColor::opaque(0x0074_c748),
+                focus: DialogColor::opaque(0x00ff_b88b),
                 healthy: DialogColor::opaque(0x0074_c748),
                 warning: DialogColor::opaque(0x0023_a6f5),
                 critical: DialogColor::opaque(0x005c_5cff),

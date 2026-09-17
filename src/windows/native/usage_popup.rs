@@ -8,13 +8,13 @@ use windows::{
         Foundation::{COLORREF, HINSTANCE, HWND, POINT, RECT, SIZE},
         Graphics::Gdi::{
             CreateCompatibleDC, CreateDIBSection, CreateFontW, CreateSolidBrush, DeleteDC,
-            DeleteObject, DrawTextW, Ellipse, FillRect, GetDC, GetMonitorInfoW, GetStockObject,
-            MonitorFromWindow, ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO,
-            BITMAPINFOHEADER, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH,
-            DIB_RGB_COLORS, DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
-            DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
-            FF_SWISS, FW_NORMAL, FW_SEMIBOLD, HDC, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-            NULL_PEN, OUT_DEFAULT_PRECIS, PROOF_QUALITY, TRANSPARENT,
+            DeleteObject, DrawTextW, FillRect, GetDC, GetMonitorInfoW, MonitorFromWindow,
+            ReleaseDC, SelectObject, SetBkMode, SetTextColor, BITMAPINFO, BITMAPINFOHEADER,
+            BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS,
+            DRAW_TEXT_FORMAT, DT_CALCRECT, DT_CENTER, DT_LEFT, DT_NOPREFIX, DT_RIGHT,
+            DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, FF_SWISS, FW_NORMAL,
+            FW_SEMIBOLD, HDC, HGDIOBJ, MONITORINFO, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS,
+            PROOF_QUALITY, TRANSPARENT,
         },
         UI::{
             HiDpi::GetDpiForWindow,
@@ -36,87 +36,249 @@ use crate::windows::{
 };
 
 const USAGE_POPUP_CLASS: PCWSTR = w!("CodexUsageMonitor.UsagePopup.v1");
-const RESET_CREDITS_TOP_LOGICAL: i32 = 56;
-const RESET_CREDITS_GAP_LOGICAL: i32 = 4;
-const SEPARATOR_TOP_LOGICAL: i32 = 68;
-const FORECAST_HEADER_GAP_LOGICAL: i32 = 10;
-const FORECAST_HEADER_HEIGHT_LOGICAL: i32 = 26;
-const PACE_SUMMARY_GAP_LOGICAL: i32 = 2;
-const PACE_SUMMARY_TOP_LOGICAL: i32 = 106;
-const PACE_DETAIL_GAP_LOGICAL: i32 = 4;
-const FORECAST_GAP_LOGICAL: i32 = 8;
-const DAILY_USAGE_GAP_LOGICAL: i32 = 12;
-const DAILY_USAGE_HEIGHT_LOGICAL: i32 = 92;
 const DAILY_USAGE_CHART_HEIGHT_LOGICAL: i32 = 53;
-const DAILY_USAGE_TITLE_HEIGHT_LOGICAL: i32 = 18;
-const DAILY_USAGE_CHART_GAP_LOGICAL: i32 = 4;
-const DAILY_USAGE_DATE_GAP_LOGICAL: i32 = 3;
-const DAILY_USAGE_DATE_HEIGHT_LOGICAL: i32 = 14;
+const DAILY_USAGE_DATE_GAP_LOGICAL: i32 = 4;
+const DAILY_USAGE_DATE_HEIGHT_LOGICAL: i32 = 16;
 const DAILY_USAGE_DATE_WIDTH_LOGICAL: i32 = 44;
 const WRAPPED_TEXT_FALLBACK_HEIGHT_LOGICAL: i32 = 80;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextStyle {
+    Meta,
+    Label,
+    Body,
+    Headline,
+    Error,
+}
+
+impl TextStyle {
+    fn size(self) -> i32 {
+        match self {
+            Self::Meta => 11,
+            Self::Label => 14,
+            Self::Body | Self::Error => 13,
+            Self::Headline => 36,
+        }
+    }
+
+    fn weight(self) -> i32 {
+        if matches!(self, Self::Label | Self::Headline) {
+            FW_SEMIBOLD.0 as i32
+        } else {
+            FW_NORMAL.0 as i32
+        }
+    }
+}
+
 struct TextBlockLayout {
-    top: i32,
-    height: i32,
-}
-
-#[derive(Clone, Copy)]
-struct ForecastRowLayout {
-    top: i32,
-    detail_height: i32,
-}
-
-#[derive(Clone, Copy)]
-struct DailyUsageLayout {
-    top: i32,
-    height: i32,
+    text: String,
+    rect: Rect,
+    style: TextStyle,
 }
 
 struct PopupLayout {
     width: i32,
     height: i32,
-    reset_credits: Option<TextBlockLayout>,
-    separator_top: i32,
-    forecast_header_top: i32,
-    pace_summary: TextBlockLayout,
-    pace_detail: Option<TextBlockLayout>,
-    daily_usage: Option<DailyUsageLayout>,
-    forecast_rows: Vec<ForecastRowLayout>,
+    blocks: Vec<TextBlockLayout>,
+    rules: Vec<Rect>,
+    header_rule: Rect,
+    daily_usage: Option<Rect>,
 }
 
-fn forecast_row_height(detail_height: i32, dpi: u32) -> i32 {
-    detail_height
-        .max(0)
-        .saturating_add(logical_to_physical(24, dpi))
+/// 현재 폭을 2:1 본문 열로 나누며 좁은 화면에서는 같은 폭의 단일 열을 반환합니다.
+///
+/// 입력·출력은 물리 픽셀이고 `dpi`로 360 DIP 분기와 간격을 계산합니다. RTL은 열만 반전하며
+/// 높이는 호출자가 실제 문자열 측정 뒤 정합니다.
+fn popup_columns(width: i32, dpi: u32, rtl: bool) -> (Rect, Rect, bool) {
+    let scale = |value| logical_to_physical(value, dpi);
+    let narrow = width <= scale(360);
+    let padding = scale(if narrow { 16 } else { 20 });
+    let area = Rect::new(padding, 0, (width - padding).max(padding + 1), 0);
+    if narrow {
+        return (area, area, false);
+    }
+    let gap = scale(16);
+    let main_width = (area.width() - gap) * 2 / 3;
+    if rtl {
+        (
+            Rect::new(area.right - main_width, 0, area.right, 0),
+            Rect::new(area.left, 0, area.right - main_width - gap, 0),
+            true,
+        )
+    } else {
+        (
+            Rect::new(area.left, 0, area.left + main_width, 0),
+            Rect::new(area.left + main_width + gap, 0, area.right, 0),
+            true,
+        )
+    }
 }
 
-fn popup_height_for_content(content_bottom: i32, dpi: u32) -> i32 {
-    content_bottom
-        .max(0)
-        .saturating_add(logical_to_physical(20, dpi))
-}
-
-fn pace_detail_top(summary_height: i32, dpi: u32) -> i32 {
-    pace_detail_top_at(
-        logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi),
-        summary_height,
-        dpi,
-    )
-}
-
-fn pace_detail_top_at(summary_top: i32, summary_height: i32, dpi: u32) -> i32 {
-    summary_top
-        .saturating_add(summary_height.max(0))
-        .saturating_add(logical_to_physical(PACE_DETAIL_GAP_LOGICAL, dpi))
-}
-
-fn daily_usage_top(content_bottom: i32, dpi: u32) -> i32 {
-    content_bottom.saturating_add(logical_to_physical(DAILY_USAGE_GAP_LOGICAL, dpi))
-}
-
-fn daily_usage_height(dpi: u32) -> i32 {
-    logical_to_physical(DAILY_USAGE_HEIGHT_LOGICAL, dpi)
+/// 지면의 텍스트를 실제 폭으로 측정해 괘선·본문 열·그래프가 겹치지 않는 배치를 만듭니다.
+///
+/// `compact`는 작업영역이 부족할 때 보조 설명과 그래프만 생략합니다. 숫자·단위·초기화·상태와
+/// 예측은 보존하며, 반환 높이가 여전히 너무 크면 호출자가 기존 네이티브 UI로 폴백합니다.
+fn editorial_layout(
+    presentation: &UsagePopupPresentation,
+    width: i32,
+    dpi: u32,
+    rtl: bool,
+    compact: bool,
+    mut measure: impl FnMut(&str, i32, TextStyle) -> i32,
+) -> PopupLayout {
+    let scale = |value| logical_to_physical(value, dpi);
+    let (main, side, columns) = popup_columns(width, dpi, rtl);
+    let padding = main.left.min(side.left);
+    let full = Rect::new(padding, 0, width - padding, 0);
+    let mut blocks = Vec::new();
+    let mut rules = Vec::new();
+    let mut add = |text: &str, area: Rect, top: &mut i32, style: TextStyle| {
+        if text.is_empty() {
+            return;
+        }
+        let height = measure(text, area.width().max(1), style).max(scale(
+            style.size() + if style == TextStyle::Headline { 8 } else { 5 },
+        ));
+        blocks.push(TextBlockLayout {
+            text: text.to_owned(),
+            rect: Rect::new(area.left, *top, area.right, top.saturating_add(height)),
+            style,
+        });
+        *top = top.saturating_add(height);
+    };
+    let mut top = padding;
+    add("CODEXPEEK", full, &mut top, TextStyle::Meta);
+    top += scale(4);
+    add(
+        &presentation.profile_label,
+        full,
+        &mut top,
+        TextStyle::Label,
+    );
+    top += scale(12);
+    let header_rule = Rect::new(full.left, top, full.right, top + scale(2));
+    top = header_rule.bottom + scale(12);
+    add(&presentation.lead_label, full, &mut top, TextStyle::Meta);
+    add(
+        &presentation.lead_percent,
+        full,
+        &mut top,
+        TextStyle::Headline,
+    );
+    top += scale(4);
+    if !presentation.rows.is_empty() {
+        add(&presentation.pace_summary, full, &mut top, TextStyle::Body);
+    }
+    if let Some(status) = &presentation.status {
+        top += scale(4);
+        add(status, full, &mut top, TextStyle::Error);
+    }
+    top += scale(16);
+    rules.push(Rect::new(full.left, top, full.right, top + scale(1)));
+    top += scale(12);
+    let body_top = top;
+    let mut main_bottom = top;
+    for (index, row) in presentation.rows.iter().enumerate() {
+        if index > 0 {
+            main_bottom += scale(12);
+        }
+        add(
+            &format!("{} · {}", row.label, row.percent_text),
+            main,
+            &mut main_bottom,
+            TextStyle::Label,
+        );
+        // 리드 창의 초기화는 보조 열에 한 번만 표시합니다.
+        if index + 1 < presentation.rows.len() && !row.reset_text.is_empty() {
+            main_bottom += scale(4);
+            add(
+                &format!("{}: {}", presentation.reset_label, row.reset_text),
+                main,
+                &mut main_bottom,
+                TextStyle::Meta,
+            );
+        }
+    }
+    if !compact {
+        if let Some(detail) = &presentation.pace_detail {
+            main_bottom += scale(8);
+            add(detail, main, &mut main_bottom, TextStyle::Body);
+        }
+    }
+    let mut side_bottom = if columns {
+        body_top
+    } else {
+        main_bottom + scale(12)
+    };
+    if let Some(reset) = &presentation.reset_text {
+        add(
+            &presentation.reset_label,
+            side,
+            &mut side_bottom,
+            TextStyle::Meta,
+        );
+        add(reset, side, &mut side_bottom, TextStyle::Body);
+    }
+    if let Some(credits) = &presentation.reset_credits_text {
+        side_bottom += scale(8);
+        add(credits, side, &mut side_bottom, TextStyle::Meta);
+    }
+    if !presentation.forecasts.is_empty() {
+        side_bottom += scale(12);
+        add(
+            &presentation.forecast_label,
+            side,
+            &mut side_bottom,
+            TextStyle::Meta,
+        );
+        side_bottom += scale(4);
+        for forecast in &presentation.forecasts {
+            add(&forecast.detail, side, &mut side_bottom, TextStyle::Body);
+        }
+    }
+    top = main_bottom.max(side_bottom);
+    if columns && side_bottom > body_top {
+        let x = if rtl {
+            main.left - scale(8)
+        } else {
+            side.left - scale(8)
+        };
+        rules.push(Rect::new(x, body_top, x + scale(1), top));
+    }
+    let daily_usage = if !compact && !presentation.daily_token_usage.is_empty() {
+        top += scale(16);
+        rules.push(Rect::new(full.left, top, full.right, top + scale(1)));
+        top += scale(12);
+        add(
+            &presentation.daily_usage_label,
+            full,
+            &mut top,
+            TextStyle::Meta,
+        );
+        top += scale(8);
+        let chart = Rect::new(
+            full.left,
+            top,
+            full.right,
+            top + daily_usage_chart_height(dpi),
+        );
+        top = chart.bottom + scale(DAILY_USAGE_DATE_GAP_LOGICAL + DAILY_USAGE_DATE_HEIGHT_LOGICAL);
+        Some(chart)
+    } else {
+        None
+    };
+    top += scale(16);
+    rules.push(Rect::new(full.left, top, full.right, top + scale(1)));
+    top += scale(8);
+    add(&presentation.last_success, full, &mut top, TextStyle::Meta);
+    PopupLayout {
+        width,
+        height: top + padding,
+        blocks,
+        rules,
+        header_rule,
+        daily_usage,
+    }
 }
 
 fn daily_usage_chart_height(dpi: u32) -> i32 {
@@ -251,110 +413,28 @@ pub(super) unsafe fn show(
     if !GetMonitorInfoW(monitor, &mut monitor_info).as_bool() {
         return Err(io::Error::last_os_error());
     }
-    let margin = logical_to_physical(8, dpi);
+    let margin = logical_to_physical(12, dpi);
     let available_width = (monitor_info.rcWork.right - monitor_info.rcWork.left)
         .saturating_sub(margin.saturating_mul(2))
         .max(0);
     let width = logical_to_physical(POPUP_WIDTH_LOGICAL, dpi).min(available_width);
-    let padding = logical_to_physical(20, dpi);
-    let text_width = width
-        .saturating_sub(padding.saturating_mul(2))
-        .saturating_sub(logical_to_physical(36, dpi))
-        .saturating_sub(logical_to_physical(12, dpi))
-        .max(1);
-    let reset_credits = presentation
-        .reset_credits_text
-        .as_deref()
-        .filter(|text| !text.is_empty())
-        .map(|text| TextBlockLayout {
-            top: logical_to_physical(RESET_CREDITS_TOP_LOGICAL, dpi),
-            height: measure_wrapped_text_height(text, text_width, 10, FW_NORMAL.0 as i32, dpi, rtl),
-        });
-    let separator_top = reset_credits
-        .map(|layout| {
-            layout
-                .top
-                .saturating_add(layout.height)
-                .saturating_add(logical_to_physical(RESET_CREDITS_GAP_LOGICAL, dpi))
-        })
-        .unwrap_or_else(|| logical_to_physical(SEPARATOR_TOP_LOGICAL, dpi))
-        .max(logical_to_physical(SEPARATOR_TOP_LOGICAL, dpi));
-    let forecast_header_top =
-        separator_top.saturating_add(logical_to_physical(FORECAST_HEADER_GAP_LOGICAL, dpi));
-    let pace_summary_top = forecast_header_top
-        .saturating_add(logical_to_physical(FORECAST_HEADER_HEIGHT_LOGICAL, dpi))
-        .saturating_add(logical_to_physical(PACE_SUMMARY_GAP_LOGICAL, dpi));
-    let pace_summary = TextBlockLayout {
-        top: pace_summary_top.max(logical_to_physical(PACE_SUMMARY_TOP_LOGICAL, dpi)),
-        height: measure_wrapped_text_height(
-            &presentation.pace_summary,
-            text_width,
-            13,
-            FW_SEMIBOLD.0 as i32,
-            dpi,
-            rtl,
-        ),
-    };
-    let pace_detail_top = if reset_credits.is_some() {
-        pace_detail_top_at(pace_summary.top, pace_summary.height, dpi)
-    } else {
-        pace_detail_top(pace_summary.height, dpi)
-    };
-    let pace_detail = presentation
-        .pace_detail
-        .as_deref()
-        .map(|detail| TextBlockLayout {
-            top: pace_detail_top,
-            height: measure_wrapped_text_height(
-                detail,
-                text_width,
-                11,
-                FW_NORMAL.0 as i32,
-                dpi,
-                rtl,
-            ),
-        });
-    let mut content_bottom = pace_detail
-        .map(|detail| detail.top.saturating_add(detail.height))
-        .unwrap_or(pace_detail_top);
-    let daily_usage = (!presentation.daily_token_usage.is_empty()).then(|| {
-        let top = daily_usage_top(content_bottom, dpi);
-        DailyUsageLayout {
-            top,
-            height: daily_usage_height(dpi),
-        }
-    });
-    if let Some(daily_usage) = daily_usage {
-        content_bottom = daily_usage.top.saturating_add(daily_usage.height);
+    if width < logical_to_physical(200, dpi) {
+        return Err(io::Error::other("popup work area is too narrow"));
     }
-    content_bottom = content_bottom.saturating_add(logical_to_physical(FORECAST_GAP_LOGICAL, dpi));
-    let mut forecast_rows = Vec::with_capacity(presentation.forecasts.len());
-    for forecast in &presentation.forecasts {
-        let detail_height = measure_wrapped_text_height(
-            &forecast.detail,
-            text_width,
-            11,
-            FW_NORMAL.0 as i32,
-            dpi,
-            rtl,
-        );
-        forecast_rows.push(ForecastRowLayout {
-            top: content_bottom,
-            detail_height,
-        });
-        content_bottom = content_bottom.saturating_add(forecast_row_height(detail_height, dpi));
-    }
-    let layout = PopupLayout {
-        width,
-        height: popup_height_for_content(content_bottom, dpi),
-        reset_credits,
-        separator_top,
-        forecast_header_top,
-        pace_summary,
-        pace_detail,
-        daily_usage,
-        forecast_rows,
+    let max_height = logical_to_physical(560, dpi).min(
+        (monitor_info.rcWork.bottom - monitor_info.rcWork.top)
+            .saturating_sub(margin.saturating_mul(2)),
+    );
+    let measure = |text: &str, width, style: TextStyle| {
+        measure_wrapped_text_height(text, width, style.size(), style.weight(), dpi, rtl)
     };
+    let mut layout = editorial_layout(presentation, width, dpi, rtl, false, measure);
+    if layout.height > max_height {
+        layout = editorial_layout(presentation, width, dpi, rtl, true, measure);
+    }
+    if layout.height > max_height {
+        return Err(io::Error::other("popup content exceeds readable work area"));
+    }
     let bounds = place_popup(
         Rect::new(anchor.left, anchor.top, anchor.right, anchor.bottom),
         Rect::new(
@@ -492,7 +572,14 @@ unsafe fn render(
         })
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid popup bitmap size"))?;
     let screen_dc = GetDC(None);
+    if screen_dc.is_invalid() {
+        return Err(io::Error::last_os_error());
+    }
     let memory_dc = CreateCompatibleDC(Some(screen_dc));
+    if memory_dc.is_invalid() {
+        let _ = ReleaseDC(None, screen_dc);
+        return Err(io::Error::last_os_error());
+    }
     let bitmap_info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -542,8 +629,7 @@ unsafe fn render(
         std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
         render_size.0,
         render_size.1,
-        logical_to_physical(14, dpi),
-        palette.background,
+        logical_to_physical(2, dpi),
     );
     let source = POINT { x: 0, y: 0 };
     let size = SIZE {
@@ -587,185 +673,56 @@ unsafe fn paint_content(
     let width = render_size.0;
     let height = render_size.1;
     fill(dc, Rect::new(0, 0, width, height), palette.background);
-    let padding = logical_to_physical(20, dpi);
-    let icon = logical_to_physical(36, dpi);
-    let gap = logical_to_physical(12, dpi);
-    let text_left = padding + icon + gap;
-    let text_right = width - padding;
-    let text_rect = |top: i32, bottom: i32| {
-        if rtl {
-            Rect::new(padding, top, width - text_left, bottom)
-        } else {
-            Rect::new(text_left, top, text_right, bottom)
-        }
-    };
-    let icon_rect = |top: i32| {
-        let left = if rtl { width - padding - icon } else { padding };
-        Rect::new(left, top, left + icon, top + icon)
-    };
-    let section = |logical: i32| logical_to_physical(logical, dpi);
-
-    draw_icon(dc, icon_rect(section(12)), "\u{E77B}", palette, dpi);
-    draw_text(
-        dc,
-        &presentation.profile_label,
-        text_rect(section(10), section(34)),
-        popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
-        palette.text,
-        rtl,
-        true,
-    );
-    let reset = presentation
-        .reset_text
-        .as_deref()
-        .map(|value| format!("{}: {value}", presentation.reset_label))
-        .unwrap_or_else(|| format!("{}: --", presentation.reset_label));
-    draw_text(
-        dc,
-        &reset,
-        text_rect(section(34), section(56)),
-        popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
-        palette.secondary_text,
-        rtl,
-        true,
-    );
-    if let (Some(reset_credits), Some(layout)) = (
-        presentation.reset_credits_text.as_deref(),
-        layout.reset_credits,
-    ) {
+    let border = logical_to_physical(1, dpi).max(1);
+    for rect in [
+        Rect::new(0, 0, width, border),
+        Rect::new(0, height - border, width, height),
+        Rect::new(0, 0, border, height),
+        Rect::new(width - border, 0, width, height),
+    ] {
+        fill(dc, rect, palette.border);
+    }
+    fill(dc, layout.header_rule, palette.text);
+    for rule in &layout.rules {
+        fill(dc, *rule, palette.separator);
+    }
+    for block in &layout.blocks {
+        let color = match block.style {
+            TextStyle::Meta => palette.secondary_text,
+            TextStyle::Error => palette.danger,
+            _ => palette.text,
+        };
         draw_formatted_text(
             dc,
-            reset_credits,
-            text_rect(layout.top, layout.top.saturating_add(layout.height)),
-            popup_font(dc, 10, FW_NORMAL.0 as i32, dpi),
-            palette.secondary_text,
+            &block.text,
+            block.rect,
+            popup_font(dc, block.style.size(), block.style.weight(), dpi),
+            color,
             wrapped_text_format(rtl),
         );
     }
-    separator(dc, layout.separator_top, width, padding, palette.separator);
-
-    let forecast_header_top = layout.forecast_header_top;
-    draw_icon(
-        dc,
-        icon_rect(forecast_header_top.saturating_add(section(2))),
-        "\u{E95E}",
-        palette,
-        dpi,
-    );
-    draw_text(
-        dc,
-        &presentation.forecast_label,
-        text_rect(
-            forecast_header_top,
-            forecast_header_top.saturating_add(section(FORECAST_HEADER_HEIGHT_LOGICAL)),
-        ),
-        popup_font(dc, 14, FW_SEMIBOLD.0 as i32, dpi),
-        palette.text,
-        rtl,
-        true,
-    );
-    draw_formatted_text(
-        dc,
-        &presentation.pace_summary,
-        text_rect(
-            layout.pace_summary.top,
-            layout
-                .pace_summary
-                .top
-                .saturating_add(layout.pace_summary.height),
-        ),
-        popup_font(dc, 13, FW_SEMIBOLD.0 as i32, dpi),
-        palette.text,
-        wrapped_text_format(rtl),
-    );
-    if let (Some(detail), Some(detail_layout)) =
-        (presentation.pace_detail.as_deref(), layout.pace_detail)
-    {
-        draw_formatted_text(
-            dc,
-            detail,
-            text_rect(
-                detail_layout.top,
-                detail_layout.top.saturating_add(detail_layout.height),
-            ),
-            popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
-            palette.secondary_text,
-            wrapped_text_format(rtl),
-        );
-    }
-
-    if let Some(daily_layout) = layout.daily_usage {
-        let daily_rect = text_rect(
-            daily_layout.top,
-            daily_layout.top.saturating_add(daily_layout.height),
-        );
-        draw_text(
-            dc,
-            &presentation.daily_usage_label,
-            Rect::new(
-                daily_rect.left,
-                daily_rect.top,
-                daily_rect.right,
-                daily_rect
-                    .top
-                    .saturating_add(section(DAILY_USAGE_TITLE_HEIGHT_LOGICAL)),
-            ),
-            popup_font(dc, 11, FW_SEMIBOLD.0 as i32, dpi),
-            palette.text,
-            rtl,
-            true,
-        );
-        let chart_top = daily_rect.top.saturating_add(section(
-            DAILY_USAGE_TITLE_HEIGHT_LOGICAL + DAILY_USAGE_CHART_GAP_LOGICAL,
-        ));
-        let chart_bottom = chart_top
-            .saturating_add(daily_usage_chart_height(dpi))
-            .min(daily_rect.bottom);
+    if let Some(chart) = layout.daily_usage {
         paint_daily_usage(
             dc,
             &presentation.daily_token_usage,
-            Rect::new(daily_rect.left, chart_top, daily_rect.right, chart_bottom),
+            chart,
             palette,
             dpi,
             rtl,
         );
-        let date_top =
-            chart_bottom.saturating_add(logical_to_physical(DAILY_USAGE_DATE_GAP_LOGICAL, dpi));
+        let date_top = chart.bottom + logical_to_physical(DAILY_USAGE_DATE_GAP_LOGICAL, dpi);
         paint_daily_dates(
             dc,
             &presentation.daily_token_usage,
             Rect::new(
-                daily_rect.left,
+                chart.left,
                 date_top,
-                daily_rect.right,
-                date_top
-                    .saturating_add(logical_to_physical(DAILY_USAGE_DATE_HEIGHT_LOGICAL, dpi))
-                    .min(daily_rect.bottom),
+                chart.right,
+                date_top + logical_to_physical(DAILY_USAGE_DATE_HEIGHT_LOGICAL, dpi),
             ),
             palette,
             dpi,
             rtl,
-        );
-    }
-
-    for (forecast, row) in presentation.forecasts.iter().zip(&layout.forecast_rows) {
-        draw_text(
-            dc,
-            &forecast.label,
-            text_rect(row.top, row.top.saturating_add(section(18))),
-            popup_font(dc, 12, FW_SEMIBOLD.0 as i32, dpi),
-            palette.text,
-            rtl,
-            true,
-        );
-        let detail_top = row.top.saturating_add(section(20));
-        draw_formatted_text(
-            dc,
-            &forecast.detail,
-            text_rect(detail_top, detail_top.saturating_add(row.detail_height)),
-            popup_font(dc, 11, FW_NORMAL.0 as i32, dpi),
-            palette.secondary_text,
-            wrapped_text_format(rtl),
         );
     }
 }
@@ -814,7 +771,7 @@ unsafe fn paint_daily_usage(
             slot.right - (gap - gap / 2),
             chart.bottom,
         );
-        fill(dc, bar, palette.accent);
+        fill(dc, bar, palette.text);
     }
 }
 
@@ -841,33 +798,11 @@ unsafe fn paint_daily_dates(
             dc,
             &label,
             daily_date_bounds(area, slot, daily_usage.len(), dpi),
-            popup_font(dc, 9, FW_NORMAL.0 as i32, dpi),
+            number_font(11, dpi),
             palette.secondary_text,
             daily_date_text_format(rtl),
         );
     }
-}
-
-unsafe fn draw_icon(dc: HDC, rect: Rect, glyph: &str, palette: PopupPalette, dpi: u32) {
-    let brush = CreateSolidBrush(COLORREF(palette.surface));
-    let old_brush = SelectObject(dc, HGDIOBJ(brush.0));
-    let old_pen = SelectObject(dc, GetStockObject(NULL_PEN));
-    let _ = Ellipse(dc, rect.left, rect.top, rect.right, rect.bottom);
-    SelectObject(dc, old_pen);
-    SelectObject(dc, old_brush);
-    let _ = DeleteObject(HGDIOBJ(brush.0));
-    draw_formatted_text(
-        dc,
-        glyph,
-        rect,
-        icon_font(16, dpi),
-        palette.accent,
-        icon_text_format(),
-    );
-}
-
-fn icon_text_format() -> DRAW_TEXT_FORMAT {
-    DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX
 }
 
 fn wrapped_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
@@ -877,10 +812,6 @@ fn wrapped_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
         DT_LEFT
     };
     alignment | DT_WORDBREAK | DT_NOPREFIX
-}
-
-unsafe fn separator(dc: HDC, y: i32, width: i32, padding: i32, color: u32) {
-    fill(dc, Rect::new(padding, y, width - padding, y + 1), color);
 }
 
 unsafe fn fill(dc: HDC, rect: Rect, color: u32) {
@@ -920,7 +851,7 @@ unsafe fn popup_font(_dc: HDC, size: i32, weight: i32, dpi: u32) -> HGDIOBJ {
     )
 }
 
-unsafe fn icon_font(size: i32, dpi: u32) -> HGDIOBJ {
+unsafe fn number_font(size: i32, dpi: u32) -> HGDIOBJ {
     HGDIOBJ(
         CreateFontW(
             -logical_to_physical(size, dpi),
@@ -936,39 +867,10 @@ unsafe fn icon_font(size: i32, dpi: u32) -> HGDIOBJ {
             CLIP_DEFAULT_PRECIS,
             PROOF_QUALITY,
             u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-            w!("Segoe MDL2 Assets"),
+            w!("Consolas"),
         )
         .0,
     )
-}
-
-unsafe fn draw_text(
-    dc: HDC,
-    value: &str,
-    rect: Rect,
-    font: HGDIOBJ,
-    color: u32,
-    rtl: bool,
-    single_line: bool,
-) {
-    let alignment = if rtl {
-        DT_RIGHT | DT_RTLREADING
-    } else {
-        DT_LEFT
-    };
-    let line_mode = if single_line {
-        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS
-    } else {
-        DT_WORDBREAK | DT_END_ELLIPSIS
-    };
-    draw_formatted_text(
-        dc,
-        value,
-        rect,
-        font,
-        color,
-        alignment | line_mode | DT_NOPREFIX,
-    );
 }
 
 unsafe fn draw_formatted_text(
@@ -999,16 +901,16 @@ fn rounded_surface_alpha(x: i32, y: i32, width: i32, height: i32, radius: i32) -
     let px = f64::from(x) + 0.5;
     let py = f64::from(y) + 0.5;
     let center_x = if x < radius {
-        f64::from(radius) - 0.5
+        f64::from(radius)
     } else if x >= width - radius {
-        f64::from(width - radius) + 0.5
+        f64::from(width - radius)
     } else {
         px
     };
     let center_y = if y < radius {
-        f64::from(radius) - 0.5
+        f64::from(radius)
     } else if y >= height - radius {
-        f64::from(height - radius) + 0.5
+        f64::from(height - radius)
     } else {
         py
     };
@@ -1016,7 +918,7 @@ fn rounded_surface_alpha(x: i32, y: i32, width: i32, height: i32, radius: i32) -
     ((f64::from(radius) + 0.5 - distance).clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-fn apply_surface_alpha(pixels: &mut [u32], width: i32, height: i32, radius: i32, background: u32) {
+fn apply_surface_alpha(pixels: &mut [u32], width: i32, height: i32, radius: i32) {
     for y in 0..height {
         for x in 0..width {
             let index = y as usize * width as usize + x as usize;
@@ -1026,9 +928,7 @@ fn apply_surface_alpha(pixels: &mut [u32], width: i32, height: i32, radius: i32,
                 pixels[index] = 0;
                 continue;
             }
-            let rgb = pixel & 0x00ff_ffff;
-            let base_alpha = if rgb == background { 248_u16 } else { 255_u16 };
-            let alpha = ((base_alpha * u16::from(coverage)) / 255) as u8;
+            let alpha = coverage;
             let blue = (pixel & 0xff) * u32::from(alpha) / 255;
             let green = ((pixel >> 8) & 0xff) * u32::from(alpha) / 255;
             let red = ((pixel >> 16) & 0xff) * u32::from(alpha) / 255;
@@ -1049,11 +949,10 @@ mod tests {
     };
 
     use super::{
-        daily_chart_bounds, daily_date_bounds, daily_date_indices, daily_date_label,
-        daily_date_text_format, daily_usage_bar_height, daily_usage_chart_height,
-        daily_usage_height, daily_usage_slot, daily_usage_top, forecast_row_height,
-        icon_text_format, pace_detail_top, popup_height_for_content, popup_render_size,
-        rounded_surface_alpha, wrapped_text_format,
+        apply_surface_alpha, daily_chart_bounds, daily_date_bounds, daily_date_indices,
+        daily_date_label, daily_date_text_format, daily_usage_bar_height, daily_usage_slot,
+        editorial_layout, popup_columns, popup_render_size, rounded_surface_alpha,
+        wrapped_text_format, TextStyle,
     };
     use crate::windows::widget::Rect;
 
@@ -1062,14 +961,6 @@ mod tests {
         assert_eq!(rounded_surface_alpha(50, 50, 100, 100, 14), 255);
         assert_eq!(rounded_surface_alpha(0, 0, 100, 100, 14), 0);
         assert!(rounded_surface_alpha(4, 4, 100, 100, 14) > 0);
-    }
-
-    #[test]
-    fn icon_glyph_is_centered_inside_its_surface() {
-        assert_eq!(
-            icon_text_format(),
-            DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX
-        );
     }
 
     #[test]
@@ -1085,24 +976,120 @@ mod tests {
     }
 
     #[test]
-    fn measured_content_sets_forecast_rows_and_popup_height() {
-        assert_eq!(forecast_row_height(18, 96), 42);
-        assert_eq!(forecast_row_height(44, 96), 68);
-        assert_eq!(popup_height_for_content(220, 96), 240);
+    fn editorial_columns_stack_on_narrow_screens_and_mirror_at_every_dpi() {
+        for dpi in [96, 120, 144, 168, 192] {
+            let scale = |value| crate::windows::widget::logical_to_physical(value, dpi);
+            let (main, side, columns) = popup_columns(scale(440), dpi, false);
+            assert!(columns);
+            assert!(main.right < side.left);
+            let (rtl_main, rtl_side, _) = popup_columns(scale(440), dpi, true);
+            assert_eq!(main.width(), rtl_main.width());
+            assert_eq!(side.width(), rtl_side.width());
+            assert!(rtl_side.right < rtl_main.left);
+            let (main, side, columns) = popup_columns(scale(360), dpi, false);
+            assert!(!columns);
+            assert_eq!(main, side);
+        }
     }
 
     #[test]
-    fn wrapped_pace_summary_pushes_the_optional_detail_down() {
-        assert_eq!(pace_detail_top(18, 96), 128);
-        assert_eq!(pace_detail_top(44, 96), 154);
+    fn editorial_surface_is_opaque_even_on_colored_dark_paper() {
+        let mut pixels = vec![0x00181a1b; 100 * 100];
+        apply_surface_alpha(&mut pixels, 100, 100, 2);
+        assert_eq!(pixels[50 * 100 + 50], 0xff181a1b);
+        assert!(pixels[0] >> 24 < 255);
     }
 
     #[test]
-    fn daily_usage_layout_reserves_a_fixed_dpi_scaled_chart() {
-        assert_eq!(daily_usage_top(200, 96), 212);
-        assert_eq!(daily_usage_height(96), 92);
-        assert_eq!(daily_usage_height(144), 138);
-        assert_eq!(daily_usage_chart_height(96), 53);
+    fn editorial_measured_layout_and_render_keep_content_inside_paper() {
+        use crate::windows::popup::{popup_palette, tests::ready_view, usage_popup_presentation};
+        for (language, rtl) in [
+            (crate::Language::Korean, false),
+            (crate::Language::English, false),
+            (crate::Language::Arabic, true),
+        ] {
+            let mut view = ready_view();
+            if language == crate::Language::Korean {
+                view.usage_profile_label = "개인 프로필".into();
+                view.consumption_pace.summary = "사용 속도 여유 · 최근 관측 기준".into();
+                view.consumption_pace.detail =
+                    Some("최근 2시간 동안 2% 사용 · 시간당 약 1%".into());
+                view.secondary.as_mut().unwrap().forecast =
+                    crate::windows::ForecastView::Collecting {
+                        line: "예측에 필요한 표본을 수집하고 있습니다".into(),
+                    };
+                view.last_success = "마지막 성공 120초 전".into();
+            }
+            view.daily_token_usage = (1..=14)
+                .map(|day| {
+                    crate::DailyTokenUsage::new(
+                        format!("2026-09-{day:02}"),
+                        (day * 7919 % 25000) as u64,
+                    )
+                })
+                .collect();
+            let presentation = usage_popup_presentation(&view, language);
+            for dpi in [96, 120, 144, 168, 192] {
+                for logical_width in [320, 360, 440] {
+                    let width = crate::windows::widget::logical_to_physical(logical_width, dpi);
+                    for compact in [false, true] {
+                        // SAFETY: 측정 함수는 자체 DC·글꼴을 소유하며 외부 계정이나 창을 사용하지 않습니다.
+                        let layout = editorial_layout(
+                            &presentation,
+                            width,
+                            dpi,
+                            rtl,
+                            compact,
+                            |text, width, style: TextStyle| unsafe {
+                                super::measure_wrapped_text_height(
+                                    text,
+                                    width,
+                                    style.size(),
+                                    style.weight(),
+                                    dpi,
+                                    rtl,
+                                )
+                            },
+                        );
+                        let paper = Rect::new(0, 0, width, layout.height);
+                        for (index, block) in layout.blocks.iter().enumerate() {
+                            assert!(block.rect.is_inside(paper));
+                            assert!(layout.blocks[index + 1..]
+                                .iter()
+                                .all(|other| !block.rect.intersects(other.rect)));
+                            assert!(layout
+                                .rules
+                                .iter()
+                                .all(|rule| !block.rect.intersects(*rule)));
+                        }
+                        assert!(layout
+                            .blocks
+                            .iter()
+                            .any(|block| block.text == presentation.lead_percent));
+                        if dpi == 96 && logical_width == 440 && !compact {
+                            for light in [true, false] {
+                                crate::windows::test_render::surface(
+                                    &format!("popup-{language:?}-{light}"),
+                                    width,
+                                    layout.height,
+                                    |dc| unsafe {
+                                        super::paint_content(
+                                            dc,
+                                            &presentation,
+                                            popup_palette(light),
+                                            dpi,
+                                            rtl,
+                                            &layout,
+                                            (width, layout.height),
+                                        );
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

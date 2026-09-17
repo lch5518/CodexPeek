@@ -1,9 +1,13 @@
 //! 사용량 상세 팝업의 표현 모델과 DPI 독립 레이아웃 계산입니다.
 
-use super::{widget::Rect, WidgetViewModel};
+use super::{
+    design::{DialogPalette, DialogTheme},
+    widget::Rect,
+    UsageRowView, WidgetDataState, WidgetViewModel,
+};
 use crate::Language;
 
-pub(crate) const POPUP_WIDTH_LOGICAL: i32 = 360;
+pub(crate) const POPUP_WIDTH_LOGICAL: i32 = 440;
 
 /// owner-draw 메뉴 항목의 시각적 역할입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,6 +15,7 @@ pub(crate) enum MenuItemKind {
     Command,
     Submenu,
     Info,
+    Separator,
 }
 
 /// 메뉴 항목 역할에 맞는 논리 픽셀 높이를 반환합니다.
@@ -18,6 +23,7 @@ pub(crate) const fn menu_item_height(kind: MenuItemKind) -> i32 {
     match kind {
         MenuItemKind::Command | MenuItemKind::Submenu => 32,
         MenuItemKind::Info => 40,
+        MenuItemKind::Separator => 9,
     }
 }
 
@@ -37,30 +43,28 @@ pub(crate) struct PopupPalette {
     pub(crate) accent: u32,
     pub(crate) separator: u32,
     pub(crate) selection: u32,
+    pub(crate) border: u32,
+    pub(crate) danger: u32,
 }
 
-/// Windows 시스템 테마에 맞는 Fluent Compact 색상 팔레트를 반환합니다.
+/// 시스템 테마의 공통 지면 토큰을 팝업·메뉴용 불투명 COLORREF로 반환합니다.
 pub(crate) const fn popup_palette(light: bool) -> PopupPalette {
-    if light {
-        PopupPalette {
-            background: 0x00f9_f9f9,
-            surface: 0x00ed_f7ed,
-            text: 0x001c_1c1c,
-            secondary_text: 0x0060_6060,
-            accent: 0x0074_c748,
-            separator: 0x00df_dfdf,
-            selection: 0x00ee_f5ee,
-        }
+    let theme = if light {
+        DialogTheme::Light
     } else {
-        PopupPalette {
-            background: 0x0020_2020,
-            surface: 0x002b_352b,
-            text: 0x00f2_f2f2,
-            secondary_text: 0x00b8_b8b8,
-            accent: 0x0074_c748,
-            separator: 0x0040_4040,
-            selection: 0x0032_3a32,
-        }
+        DialogTheme::Dark
+    };
+    let palette = DialogPalette::for_theme(theme);
+    PopupPalette {
+        background: palette.background.colorref,
+        surface: palette.elevated_surface.colorref,
+        text: palette.text.colorref,
+        secondary_text: palette.muted_text.colorref,
+        accent: palette.focus.colorref,
+        separator: palette.subtle_border.colorref,
+        border: palette.border.colorref,
+        selection: if light { 0x00ea_eeee } else { 0x0029_2825 },
+        danger: if light { 0x0018_23b4 } else { 0x0090_9aff },
     }
 }
 
@@ -75,6 +79,11 @@ pub(crate) struct PopupForecastLine {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UsagePopupPresentation {
     pub(crate) profile_label: String,
+    pub(crate) lead_label: String,
+    pub(crate) lead_percent: String,
+    pub(crate) rows: Vec<UsageRowView>,
+    pub(crate) last_success: String,
+    pub(crate) status: Option<String>,
     pub(crate) reset_label: String,
     pub(crate) reset_text: Option<String>,
     pub(crate) reset_credits_text: Option<String>,
@@ -108,6 +117,40 @@ pub(crate) fn usage_popup_presentation(
 
     UsagePopupPresentation {
         profile_label: view.usage_profile_label.clone(),
+        lead_label: row
+            .map(|row| {
+                format!(
+                    "{} · {}",
+                    row.label,
+                    if view.show_remaining_percent {
+                        crate::app::remaining_usage_label(language)
+                    } else {
+                        crate::app::current_usage_label(language)
+                    }
+                )
+            })
+            .unwrap_or_else(|| view.status.clone()),
+        lead_percent: row
+            .map(|row| row.percent_text.clone())
+            .unwrap_or_else(|| "—".to_owned()),
+        rows: view
+            .primary
+            .iter()
+            .chain(view.secondary.iter())
+            .cloned()
+            .collect(),
+        last_success: view.last_success.clone(),
+        status: if view.is_stale && view.data_state != WidgetDataState::Error {
+            Some(crate::localized_text(crate::LocalizationKey::Stale, language).to_owned())
+        } else if view.is_stale {
+            Some(format!(
+                "{} · {}",
+                crate::localized_text(crate::LocalizationKey::Stale, language),
+                view.status
+            ))
+        } else {
+            (view.data_state == WidgetDataState::Error).then(|| view.status.clone())
+        },
         reset_label: crate::app::reset_at_label(language).to_owned(),
         reset_text: row
             .and_then(|row| (!row.reset_text.is_empty()).then(|| row.reset_text.clone())),
@@ -199,7 +242,7 @@ pub(crate) const fn popup_render_mode(high_contrast: bool, screen_reader: bool) 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::windows::{
         ConsumptionPaceState, ConsumptionPaceView, ForecastView, UsageRowView, WidgetDataState,
@@ -224,7 +267,8 @@ mod tests {
         }
     }
 
-    fn ready_view() -> WidgetViewModel {
+    /// 실제 계정 없이 지면 렌더링·표현 테스트에서 재사용하는 고정 사용량입니다.
+    pub(crate) fn ready_view() -> WidgetViewModel {
         WidgetViewModel {
             usage_profile_label: "Work".to_owned(),
             primary: Some(row(
@@ -300,6 +344,32 @@ mod tests {
 
         assert_eq!(presentation.reset_text.as_deref(), Some("2026-08-11 15:00"));
         assert!(presentation.forecasts.is_empty());
+    }
+
+    #[test]
+    fn editorial_lead_preserves_display_mode_windows_and_stale_values() {
+        let mut view = ready_view();
+        let presentation = usage_popup_presentation(&view, Language::English);
+        assert_eq!(presentation.lead_percent, "66%");
+        assert_eq!(presentation.lead_label, "7d · Remaining");
+        assert_eq!(presentation.rows.len(), 2);
+        assert_eq!(presentation.rows[0].label, "5h");
+        assert_eq!(presentation.last_success, "just now");
+
+        view.show_remaining_percent = false;
+        view.secondary.as_mut().unwrap().percent_text = "34%".into();
+        view.is_stale = true;
+        view.data_state = WidgetDataState::Error;
+        let stale = usage_popup_presentation(&view, Language::English);
+        assert_eq!(stale.lead_percent, "34%");
+        assert_eq!(stale.lead_label, "7d · Current usage");
+        assert!(stale.status.is_some());
+
+        view.primary = None;
+        view.secondary = None;
+        let empty = usage_popup_presentation(&view, Language::English);
+        assert_eq!(empty.lead_percent, "—");
+        assert!(empty.rows.is_empty());
     }
 
     #[test]
@@ -389,7 +459,7 @@ mod tests {
         let light = popup_palette(true);
         let dark = popup_palette(false);
 
-        assert_eq!(light.accent, dark.accent);
+        assert_ne!(light.accent, dark.accent);
         assert_ne!(light.background, dark.background);
         assert_ne!(light.text, dark.text);
         assert_ne!(light.selection, dark.selection);

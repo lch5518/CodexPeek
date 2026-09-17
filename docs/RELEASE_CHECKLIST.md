@@ -75,9 +75,10 @@ instead of overwriting an existing release or asset.
 
 ### User-facing release note
 
-This release streamlines the widget hover popup. It removes the duplicated weekly usage meter,
-places the reset time below the account name, and groups pace plus the Weekly forecast in one
-section. Long Korean, English, and RTL forecast text now wraps without ellipsis or overlap.
+This release gives hover details an editorial surface with one large percentage, usage/reset
+columns, forecasts, and the existing daily token chart. The right-click menu and profile manager
+share its neutral paper palette, thin rules, and blue selection cues; primary profile actions use
+ink-colored buttons. The hover popup remains a non-activating, read-only preview.
 
 ## Installer Verification
 
@@ -131,9 +132,10 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 - [ ] Explorer/taskbar recovery preserves the selected usage profile and cached usage
 - [ ] Windows autostart enable, verify, disable, and uninstall cleanup
 - [ ] Tray icon cleanup on every normal exit path
-- [ ] Hover the taskbar and floating widgets in light and dark mode; verify the Fluent detail popup
-      stays inside the active monitor, shows account/reset followed by one usage-forecast section,
-      does not repeat the weekly usage metric or progress bar, keeps only the Weekly forecast row,
+- [ ] Hover the taskbar and floating widgets in light and dark mode; verify the editorial popup
+      stays inside the active monitor, shows the selected profile and one large used/remaining value,
+      then usage/reset/forecast columns and a full-width daily token chart. Verify that a width of
+      360 DIP or less stacks the columns, stale values show status and last success, and the popup
       remains open past the native five-second tooltip timeout while the pointer stays over the
       widget, and closes without flicker after the pointer leaves.
 - [ ] Verify the hover popup omits the profile sign-in scope note and routine polling status while
@@ -191,7 +193,8 @@ version, scale, monitor/taskbar layout, result, and any item that could not be r
 
 ### Usage-profile dialog and sign-in matrix
 
-- [ ] 사용량 프로필 관리/추가 창이 Windows 10/11 밝은·어두운 모드에서 같은 Native Refined 토큰을 사용한다.
+- [ ] 프로필 관리/추가 창이 Windows 10/11 밝은·어두운 모드에서 지면 팔레트를 공유한다.
+      큰 프로필 이름, 중립 선택 면·파란 선택선, 얇은 행 구분선, 잉크색 주 버튼을 확인한다.
 - [ ] 100/125/150/175/200% DPI에서 목록, 입력 필드, `+`, 작업 버튼이 겹치거나 잘리지 않는다.
 - [ ] 12개 지원 언어에서 모든 버튼 문구가 버튼 내부 한 줄로 표시된다.
 - [ ] 좁은 작업 영역에서 작업 버튼 전체가 두 행으로 이동하며 버튼 내부 문구는 줄바꿈되지 않는다.

@@ -13,12 +13,12 @@ use windows::{
     Win32::{
         Foundation::{COLORREF, HWND, LPARAM, POINT, RECT},
         Graphics::Gdi::{
-            CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, FillRect, GetStockObject,
-            MonitorFromPoint, RoundRect, SelectObject, SetBkMode, SetTextColor,
-            CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS, DT_LEFT,
-            DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, FF_SWISS, FW_NORMAL,
-            HBRUSH, HGDIOBJ, MONITOR_DEFAULTTONEAREST, NULL_PEN, OUT_DEFAULT_PRECIS, PROOF_QUALITY,
-            TRANSPARENT,
+            CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, FillRect, GetDC,
+            GetTextExtentPoint32W, MonitorFromPoint, ReleaseDC, SelectObject, SetBkMode,
+            SetTextColor, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS,
+            DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_RTLREADING, DT_SINGLELINE, DT_VCENTER, FF_SWISS,
+            FW_NORMAL, HBRUSH, HGDIOBJ, MONITOR_DEFAULTTONEAREST, OUT_DEFAULT_PRECIS,
+            PROOF_QUALITY, TRANSPARENT,
         },
         UI::{
             Controls::{
@@ -343,14 +343,11 @@ impl TrayIcon {
         }
         let visual = &*(item.itemData as *const MenuItemVisual);
         item.itemHeight = logical_to_physical(menu_item_height(visual.kind), visual.dpi) as u32;
-        item.itemWidth = logical_to_physical(
-            menu_item_width(visual.text.len().saturating_sub(1)),
-            visual.dpi,
-        ) as u32;
+        item.itemWidth = measure_menu_width(visual) as u32;
         true
     }
 
-    /// `WM_DRAWITEM`의 owner-draw 메뉴 항목을 Fluent Compact 팔레트로 그립니다.
+    /// `WM_DRAWITEM`의 메뉴 항목을 지면 팔레트와 각진 선택 영역으로 그립니다.
     ///
     /// `lparam`은 Windows가 전달한 `DRAWITEMSTRUCT` 포인터여야 합니다. 항목 데이터가 이 앱의
     /// 렌더 모델이 아니면 `false`를 반환해 기본 처리가 계속되도록 합니다.
@@ -467,7 +464,16 @@ unsafe fn populate_owner_draw_menu(
     configure_owner_draw_menu(menu, render)?;
     if let Some(text) = reset_credits_text {
         add_owner_item(menu, 0, text, MenuItemKind::Info, false, true, None, render)?;
-        separator(menu)?;
+        add_owner_item(
+            menu,
+            0,
+            "",
+            MenuItemKind::Separator,
+            false,
+            true,
+            None,
+            render,
+        )?;
     }
     append_owner_entries(menu, entries, render)
 }
@@ -520,7 +526,16 @@ unsafe fn append_owner_entries(
                     return None;
                 }
             }
-            TrayMenuEntry::Separator => separator(menu)?,
+            TrayMenuEntry::Separator => add_owner_item(
+                menu,
+                0,
+                "",
+                MenuItemKind::Separator,
+                false,
+                true,
+                None,
+                render,
+            )?,
         }
     }
     Some(())
@@ -541,6 +556,7 @@ unsafe fn add_owner_item(
         MenuItemKind::Info => "\u{E946}",
         MenuItemKind::Submenu => "\u{E712}",
         MenuItemKind::Command => command_glyph(id, checked),
+        MenuItemKind::Separator => "",
     };
     let mut visual = Box::pin(MenuItemVisual {
         text: text.encode_utf16().chain(Some(0)).collect(),
@@ -566,7 +582,11 @@ unsafe fn add_owner_item(
     let info = MENUITEMINFOW {
         cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
         fMask: mask,
-        fType: MFT_OWNERDRAW,
+        fType: if kind == MenuItemKind::Separator {
+            MFT_OWNERDRAW | windows::Win32::UI::WindowsAndMessaging::MFT_SEPARATOR
+        } else {
+            MFT_OWNERDRAW
+        },
         fState: state,
         wID: u32::from(id),
         hSubMenu: submenu.unwrap_or_default(),
@@ -600,24 +620,51 @@ unsafe fn draw_owner_item(item: &DRAWITEMSTRUCT, visual: &MenuItemVisual) {
         && !has_item_state(item, ODS_DISABLED)
         && !has_item_state(item, ODS_GRAYED);
     fill_menu_rect(item.hDC, rect, visual.palette.background);
+    if visual.kind == MenuItemKind::Separator {
+        let inset = logical_to_physical(16, visual.dpi);
+        let top = (rect.top + rect.bottom) / 2;
+        fill_menu_rect(
+            item.hDC,
+            RECT {
+                left: rect.left + inset,
+                right: rect.right - inset,
+                top,
+                bottom: top + logical_to_physical(1, visual.dpi).max(1),
+            },
+            visual.palette.separator,
+        );
+        return;
+    }
     if selected {
         let inset = logical_to_physical(4, visual.dpi);
-        let radius = logical_to_physical(7, visual.dpi);
-        let brush = CreateSolidBrush(COLORREF(visual.palette.selection));
-        let old_brush = SelectObject(item.hDC, HGDIOBJ(brush.0));
-        let old_pen = SelectObject(item.hDC, GetStockObject(NULL_PEN));
-        let _ = RoundRect(
+        fill_menu_rect(
             item.hDC,
-            rect.left + inset,
-            rect.top + logical_to_physical(2, visual.dpi),
-            rect.right - inset,
-            rect.bottom - logical_to_physical(2, visual.dpi),
-            radius,
-            radius,
+            RECT {
+                left: rect.left + inset,
+                right: rect.right - inset,
+                top: rect.top + logical_to_physical(2, visual.dpi),
+                bottom: rect.bottom - logical_to_physical(2, visual.dpi),
+            },
+            visual.palette.selection,
         );
-        SelectObject(item.hDC, old_pen);
-        SelectObject(item.hDC, old_brush);
-        let _ = DeleteObject(HGDIOBJ(brush.0));
+        let edge = logical_to_physical(2, visual.dpi).max(1);
+        let left = if visual.rtl {
+            rect.right - inset - edge
+        } else {
+            rect.left + inset
+        };
+        fill_menu_rect(
+            item.hDC,
+            RECT {
+                left,
+                right: left + edge,
+                top: rect.top + logical_to_physical(6, visual.dpi),
+                bottom: rect.bottom - logical_to_physical(6, visual.dpi),
+            },
+            visual.palette.accent,
+        );
+    } else if visual.kind == MenuItemKind::Info {
+        fill_menu_rect(item.hDC, rect, visual.palette.surface);
     }
     let icon_inset = logical_to_physical(12, visual.dpi);
     let text_inset = logical_to_physical(44, visual.dpi);
@@ -713,6 +760,38 @@ fn has_item_state(item: &DRAWITEMSTRUCT, state: windows::Win32::UI::Controls::OD
     item.itemState.0 & state.0 != 0
 }
 
+/// 실제 메뉴 글꼴로 번역 문자열의 폭을 측정하고 체크·화살표 여백을 포함한 물리 폭을 반환합니다.
+///
+/// 화면 DC와 임시 글꼴은 호출 안에서 정리하며 측정 실패 시 기존 보수적 추정으로 폴백합니다.
+unsafe fn measure_menu_width(visual: &MenuItemVisual) -> i32 {
+    let scale = |value| logical_to_physical(value, visual.dpi);
+    if visual.kind == MenuItemKind::Separator {
+        return scale(220);
+    }
+    let text = &visual.text[..visual.text.len().saturating_sub(1)];
+    let fallback = scale(menu_item_width(text.len()));
+    let dc = GetDC(None);
+    if dc.is_invalid() {
+        return fallback;
+    }
+    let font = menu_font(13, visual.dpi, w!("Segoe UI"));
+    if font.is_invalid() {
+        let _ = ReleaseDC(None, dc);
+        return fallback;
+    }
+    let previous = SelectObject(dc, HGDIOBJ(font.0));
+    let mut size = windows::Win32::Foundation::SIZE::default();
+    let measured = GetTextExtentPoint32W(dc, text, &mut size).as_bool();
+    SelectObject(dc, previous);
+    let _ = DeleteObject(HGDIOBJ(font.0));
+    let _ = ReleaseDC(None, dc);
+    if measured {
+        (size.cx + scale(80)).clamp(scale(220), scale(520))
+    } else {
+        fallback
+    }
+}
+
 unsafe fn fill_menu_rect(dc: windows::Win32::Graphics::Gdi::HDC, rect: RECT, color: u32) {
     let brush = CreateSolidBrush(COLORREF(color));
     FillRect(dc, &rect, brush);
@@ -727,7 +806,7 @@ unsafe fn draw_menu_label(
     dpi: u32,
     rtl: bool,
 ) {
-    let font = menu_font(12, dpi, w!("Segoe UI Variable"));
+    let font = menu_font(13, dpi, w!("Segoe UI"));
     let old_font = SelectObject(dc, HGDIOBJ(font.0));
     let _ = SetBkMode(dc, TRANSPARENT);
     let _ = SetTextColor(dc, COLORREF(color));
@@ -880,6 +959,87 @@ mod tests {
     };
 
     use super::CoalescingWorker;
+
+    #[test]
+    fn editorial_menu_measures_localized_labels_and_renders_native_items() {
+        use super::*;
+        for light in [true, false] {
+            for rtl in [false, true] {
+                // SAFETY: 메뉴와 렌더 데이터는 이 테스트만 소유하며 UI 명령은 실행하지 않습니다.
+                unsafe {
+                    let menu = CreatePopupMenu().unwrap();
+                    let mut render = MenuRenderState::new(light, 96, rtl);
+                    configure_owner_draw_menu(menu, &render).unwrap();
+                    for (index, (text, kind, checked)) in [
+                        ("새로 고침", MenuItemKind::Command, false),
+                        ("사용량 프로필", MenuItemKind::Submenu, false),
+                        ("", MenuItemKind::Separator, false),
+                        ("남은 사용량 표시", MenuItemKind::Command, true),
+                        ("시작 시 자동 실행", MenuItemKind::Command, false),
+                        ("", MenuItemKind::Separator, false),
+                        ("안전 진단", MenuItemKind::Command, false),
+                        ("종료", MenuItemKind::Command, false),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        add_owner_item(
+                            menu,
+                            100 + index as u16,
+                            text,
+                            kind,
+                            checked,
+                            kind == MenuItemKind::Separator,
+                            None,
+                            &mut render,
+                        )
+                        .unwrap();
+                    }
+                    let width = render
+                        .items
+                        .iter()
+                        .map(|item| measure_menu_width(item))
+                        .max()
+                        .unwrap();
+                    let height = render
+                        .items
+                        .iter()
+                        .map(|item| menu_item_height(item.kind))
+                        .sum();
+                    crate::windows::test_render::surface(
+                        &format!("menu-{light}-{rtl}"),
+                        width,
+                        height,
+                        |dc| {
+                            let mut top = 0;
+                            for (index, item) in render.items.iter().enumerate() {
+                                let height = menu_item_height(item.kind);
+                                let draw = DRAWITEMSTRUCT {
+                                    CtlType: ODT_MENU,
+                                    hDC: dc,
+                                    itemState: if index == 0 {
+                                        ODS_SELECTED
+                                    } else {
+                                        Default::default()
+                                    },
+                                    rcItem: RECT {
+                                        left: 0,
+                                        top,
+                                        right: width,
+                                        bottom: top + height,
+                                    },
+                                    ..Default::default()
+                                };
+                                draw_owner_item(&draw, item);
+                                top += height;
+                            }
+                        },
+                    );
+                    DestroyMenu(menu).unwrap();
+                }
+            }
+        }
+    }
 
     #[test]
     fn tray_worker_submission_never_waits_for_a_blocked_shell_call() {

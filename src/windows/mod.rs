@@ -13,6 +13,9 @@ pub(crate) mod time;
 pub mod tray;
 pub mod widget;
 
+#[cfg(all(test, windows))]
+pub(crate) mod test_render;
+
 use crate::{
     AvailableUpdate, DailyTokenUsage, DailyUsage, Language, LanguagePreference, StartupView,
     TaskbarDisplayMode, UsageProfileId,

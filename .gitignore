@@ -1,4 +1,5 @@
 /target/
+/artifacts/ui-preview/
 ## Internal planning and task records are kept locally only.
 /.superpowers/
 /.github/
