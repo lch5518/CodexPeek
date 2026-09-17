@@ -7,6 +7,8 @@ Muestra las ventanas de límite de uso primaria y secundaria en la barra de tare
 
 ![Widget de Codex Usage Monitor en la barra de tareas](../images/taskbar-widget-en.png)
 
+![Menú contextual y selección de perfil de Codex Usage Monitor](../images/context-menu-en.png)
+
 ## Aspectos destacados
 
 - Muestra las ventanas de uso primaria y secundaria de Codex, incluidos los horarios de restablecimiento.

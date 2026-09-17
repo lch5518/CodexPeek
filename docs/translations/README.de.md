@@ -7,6 +7,8 @@ Es zeigt die primären und sekundären Rate-Limit-Zeitfenster in der Taskleiste,
 
 ![Codex Usage Monitor taskbar widget](../images/taskbar-widget-en.png)
 
+![Kontextmenü und Profilauswahl von Codex Usage Monitor](../images/context-menu-en.png)
+
 ## Highlights
 
 - Zeigt primäre und sekundäre Codex-Nutzungsfenster einschließlich Reset-Zeiten.

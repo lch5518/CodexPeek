@@ -7,6 +7,8 @@ Codex Usage Monitor là một widget Windows gốc nhỏ giúp bạn xem nhanh m
 
 ![Widget Codex Usage Monitor trên thanh tác vụ](../images/taskbar-widget-en.png)
 
+![Menu ngữ cảnh và lựa chọn hồ sơ của Codex Usage Monitor](../images/context-menu-en.png)
+
 ## Điểm nổi bật
 
 - Hiển thị các cửa sổ mức sử dụng Codex chính và phụ, bao gồm thời điểm đặt lại.

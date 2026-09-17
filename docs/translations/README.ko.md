@@ -7,6 +7,8 @@ Codex 사용량 모니터는 Codex 사용량을 빠르게 확인하는 Windows �
 
 ![Codex 사용량 모니터 작업 표시줄 위젯](../images/taskbar-widget.png)
 
+![Codex 사용량 모니터 우클릭 메뉴와 프로필 선택](../images/context-menu.png)
+
 ## 주요 기능
 
 - 위젯에 마우스를 올리면 최대 14일의 일별 토큰 사용량을 막대로 표시합니다.

@@ -7,6 +7,8 @@ Aplikasi ini menampilkan jendela batas penggunaan utama dan sekunder di taskbar,
 
 ![Widget taskbar Codex Usage Monitor](../images/taskbar-widget-en.png)
 
+![Menu konteks dan pemilihan profil Codex Usage Monitor](../images/context-menu-en.png)
+
 ## Sorotan
 
 - Menampilkan jendela penggunaan Codex utama dan sekunder, termasuk waktu reset.

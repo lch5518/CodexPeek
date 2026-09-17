@@ -7,6 +7,8 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 
 ![Codex Usage Monitor taskbar widget](docs/images/taskbar-widget-en.png)
 
+![Codex Usage Monitor context menu and profile selection](docs/images/context-menu-en.png)
+
 ## Highlights
 
 - Shows primary and secondary Codex usage windows, including reset times.

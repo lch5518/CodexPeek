@@ -7,6 +7,8 @@ Codex Usage Monitor هو ويدجت Windows أصلي صغير للتحقق من 
 
 ![ويدجت Codex Usage Monitor في شريط المهام](../images/taskbar-widget-en.png)
 
+![قائمة السياق واختيار الملف الشخصي في Codex Usage Monitor](../images/context-menu-en.png)
+
 ## أبرز الميزات
 
 - يعرض نوافذ استخدام Codex الأساسية والثانوية، بما في ذلك أوقات إعادة التعيين.

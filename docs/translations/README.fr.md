@@ -7,6 +7,8 @@ Il affiche les fenêtres de limite de débit principale et secondaire dans la ba
 
 ![Widget Codex Usage Monitor dans la barre des tâches](../images/taskbar-widget-en.png)
 
+![Menu contextuel et sélection de profil de Codex Usage Monitor](../images/context-menu-en.png)
+
 ## Points forts
 
 - Affiche les fenêtres d'utilisation Codex principale et secondaire, y compris les heures de réinitialisation.

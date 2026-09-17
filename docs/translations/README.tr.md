@@ -7,6 +7,8 @@ Birincil ve ikincil hız sınırı pencerelerini görev çubuğunda, yüzen bir 
 
 ![Codex Usage Monitor görev çubuğu aracı](../images/taskbar-widget-en.png)
 
+![Codex Usage Monitor bağlam menüsü ve profil seçimi](../images/context-menu-en.png)
+
 ## Öne çıkanlar
 
 - Birincil ve ikincil Codex kullanım pencerelerini, sıfırlanma zamanlarıyla birlikte gösterir.

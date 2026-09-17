@@ -7,6 +7,8 @@ Ele mostra as janelas de limite de uso primária e secundária na barra de taref
 
 ![Widget do Codex Usage Monitor na barra de tarefas](../images/taskbar-widget-en.png)
 
+![Menu de contexto e seleção de perfil do Codex Usage Monitor](../images/context-menu-en.png)
+
 ## Destaques
 
 - Mostra as janelas de uso primária e secundária do Codex, incluindo os horários de redefinição.

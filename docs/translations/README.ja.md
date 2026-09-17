@@ -7,6 +7,8 @@ Codex Usage Monitor は、Codex の使用状況をひと目で確認するため
 
 ![Codex Usage Monitor タスクバーウィジェット](../images/taskbar-widget-en.png)
 
+![Codex Usage Monitor の右クリックメニューとプロファイル選択](../images/context-menu-en.png)
+
 ## ハイライト
 
 - リセット時刻を含む、Codex の主使用量ウィンドウと副使用量ウィンドウを表示します。

@@ -7,6 +7,8 @@ Codex Usage Monitor एक छोटा मूल Windows विजेट है
 
 ![Codex Usage Monitor टास्कबार विजेट](../images/taskbar-widget-en.png)
 
+![Codex Usage Monitor संदर्भ मेन्यू और प्रोफ़ाइल चयन](../images/context-menu-en.png)
+
 ## मुख्य बातें
 
 - रीसेट समय सहित प्राथमिक और द्वितीयक Codex उपयोग अवधियां दिखाता है।
