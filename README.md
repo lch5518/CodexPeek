@@ -24,9 +24,10 @@ It shows the primary and secondary rate-limit windows in the taskbar, a floating
 - Lets you manually choose among as many as eight isolated usage profiles.
 - Supports showing the widget on every taskbar or only on the primary monitor.
 - Falls back safely to a floating widget and tray icon when taskbar attachment is unavailable.
-- Shows hover details on a system-themed editorial surface with a large usage percentage,
-  usage windows, reset/forecast columns, and a daily token chart. The right-click menu and
-  profile manager share its neutral palette, thin rules, and clear selection states.
+- Shows each usage window's percentage, progress bar, and reset time together in a compact
+  400-DIP hover panel, followed by usage pace, forecasts, and the daily token chart.
+  The right-click menu and profile manager use system fonts, blue selection and action cues,
+  and separate usage-status colors.
   Native menu keyboard/submenu behavior and the standard accessibility fallback remain available.
 - Supports manual refresh, automatic refresh intervals, Windows startup, diagnostics, and localized UI.
 - Checks for a newer release after startup and can apply a checksum-verified self-update in place.

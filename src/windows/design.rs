@@ -15,10 +15,10 @@ mod tests {
     }
 
     #[test]
-    fn editorial_text_and_primary_buttons_meet_wcag_aa() {
+    fn native_text_and_primary_buttons_meet_wcag_aa() {
         for theme in [DialogTheme::Light, DialogTheme::Dark] {
             let palette = DialogPalette::for_theme(theme);
-            assert!(contrast_ratio(palette.primary_text.colorref, palette.text.colorref) >= 4.5);
+            assert!(contrast_ratio(palette.primary_text.colorref, palette.focus.colorref) >= 4.5);
             assert!(contrast_ratio(palette.text.colorref, palette.background.colorref) >= 4.5);
             assert!(
                 contrast_ratio(palette.secondary_text.colorref, palette.background.colorref) >= 4.5
@@ -209,7 +209,7 @@ pub struct DialogPalette {
     pub subtle_border: DialogColor,
     /// 기본 텍스트색입니다.
     pub text: DialogColor,
-    /// 잉크색 기본 작업 버튼 위에 사용하는 고대비 텍스트색입니다.
+    /// 강조색 기본 작업 버튼 위에 사용하는 고대비 텍스트색입니다.
     pub primary_text: DialogColor,
     /// 보조 텍스트색입니다.
     pub secondary_text: DialogColor,
@@ -238,35 +238,35 @@ impl DialogPalette {
             DialogTheme::Light => Self {
                 background: DialogColor::opaque(0x00fa_fafa),
                 surface: DialogColor::opaque(0x00ff_ffff),
-                elevated_surface: DialogColor::opaque(0x00ed_f3f3),
-                border: DialogColor::opaque(0x00b3_b9b9),
-                subtle_border: DialogColor::opaque(0x00da_dddd),
-                text: DialogColor::opaque(0x0017_1717),
-                primary_text: DialogColor::opaque(0x00fa_fafa),
+                elevated_surface: DialogColor::opaque(0x00fb_efe5),
+                border: DialogColor::opaque(0x00ad_adad),
+                subtle_border: DialogColor::opaque(0x00e4_e4e4),
+                text: DialogColor::opaque(0x001f_1f1f),
+                primary_text: DialogColor::opaque(0x00ff_ffff),
                 secondary_text: DialogColor::opaque(0x0045_4545),
-                muted_text: DialogColor::opaque(0x0066_6666),
+                muted_text: DialogColor::opaque(0x005e_5e5e),
                 progress_track: DialogColor::translucent(0x0000_0000, 36),
                 hover: DialogColor::translucent(0x0000_0000, 13),
                 pressed: DialogColor::translucent(0x0000_0000, 23),
-                focus: DialogColor::opaque(0x00eb_6325),
+                focus: DialogColor::opaque(0x00b8_5f00),
                 healthy: DialogColor::opaque(0x0074_c748),
                 warning: DialogColor::opaque(0x0023_a6f5),
                 critical: DialogColor::opaque(0x005c_5cff),
             },
             DialogTheme::Dark => Self {
-                background: DialogColor::opaque(0x001b_1a18),
-                surface: DialogColor::opaque(0x001e_1d1b),
-                elevated_surface: DialogColor::opaque(0x0026_2523),
-                border: DialogColor::opaque(0x0064_6765),
-                subtle_border: DialogColor::opaque(0x0038_3734),
-                text: DialogColor::opaque(0x00d1_d6d9),
-                primary_text: DialogColor::opaque(0x001b_1a18),
-                secondary_text: DialogColor::opaque(0x00b8_bec1),
-                muted_text: DialogColor::opaque(0x009e_a3a5),
+                background: DialogColor::opaque(0x0024_2424),
+                surface: DialogColor::opaque(0x0029_2929),
+                elevated_surface: DialogColor::opaque(0x004c_3c2c),
+                border: DialogColor::opaque(0x006b_6b6b),
+                subtle_border: DialogColor::opaque(0x003e_3e3e),
+                text: DialogColor::opaque(0x00f5_f5f5),
+                primary_text: DialogColor::opaque(0x0024_2424),
+                secondary_text: DialogColor::opaque(0x00d0_d0d0),
+                muted_text: DialogColor::opaque(0x00b0_b0b0),
                 progress_track: DialogColor::translucent(0x00ff_ffff, 36),
                 hover: DialogColor::translucent(0x00ff_ffff, 15),
                 pressed: DialogColor::translucent(0x00ff_ffff, 26),
-                focus: DialogColor::opaque(0x00ff_b88b),
+                focus: DialogColor::opaque(0x00ff_cc99),
                 healthy: DialogColor::opaque(0x0074_c748),
                 warning: DialogColor::opaque(0x0023_a6f5),
                 critical: DialogColor::opaque(0x005c_5cff),

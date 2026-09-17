@@ -48,21 +48,23 @@ enum TextStyle {
     Label,
     Body,
     Headline,
+    Title,
     Error,
 }
 
 impl TextStyle {
     fn size(self) -> i32 {
         match self {
-            Self::Meta => 11,
+            Self::Meta => 12,
             Self::Label => 14,
             Self::Body | Self::Error => 13,
-            Self::Headline => 36,
+            Self::Headline => 28,
+            Self::Title => 18,
         }
     }
 
     fn weight(self) -> i32 {
-        if matches!(self, Self::Label | Self::Headline) {
+        if matches!(self, Self::Label | Self::Headline | Self::Title) {
             FW_SEMIBOLD.0 as i32
         } else {
             FW_NORMAL.0 as i32
@@ -76,49 +78,54 @@ struct TextBlockLayout {
     style: TextStyle,
 }
 
+struct UsageMeterLayout {
+    rect: Rect,
+    fraction: f64,
+    risk: crate::windows::ProfileUsageStatus,
+}
+
 struct PopupLayout {
     width: i32,
     height: i32,
     blocks: Vec<TextBlockLayout>,
     rules: Vec<Rect>,
-    header_rule: Rect,
+    meters: Vec<UsageMeterLayout>,
+    insight: Option<Rect>,
     daily_usage: Option<Rect>,
 }
 
-/// 현재 폭을 2:1 본문 열로 나누며 좁은 화면에서는 같은 폭의 단일 열을 반환합니다.
+/// 창 이름과 숫자를 같은 행에 두고 폭이 좁으면 한 열로 쌓습니다.
 ///
-/// 입력·출력은 물리 픽셀이고 `dpi`로 360 DIP 분기와 간격을 계산합니다. RTL은 열만 반전하며
-/// 높이는 호출자가 실제 문자열 측정 뒤 정합니다.
+/// 입력·출력은 물리 픽셀입니다. RTL에서는 값의 위치만 반전하며 두 사용량 창의 순서는 유지합니다.
 fn popup_columns(width: i32, dpi: u32, rtl: bool) -> (Rect, Rect, bool) {
     let scale = |value| logical_to_physical(value, dpi);
-    let narrow = width <= scale(360);
-    let padding = scale(if narrow { 16 } else { 20 });
-    let area = Rect::new(padding, 0, (width - padding).max(padding + 1), 0);
-    if narrow {
-        return (area, area, false);
+    let padding = scale(20);
+    let full = Rect::new(padding, 0, (width - padding).max(padding + 1), 0);
+    if width < scale(320) {
+        return (full, full, false);
     }
-    let gap = scale(16);
-    let main_width = (area.width() - gap) * 2 / 3;
+    let number_width = scale(108);
+    let gap = scale(12);
     if rtl {
         (
-            Rect::new(area.right - main_width, 0, area.right, 0),
-            Rect::new(area.left, 0, area.right - main_width - gap, 0),
+            Rect::new(full.left + number_width + gap, 0, full.right, 0),
+            Rect::new(full.left, 0, full.left + number_width, 0),
             true,
         )
     } else {
         (
-            Rect::new(area.left, 0, area.left + main_width, 0),
-            Rect::new(area.left + main_width + gap, 0, area.right, 0),
+            Rect::new(full.left, 0, full.right - number_width - gap, 0),
+            Rect::new(full.right - number_width, 0, full.right, 0),
             true,
         )
     }
 }
 
-/// 지면의 텍스트를 실제 폭으로 측정해 괘선·본문 열·그래프가 겹치지 않는 배치를 만듭니다.
+/// 표시 비율·초기화·소비 속도를 순서대로 측정해 단일 열 상세 화면을 만듭니다.
 ///
 /// `compact`는 작업영역이 부족할 때 보조 설명과 그래프만 생략합니다. 숫자·단위·초기화·상태와
-/// 예측은 보존하며, 반환 높이가 여전히 너무 크면 호출자가 기존 네이티브 UI로 폴백합니다.
-fn editorial_layout(
+/// 예측은 보존하며, 반환 높이가 여전히 너무 크면 호출자가 네이티브 툴팁으로 폴백합니다.
+fn allowance_layout(
     presentation: &UsagePopupPresentation,
     width: i32,
     dpi: u32,
@@ -127,18 +134,17 @@ fn editorial_layout(
     mut measure: impl FnMut(&str, i32, TextStyle) -> i32,
 ) -> PopupLayout {
     let scale = |value| logical_to_physical(value, dpi);
-    let (main, side, columns) = popup_columns(width, dpi, rtl);
-    let padding = main.left.min(side.left);
+    let padding = scale(20);
     let full = Rect::new(padding, 0, width - padding, 0);
+    let (label, number, paired) = popup_columns(width, dpi, rtl);
     let mut blocks = Vec::new();
     let mut rules = Vec::new();
+    let mut meters = Vec::new();
     let mut add = |text: &str, area: Rect, top: &mut i32, style: TextStyle| {
         if text.is_empty() {
             return;
         }
-        let height = measure(text, area.width().max(1), style).max(scale(
-            style.size() + if style == TextStyle::Headline { 8 } else { 5 },
-        ));
+        let height = measure(text, area.width().max(1), style).max(scale(style.size() + 6));
         blocks.push(TextBlockLayout {
             text: text.to_owned(),
             rect: Rect::new(area.left, *top, area.right, top.saturating_add(height)),
@@ -147,108 +153,104 @@ fn editorial_layout(
         *top = top.saturating_add(height);
     };
     let mut top = padding;
-    add("CODEXPEEK", full, &mut top, TextStyle::Meta);
-    top += scale(4);
     add(
         &presentation.profile_label,
         full,
         &mut top,
-        TextStyle::Label,
-    );
-    top += scale(12);
-    let header_rule = Rect::new(full.left, top, full.right, top + scale(2));
-    top = header_rule.bottom + scale(12);
-    add(&presentation.lead_label, full, &mut top, TextStyle::Meta);
-    add(
-        &presentation.lead_percent,
-        full,
-        &mut top,
-        TextStyle::Headline,
+        TextStyle::Title,
     );
     top += scale(4);
-    if !presentation.rows.is_empty() {
-        add(&presentation.pace_summary, full, &mut top, TextStyle::Body);
-    }
+    add(&presentation.lead_label, full, &mut top, TextStyle::Meta);
     if let Some(status) = &presentation.status {
-        top += scale(4);
-        add(status, full, &mut top, TextStyle::Error);
+        top += scale(8);
+        let style = if presentation.data_state == crate::windows::WidgetDataState::Error {
+            TextStyle::Error
+        } else {
+            TextStyle::Body
+        };
+        add(status, full, &mut top, style);
     }
     top += scale(16);
-    rules.push(Rect::new(full.left, top, full.right, top + scale(1)));
-    top += scale(12);
-    let body_top = top;
-    let mut main_bottom = top;
-    for (index, row) in presentation.rows.iter().enumerate() {
-        if index > 0 {
-            main_bottom += scale(12);
-        }
+    if presentation.rows.is_empty() {
         add(
-            &format!("{} · {}", row.label, row.percent_text),
-            main,
-            &mut main_bottom,
-            TextStyle::Label,
+            &presentation.lead_percent,
+            full,
+            &mut top,
+            TextStyle::Headline,
         );
-        // 리드 창의 초기화는 보조 열에 한 번만 표시합니다.
-        if index + 1 < presentation.rows.len() && !row.reset_text.is_empty() {
-            main_bottom += scale(4);
+    }
+    for row in &presentation.rows {
+        let mut label_bottom = top + scale(6);
+        add(&row.label, label, &mut label_bottom, TextStyle::Label);
+        let mut number_bottom = if paired { top } else { label_bottom };
+        add(
+            &row.percent_text,
+            number,
+            &mut number_bottom,
+            TextStyle::Headline,
+        );
+        top = label_bottom.max(number_bottom) + scale(6);
+        let track = Rect::new(full.left, top, full.right, top + scale(4));
+        meters.push(UsageMeterLayout {
+            rect: track,
+            fraction: if row.display_percent.is_finite() {
+                row.display_percent.clamp(0.0, 100.0) / 100.0
+            } else {
+                0.0
+            },
+            risk: crate::windows::ProfileUsageStatus::from_used_percent(row.used_percent),
+        });
+        top = track.bottom + scale(8);
+        if !row.reset_text.is_empty() {
             add(
                 &format!("{}: {}", presentation.reset_label, row.reset_text),
-                main,
-                &mut main_bottom,
+                full,
+                &mut top,
                 TextStyle::Meta,
             );
         }
-    }
-    if !compact {
-        if let Some(detail) = &presentation.pace_detail {
-            main_bottom += scale(8);
-            add(detail, main, &mut main_bottom, TextStyle::Body);
-        }
-    }
-    let mut side_bottom = if columns {
-        body_top
-    } else {
-        main_bottom + scale(12)
-    };
-    if let Some(reset) = &presentation.reset_text {
-        add(
-            &presentation.reset_label,
-            side,
-            &mut side_bottom,
-            TextStyle::Meta,
-        );
-        add(reset, side, &mut side_bottom, TextStyle::Body);
+        top += scale(16);
     }
     if let Some(credits) = &presentation.reset_credits_text {
-        side_bottom += scale(8);
-        add(credits, side, &mut side_bottom, TextStyle::Meta);
+        add(credits, full, &mut top, TextStyle::Meta);
+        top += scale(12);
     }
-    if !presentation.forecasts.is_empty() {
-        side_bottom += scale(12);
+    let insight = if !presentation.rows.is_empty() {
+        let insight_top = top;
+        let inset = scale(12);
+        let inner = Rect::new(full.left + inset, 0, full.right - inset, 0);
+        top += inset;
         add(
-            &presentation.forecast_label,
-            side,
-            &mut side_bottom,
-            TextStyle::Meta,
+            &presentation.pace_summary,
+            inner,
+            &mut top,
+            TextStyle::Label,
         );
-        side_bottom += scale(4);
-        for forecast in &presentation.forecasts {
-            add(&forecast.detail, side, &mut side_bottom, TextStyle::Body);
+        if !compact {
+            if let Some(detail) = &presentation.pace_detail {
+                top += scale(4);
+                add(detail, inner, &mut top, TextStyle::Meta);
+            }
         }
-    }
-    top = main_bottom.max(side_bottom);
-    if columns && side_bottom > body_top {
-        let x = if rtl {
-            main.left - scale(8)
-        } else {
-            side.left - scale(8)
-        };
-        rules.push(Rect::new(x, body_top, x + scale(1), top));
-    }
+        if !presentation.forecasts.is_empty() {
+            top += scale(12);
+            add(
+                &presentation.forecast_label,
+                inner,
+                &mut top,
+                TextStyle::Meta,
+            );
+            for forecast in &presentation.forecasts {
+                add(&forecast.detail, inner, &mut top, TextStyle::Body);
+            }
+        }
+        top += inset;
+        Some(Rect::new(full.left, insight_top, full.right, top))
+    } else {
+        None
+    };
     let daily_usage = if !compact && !presentation.daily_token_usage.is_empty() {
         top += scale(16);
-        rules.push(Rect::new(full.left, top, full.right, top + scale(1)));
-        top += scale(12);
         add(
             &presentation.daily_usage_label,
             full,
@@ -267,7 +269,7 @@ fn editorial_layout(
     } else {
         None
     };
-    top += scale(16);
+    top += scale(14);
     rules.push(Rect::new(full.left, top, full.right, top + scale(1)));
     top += scale(8);
     add(&presentation.last_success, full, &mut top, TextStyle::Meta);
@@ -276,7 +278,8 @@ fn editorial_layout(
         height: top + padding,
         blocks,
         rules,
-        header_rule,
+        meters,
+        insight,
         daily_usage,
     }
 }
@@ -428,9 +431,9 @@ pub(super) unsafe fn show(
     let measure = |text: &str, width, style: TextStyle| {
         measure_wrapped_text_height(text, width, style.size(), style.weight(), dpi, rtl)
     };
-    let mut layout = editorial_layout(presentation, width, dpi, rtl, false, measure);
+    let mut layout = allowance_layout(presentation, width, dpi, rtl, false, measure);
     if layout.height > max_height {
-        layout = editorial_layout(presentation, width, dpi, rtl, true, measure);
+        layout = allowance_layout(presentation, width, dpi, rtl, true, measure);
     }
     if layout.height > max_height {
         return Err(io::Error::other("popup content exceeds readable work area"));
@@ -629,7 +632,7 @@ unsafe fn render(
         std::slice::from_raw_parts_mut(bits.cast::<u32>(), pixel_count),
         render_size.0,
         render_size.1,
-        logical_to_physical(2, dpi),
+        logical_to_physical(8, dpi),
     );
     let source = POINT { x: 0, y: 0 };
     let size = SIZE {
@@ -682,7 +685,34 @@ unsafe fn paint_content(
     ] {
         fill(dc, rect, palette.border);
     }
-    fill(dc, layout.header_rule, palette.text);
+    if let Some(insight) = layout.insight {
+        fill(dc, insight, palette.surface);
+    }
+    for meter in &layout.meters {
+        fill(dc, meter.rect, palette.separator);
+        let fill_width = (f64::from(meter.rect.width()) * meter.fraction).round() as i32;
+        let color = match meter.risk {
+            crate::windows::ProfileUsageStatus::Healthy => 0x0074_c748,
+            crate::windows::ProfileUsageStatus::Warning => 0x0023_a6f5,
+            crate::windows::ProfileUsageStatus::Critical => 0x005c_5cff,
+        };
+        let rect = if rtl {
+            Rect::new(
+                meter.rect.right - fill_width,
+                meter.rect.top,
+                meter.rect.right,
+                meter.rect.bottom,
+            )
+        } else {
+            Rect::new(
+                meter.rect.left,
+                meter.rect.top,
+                meter.rect.left + fill_width,
+                meter.rect.bottom,
+            )
+        };
+        fill(dc, rect, color);
+    }
     for rule in &layout.rules {
         fill(dc, *rule, palette.separator);
     }
@@ -698,7 +728,11 @@ unsafe fn paint_content(
             block.rect,
             popup_font(dc, block.style.size(), block.style.weight(), dpi),
             color,
-            wrapped_text_format(rtl),
+            if block.style == TextStyle::Headline {
+                wrapped_text_format(!rtl) & !DT_RTLREADING
+            } else {
+                wrapped_text_format(rtl)
+            },
         );
     }
     if let Some(chart) = layout.daily_usage {
@@ -771,7 +805,7 @@ unsafe fn paint_daily_usage(
             slot.right - (gap - gap / 2),
             chart.bottom,
         );
-        fill(dc, bar, palette.text);
+        fill(dc, bar, palette.secondary_text);
     }
 }
 
@@ -867,7 +901,7 @@ unsafe fn number_font(size: i32, dpi: u32) -> HGDIOBJ {
             CLIP_DEFAULT_PRECIS,
             PROOF_QUALITY,
             u32::from(DEFAULT_PITCH.0 | FF_SWISS.0),
-            w!("Consolas"),
+            w!("Segoe UI"),
         )
         .0,
     )
@@ -949,9 +983,9 @@ mod tests {
     };
 
     use super::{
-        apply_surface_alpha, daily_chart_bounds, daily_date_bounds, daily_date_indices,
-        daily_date_label, daily_date_text_format, daily_usage_bar_height, daily_usage_slot,
-        editorial_layout, popup_columns, popup_render_size, rounded_surface_alpha,
+        allowance_layout, apply_surface_alpha, daily_chart_bounds, daily_date_bounds,
+        daily_date_indices, daily_date_label, daily_date_text_format, daily_usage_bar_height,
+        daily_usage_slot, popup_columns, popup_render_size, rounded_surface_alpha,
         wrapped_text_format, TextStyle,
     };
     use crate::windows::widget::Rect;
@@ -976,7 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn editorial_columns_stack_on_narrow_screens_and_mirror_at_every_dpi() {
+    fn allowance_columns_stack_on_narrow_screens_and_mirror_at_every_dpi() {
         for dpi in [96, 120, 144, 168, 192] {
             let scale = |value| crate::windows::widget::logical_to_physical(value, dpi);
             let (main, side, columns) = popup_columns(scale(440), dpi, false);
@@ -986,14 +1020,14 @@ mod tests {
             assert_eq!(main.width(), rtl_main.width());
             assert_eq!(side.width(), rtl_side.width());
             assert!(rtl_side.right < rtl_main.left);
-            let (main, side, columns) = popup_columns(scale(360), dpi, false);
+            let (main, side, columns) = popup_columns(scale(280), dpi, false);
             assert!(!columns);
             assert_eq!(main, side);
         }
     }
 
     #[test]
-    fn editorial_surface_is_opaque_even_on_colored_dark_paper() {
+    fn allowance_surface_is_opaque_even_on_colored_dark_paper() {
         let mut pixels = vec![0x00181a1b; 100 * 100];
         apply_surface_alpha(&mut pixels, 100, 100, 2);
         assert_eq!(pixels[50 * 100 + 50], 0xff181a1b);
@@ -1001,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn editorial_measured_layout_and_render_keep_content_inside_paper() {
+    fn allowance_measured_layout_and_render_keep_content_inside_paper() {
         use crate::windows::popup::{popup_palette, tests::ready_view, usage_popup_presentation};
         for (language, rtl) in [
             (crate::Language::Korean, false),
@@ -1030,11 +1064,11 @@ mod tests {
                 .collect();
             let presentation = usage_popup_presentation(&view, language);
             for dpi in [96, 120, 144, 168, 192] {
-                for logical_width in [320, 360, 440] {
+                for logical_width in [280, 320, 400] {
                     let width = crate::windows::widget::logical_to_physical(logical_width, dpi);
                     for compact in [false, true] {
                         // SAFETY: 측정 함수는 자체 DC·글꼴을 소유하며 외부 계정이나 창을 사용하지 않습니다.
-                        let layout = editorial_layout(
+                        let layout = allowance_layout(
                             &presentation,
                             width,
                             dpi,
@@ -1066,7 +1100,7 @@ mod tests {
                             .blocks
                             .iter()
                             .any(|block| block.text == presentation.lead_percent));
-                        if dpi == 96 && logical_width == 440 && !compact {
+                        if dpi == 96 && logical_width == 400 && !compact {
                             for light in [true, false] {
                                 crate::windows::test_render::surface(
                                     &format!("popup-{language:?}-{light}"),
@@ -1103,6 +1137,105 @@ mod tests {
         assert_eq!(daily_usage_bar_height(50, 0, 80), 0);
         assert_eq!(daily_usage_bar_height(50, 100, 0), 0);
         assert_eq!(daily_usage_bar_height(50, 100, -1), 0);
+    }
+
+    #[test]
+    fn allowance_keeps_each_reset_beside_its_window_and_risk_independent_of_display_mode() {
+        use crate::windows::popup::{tests::ready_view, usage_popup_presentation};
+        use crate::windows::ProfileUsageStatus;
+        for remaining in [true, false] {
+            let mut view = ready_view();
+            view.show_remaining_percent = remaining;
+            let row = view.secondary.as_mut().unwrap();
+            row.used_percent = 95.0;
+            row.display_percent = if remaining { 5.0 } else { 95.0 };
+            row.percent_text = if remaining { "5%" } else { "95%" }.into();
+            let presentation = usage_popup_presentation(&view, crate::Language::English);
+            let layout = allowance_layout(&presentation, 400, 96, false, false, |_, _, style| {
+                style.size() + 6
+            });
+            assert_eq!(layout.meters.len(), 2);
+            assert_eq!(layout.meters[1].risk, ProfileUsageStatus::Critical);
+            assert_eq!(
+                layout.meters[1].fraction,
+                if remaining { 0.05 } else { 0.95 }
+            );
+            for (index, row) in presentation.rows.iter().enumerate() {
+                let value = layout
+                    .blocks
+                    .iter()
+                    .find(|block| block.text == row.percent_text)
+                    .unwrap();
+                let reset = layout
+                    .blocks
+                    .iter()
+                    .find(|block| block.text.ends_with(&row.reset_text))
+                    .unwrap();
+                assert!(value.rect.bottom <= layout.meters[index].rect.top);
+                assert!(layout.meters[index].rect.bottom <= reset.rect.top);
+                if let Some(next) = presentation.rows.get(index + 1) {
+                    let next_value = layout
+                        .blocks
+                        .iter()
+                        .find(|block| block.text == next.percent_text)
+                        .unwrap();
+                    assert!(reset.rect.bottom < next_value.rect.top);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn loading_and_error_surfaces_preserve_status_without_inventing_usage() {
+        use crate::windows::popup::{tests::ready_view, usage_popup_presentation};
+        use crate::windows::WidgetDataState;
+        for state in [WidgetDataState::Loading, WidgetDataState::Error] {
+            let mut view = ready_view();
+            view.primary = None;
+            view.secondary = None;
+            view.daily_token_usage.clear();
+            view.data_state = state;
+            view.status = if state == WidgetDataState::Loading {
+                "불러오는 중"
+            } else {
+                "사용량을 조회하지 못했습니다"
+            }
+            .into();
+            let presentation = usage_popup_presentation(&view, crate::Language::Korean);
+            let layout = allowance_layout(&presentation, 400, 96, false, false, |_, _, style| {
+                style.size() + 6
+            });
+            assert!(layout.meters.is_empty());
+            assert!(layout.insight.is_none());
+            assert!(layout.daily_usage.is_none());
+            let status = layout
+                .blocks
+                .iter()
+                .find(|block| block.text == view.status)
+                .unwrap();
+            assert_eq!(
+                status.style == TextStyle::Error,
+                state == WidgetDataState::Error
+            );
+            for light in [true, false] {
+                crate::windows::test_render::surface(
+                    &format!("popup-{state:?}-{light}"),
+                    400,
+                    layout.height,
+                    |dc| unsafe {
+                        super::paint_content(
+                            dc,
+                            &presentation,
+                            crate::windows::popup::popup_palette(light),
+                            96,
+                            false,
+                            &layout,
+                            (400, layout.height),
+                        );
+                    },
+                );
+            }
+        }
     }
 
     #[test]

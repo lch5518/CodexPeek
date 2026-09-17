@@ -7,7 +7,7 @@ use super::{
 };
 use crate::Language;
 
-pub(crate) const POPUP_WIDTH_LOGICAL: i32 = 440;
+pub(crate) const POPUP_WIDTH_LOGICAL: i32 = 400;
 
 /// owner-draw 메뉴 항목의 시각적 역할입니다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,13 +57,13 @@ pub(crate) const fn popup_palette(light: bool) -> PopupPalette {
     let palette = DialogPalette::for_theme(theme);
     PopupPalette {
         background: palette.background.colorref,
-        surface: palette.elevated_surface.colorref,
+        surface: palette.surface.colorref,
         text: palette.text.colorref,
         secondary_text: palette.muted_text.colorref,
         accent: palette.focus.colorref,
         separator: palette.subtle_border.colorref,
         border: palette.border.colorref,
-        selection: if light { 0x00ea_eeee } else { 0x0029_2825 },
+        selection: palette.elevated_surface.colorref,
         danger: if light { 0x0018_23b4 } else { 0x0090_9aff },
     }
 }
@@ -84,6 +84,7 @@ pub(crate) struct UsagePopupPresentation {
     pub(crate) rows: Vec<UsageRowView>,
     pub(crate) last_success: String,
     pub(crate) status: Option<String>,
+    pub(crate) data_state: WidgetDataState,
     pub(crate) reset_label: String,
     pub(crate) reset_text: Option<String>,
     pub(crate) reset_credits_text: Option<String>,
@@ -117,19 +118,12 @@ pub(crate) fn usage_popup_presentation(
 
     UsagePopupPresentation {
         profile_label: view.usage_profile_label.clone(),
-        lead_label: row
-            .map(|row| {
-                format!(
-                    "{} · {}",
-                    row.label,
-                    if view.show_remaining_percent {
-                        crate::app::remaining_usage_label(language)
-                    } else {
-                        crate::app::current_usage_label(language)
-                    }
-                )
-            })
-            .unwrap_or_else(|| view.status.clone()),
+        lead_label: if view.show_remaining_percent {
+            crate::app::remaining_usage_label(language)
+        } else {
+            crate::app::current_usage_label(language)
+        }
+        .to_owned(),
         lead_percent: row
             .map(|row| row.percent_text.clone())
             .unwrap_or_else(|| "—".to_owned()),
@@ -140,6 +134,7 @@ pub(crate) fn usage_popup_presentation(
             .cloned()
             .collect(),
         last_success: view.last_success.clone(),
+        data_state: view.data_state,
         status: if view.is_stale && view.data_state != WidgetDataState::Error {
             Some(crate::localized_text(crate::LocalizationKey::Stale, language).to_owned())
         } else if view.is_stale {
@@ -149,7 +144,7 @@ pub(crate) fn usage_popup_presentation(
                 view.status
             ))
         } else {
-            (view.data_state == WidgetDataState::Error).then(|| view.status.clone())
+            (view.data_state != WidgetDataState::Ready).then(|| view.status.clone())
         },
         reset_label: crate::app::reset_at_label(language).to_owned(),
         reset_text: row
@@ -347,11 +342,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn editorial_lead_preserves_display_mode_windows_and_stale_values() {
+    fn allowance_header_preserves_display_mode_windows_and_stale_values() {
         let mut view = ready_view();
         let presentation = usage_popup_presentation(&view, Language::English);
         assert_eq!(presentation.lead_percent, "66%");
-        assert_eq!(presentation.lead_label, "7d · Remaining");
+        assert_eq!(presentation.lead_label, "Remaining");
         assert_eq!(presentation.rows.len(), 2);
         assert_eq!(presentation.rows[0].label, "5h");
         assert_eq!(presentation.last_success, "just now");
@@ -362,7 +357,7 @@ pub(crate) mod tests {
         view.data_state = WidgetDataState::Error;
         let stale = usage_popup_presentation(&view, Language::English);
         assert_eq!(stale.lead_percent, "34%");
-        assert_eq!(stale.lead_label, "7d · Current usage");
+        assert_eq!(stale.lead_label, "Current usage");
         assert!(stale.status.is_some());
 
         view.primary = None;

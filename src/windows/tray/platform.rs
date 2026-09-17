@@ -647,22 +647,6 @@ unsafe fn draw_owner_item(item: &DRAWITEMSTRUCT, visual: &MenuItemVisual) {
             },
             visual.palette.selection,
         );
-        let edge = logical_to_physical(2, visual.dpi).max(1);
-        let left = if visual.rtl {
-            rect.right - inset - edge
-        } else {
-            rect.left + inset
-        };
-        fill_menu_rect(
-            item.hDC,
-            RECT {
-                left,
-                right: left + edge,
-                top: rect.top + logical_to_physical(6, visual.dpi),
-                bottom: rect.bottom - logical_to_physical(6, visual.dpi),
-            },
-            visual.palette.accent,
-        );
     } else if visual.kind == MenuItemKind::Info {
         fill_menu_rect(item.hDC, rect, visual.palette.surface);
     }
@@ -961,7 +945,7 @@ mod tests {
     use super::CoalescingWorker;
 
     #[test]
-    fn editorial_menu_measures_localized_labels_and_renders_native_items() {
+    fn native_menu_measures_localized_labels_and_renders_native_items() {
         use super::*;
         for light in [true, false] {
             for rtl in [false, true] {

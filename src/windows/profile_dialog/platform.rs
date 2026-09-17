@@ -118,7 +118,7 @@ struct WindowsDialogResourceBackend;
 
 impl DialogResourceBackend for WindowsDialogResourceBackend {
     fn create_font(&mut self, dpi: u32, heading: bool, face: DialogFontFace) -> HFONT {
-        let height = if heading { 18 } else { 14 };
+        let height = if heading { 16 } else { 14 };
         let weight = if heading { FW_MEDIUM } else { FW_NORMAL };
         let face = match face {
             DialogFontFace::SegoeUiVariable => w!("Segoe UI Variable"),
@@ -1314,8 +1314,8 @@ fn paint_primary_button<B: PrimaryButtonPaintBackend>(
         PrimaryButtonSurface::Normal => None,
     };
     let surface = overlay
-        .map(|overlay| composite_dialog_color(overlay, palette.text))
-        .unwrap_or(palette.text.colorref);
+        .map(|overlay| composite_dialog_color(overlay, palette.focus))
+        .unwrap_or(palette.focus.colorref);
 
     let mut border_rect = rect;
     let mut previous_font = None;
@@ -1380,7 +1380,7 @@ fn paint_primary_button<B: PrimaryButtonPaintBackend>(
     painted.is_ok() && restored
 }
 
-/// 활성 기본 작업 버튼의 `NM_CUSTOMDRAW`를 지면의 잉크색으로 한 줄 그립니다.
+/// 활성 기본 작업 버튼의 `NM_CUSTOMDRAW`를 Windows 강조색으로 한 줄 그립니다.
 ///
 /// 알림이 대상 버튼·prepaint 단계가 아니거나 버튼이 비활성 상태이면 기본 네이티브 렌더링을
 /// 유지합니다. `lparam`은 현재 `WM_NOTIFY`가 제공한 `NMCUSTOMDRAW`여야 하며, GDI 선택 객체와
@@ -1509,7 +1509,7 @@ fn composite_dialog_color(foreground: DialogColor, background: DialogColor) -> u
 
 /// 프로필 행의 선택 상태에 대응하는 불투명 Win32 표면색을 반환합니다.
 ///
-/// 일반 행은 단일 지면, 선택 행은 중립 보조 면을 사용합니다. 파란 선택선과 사용량 상태색의
+/// 일반 행은 기본 배경, 선택 행은 파란 선택 면을 사용합니다. 파란 선택선과 사용량 상태색의
 /// 의미를 분리하며 GDI 자원을 만들거나 외부 상태를 변경하지 않습니다.
 fn profile_row_surface_color(palette: DialogPalette, role: ProfileRowSurfaceRole) -> u32 {
     match role {
@@ -4741,7 +4741,7 @@ mod tests {
     }
 
     #[test]
-    fn editorial_profile_rows_render_names_states_and_focus_with_real_fonts() {
+    fn native_profile_rows_render_names_states_and_focus_with_real_fonts() {
         for theme in [DialogTheme::Light, DialogTheme::Dark] {
             for dpi in [96, 120, 144, 192] {
                 let resources = DialogVisualResources::new(dpi, theme);
