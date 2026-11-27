@@ -5,6 +5,10 @@
 Codex Usage Monitor is a small native Windows widget for checking your Codex usage at a glance.
 It shows the primary and secondary rate-limit windows in the taskbar, a floating widget, and the system tray.
 
+**Русский интерфейс.** Нажмите правой кнопкой мыши на значок CodexPeek в трее и
+выберите **Language → Русский**. Для выбора языка по настройкам Windows
+используйте **Язык → Автоматически**.
+
 ![Codex Usage Monitor taskbar widget](docs/images/taskbar-widget-en.png)
 
 ![Codex Usage Monitor context menu and profile selection](docs/images/context-menu-en.png)
@@ -249,7 +253,7 @@ Use the tray menu to refresh usage, choose a 1/5/10/15/30-minute refresh interva
 It also provides Windows startup, startup view, authentication refresh, automatic authentication refresh, language, and diagnostics settings.
 Choose **Widget: all monitors** or **Widget: primary monitor only** to control multi-monitor placement; the selection is remembered across restarts.
 
-By default, the UI language follows the Windows locale when it matches a supported language. You can also choose a language manually from the tray menu. Supported languages are Korean, English, Spanish, Brazilian Portuguese, Indonesian, Japanese, Hindi, German, French, Vietnamese, Turkish, and Arabic.
+By default, the UI language follows the Windows locale when it matches a supported language. You can also choose a language manually from the tray menu. Supported languages are Korean, English, Spanish, Brazilian Portuguese, Indonesian, Japanese, Hindi, German, French, Vietnamese, Turkish, Arabic, and Russian (Русский).
 
 The taskbar widget uses the Windows light/dark system theme for its text and lets the native taskbar material show through its background.
 

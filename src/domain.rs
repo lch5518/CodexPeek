@@ -95,7 +95,7 @@ impl ResetDateTime {
                 "{:02}-{:02}-{:04} ({weekday}) {:02}:{:02}",
                 self.day, self.month, self.year, self.hour, self.minute
             ),
-            Language::German | Language::Turkish => format!(
+            Language::German | Language::Turkish | Language::Russian => format!(
                 "{:02}.{:02}.{:04} ({weekday}) {:02}:{:02}",
                 self.day, self.month, self.year, self.hour, self.minute
             ),
@@ -156,19 +156,29 @@ impl UsageWindow {
 
     /// 사용량 창의 실제 길이 또는 종류별 대체 문구를 반환합니다.
     pub fn period_label(&self, language: Language) -> String {
-        let Some(duration_mins) = self.window_duration_mins.filter(|duration| *duration > 0) else {
+        self.period_label_with_width(language, false)
+    }
+
+    /// 위젯에 들어갈 짧은 기간 문구를 반환합니다.
+    pub(crate) fn compact_period_label(&self, language: Language) -> String {
+        self.period_label_with_width(language, true)
+    }
+
+    fn period_label_with_width(&self, language: Language, compact: bool) -> String {
+        let Some(minutes) = self.window_duration_mins.filter(|duration| *duration > 0) else {
             return window_kind_label(self.kind, language).to_owned();
         };
-
-        if duration_mins % (24 * 60) == 0 {
-            return format_duration_unit(duration_mins / (24 * 60), DurationUnit::Day, language);
+        let (value, unit) = if minutes % (24 * 60) == 0 {
+            (minutes / (24 * 60), DurationUnit::Day)
+        } else if minutes % 60 == 0 {
+            (minutes / 60, DurationUnit::Hour)
+        } else {
+            (minutes, DurationUnit::Minute)
+        };
+        if language == Language::Russian && !compact {
+            return format_russian_duration(value, unit);
         }
-
-        if duration_mins % 60 == 0 {
-            return format_duration_unit(duration_mins / 60, DurationUnit::Hour, language);
-        }
-
-        format_duration_unit(duration_mins, DurationUnit::Minute, language)
+        format_duration_unit(value, unit, language)
     }
 
     /// 현재 시각을 기준으로 다음 초기화까지 남은 시간을 반환합니다.
@@ -281,6 +291,7 @@ pub(crate) fn window_kind_label(kind: WindowKind, language: Language) -> &'stati
         Language::Vietnamese => ("Ngắn hạn", "Hàng tuần"),
         Language::Turkish => ("Kısa", "Haftalık"),
         Language::Arabic => ("قصير", "أسبوعي"),
+        Language::Russian => ("Краткий", "Длительный"),
     };
     match kind {
         WindowKind::Primary => primary,
@@ -302,6 +313,7 @@ pub(crate) fn reset_unavailable_label(language: Language) -> &'static str {
         Language::Vietnamese => "Không có thời gian đặt lại",
         Language::Turkish => "Sıfırlama zamanı yok",
         Language::Arabic => "وقت إعادة التعيين غير متاح",
+        Language::Russian => "Время сброса неизвестно",
     }
 }
 
@@ -329,6 +341,7 @@ fn reset_soon_label(language: Language) -> &'static str {
         Language::Vietnamese => "Sắp đặt lại",
         Language::Turkish => "Yakında sıfırlanır",
         Language::Arabic => "ستتم إعادة التعيين قريبًا",
+        Language::Russian => "Скоро сброс",
     }
 }
 
@@ -414,6 +427,10 @@ pub(crate) fn reset_credits_label(
             format!("إعادة ضبط كاملة: {available_count} (تنتهي في {expiry})")
         }
         (Language::Arabic, None) => format!("إعادة ضبط كاملة: {available_count}"),
+        (Language::Russian, Some(expiry)) => {
+            format!("Полный сброс: {available_count} (до {expiry})")
+        }
+        (Language::Russian, None) => format!("Полный сброс: {available_count}"),
     })
 }
 
@@ -441,11 +458,32 @@ fn format_remaining_duration(remaining: Duration, language: Language) -> String 
     format_duration_unit(minutes, DurationUnit::Minute, language)
 }
 
+/// 사용량 기간과 예측 시간에 쓰는 단위입니다.
 #[derive(Clone, Copy)]
-enum DurationUnit {
+pub(crate) enum DurationUnit {
     Day,
     Hour,
     Minute,
+}
+
+/// 러시아어 수량에 맞는 명사 형태(1, 2–4, 그 외)를 고릅니다.
+pub(crate) fn russian_plural(value: u64, forms: [&str; 3]) -> &str {
+    match (value % 10, value % 100) {
+        (_, 11..=14) => forms[2],
+        (1, _) => forms[0],
+        (2..=4, _) => forms[1],
+        _ => forms[2],
+    }
+}
+
+/// 기간을 나타내는 러시아어 단위의 기본형과 숫자를 반환합니다.
+pub(crate) fn format_russian_duration(value: u64, unit: DurationUnit) -> String {
+    let forms = match unit {
+        DurationUnit::Day => ["день", "дня", "дней"],
+        DurationUnit::Hour => ["час", "часа", "часов"],
+        DurationUnit::Minute => ["минута", "минуты", "минут"],
+    };
+    format!("{value} {}", russian_plural(value, forms))
 }
 
 fn localized_weekday(language: Language, weekday: usize) -> &'static str {
@@ -460,6 +498,7 @@ fn localized_weekday(language: Language, weekday: usize) -> &'static str {
     const FRENCH: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
     const VIETNAMESE: [&str; 7] = ["CN", "Th 2", "Th 3", "Th 4", "Th 5", "Th 6", "Th 7"];
     const TURKISH: [&str; 7] = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+    const RUSSIAN: [&str; 7] = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
     const ARABIC: [&str; 7] = [
         "الأحد",
         "الاثنين",
@@ -483,6 +522,7 @@ fn localized_weekday(language: Language, weekday: usize) -> &'static str {
         Language::Vietnamese => VIETNAMESE[weekday],
         Language::Turkish => TURKISH[weekday],
         Language::Arabic => ARABIC[weekday],
+        Language::Russian => RUSSIAN[weekday],
     }
 }
 
@@ -508,6 +548,7 @@ fn format_duration_unit(value: u64, unit: DurationUnit, language: Language) -> S
         (DurationUnit::Day, Language::Vietnamese) => format!("{value} ngày"),
         (DurationUnit::Day, Language::Turkish) => format!("{value} gün"),
         (DurationUnit::Day, Language::Arabic) => format!("{value} يوم"),
+        (DurationUnit::Day, Language::Russian) => format!("{value} д"),
         (DurationUnit::Hour, Language::Korean) => format!("{value}시간"),
         (DurationUnit::Hour, Language::English) => format!("{value}h"),
         (DurationUnit::Hour, Language::Spanish) => {
@@ -537,6 +578,7 @@ fn format_duration_unit(value: u64, unit: DurationUnit, language: Language) -> S
         (DurationUnit::Hour, Language::Vietnamese) => format!("{value} giờ"),
         (DurationUnit::Hour, Language::Turkish) => format!("{value} saat"),
         (DurationUnit::Hour, Language::Arabic) => format!("{value} ساعة"),
+        (DurationUnit::Hour, Language::Russian) => format!("{value} ч"),
         (DurationUnit::Minute, Language::Korean) => format!("{value}분"),
         (DurationUnit::Minute, Language::English) => format!("{value}m"),
         (DurationUnit::Minute, Language::Spanish) => {
@@ -557,6 +599,7 @@ fn format_duration_unit(value: u64, unit: DurationUnit, language: Language) -> S
         (DurationUnit::Minute, Language::Vietnamese) => format!("{value} phút"),
         (DurationUnit::Minute, Language::Turkish) => format!("{value} dakika"),
         (DurationUnit::Minute, Language::Arabic) => format!("{value} دقيقة"),
+        (DurationUnit::Minute, Language::Russian) => format!("{value} мин"),
     }
 }
 
@@ -628,6 +671,37 @@ mod tests {
         assert_eq!(day.period_label(Language::Korean), "1일");
         assert_eq!(hour.period_label(Language::Korean), "2시간");
         assert_eq!(minute.period_label(Language::Korean), "59분");
+    }
+
+    #[test]
+    fn russian_period_and_countdown_use_actual_duration_and_appropriate_units() {
+        let language = Language::Russian;
+        for (minutes, full, compact) in [
+            (1, "1 минута", "1 мин"),
+            (22, "22 минуты", "22 мин"),
+            (5 * 60, "5 часов", "5 ч"),
+            (21 * 60, "21 час", "21 ч"),
+            (22 * 60, "22 часа", "22 ч"),
+            (2 * 24 * 60, "2 дня", "2 д"),
+            (11 * 24 * 60, "11 дней", "11 д"),
+        ] {
+            let window =
+                UsageWindow::new(WindowKind::Secondary, 28.0, Some(minutes), None).unwrap();
+            assert_eq!(window.period_label(language), full);
+            assert_eq!(window.compact_period_label(language), compact);
+        }
+        let now = UNIX_EPOCH;
+        let reset_at = now + Duration::from_secs(2 * 3_600 + 14 * 60);
+        let window = UsageWindow::new(WindowKind::Primary, 28.0, None, Some(reset_at)).unwrap();
+        assert_eq!(window.remaining_label(language, now), "2 ч 14 мин");
+        assert_eq!(
+            window.remaining_label(language, reset_at + Duration::from_secs(1)),
+            "Скоро сброс"
+        );
+        assert_eq!(
+            window.remaining_label(language, now - Duration::from_secs(86_400)),
+            "1 д 2 ч"
+        );
     }
 
     #[test]

@@ -14,7 +14,10 @@ use crate::{
     aggregate_profile_diagnostics,
     codex::{locate_supported_cli, AppServerUsageProvider},
     diagnose_profile_contexts,
-    domain::{reset_credits_label, reset_unavailable_label, ResetDateTime},
+    domain::{
+        format_russian_duration, reset_credits_label, reset_unavailable_label, russian_plural,
+        DurationUnit, ResetDateTime,
+    },
     inspect_settings_for_diagnostics, localized_text, prepare_and_spawn_update_helper,
     run_update_helper_mode, signal_restart_ready, take_restart_ready_argument,
     windows::{
@@ -1187,7 +1190,7 @@ impl UiBackend for AppRuntime {
                 thread::spawn(move || {
                     if let Ok(summary) = run_safe_diagnostics(false) {
                         let (title, text) = summary.localized(language);
-                        let _ = native::show_diagnostic_summary(title, &text);
+                        let _ = native::show_localized_diagnostic_summary(title, &text, language);
                     }
                 });
             }
@@ -1483,8 +1486,19 @@ fn profile_usage_details(usage: &crate::CodexUsage, language: Language) -> Strin
             let reset = window
                 .resets_at
                 .and_then(|value| local_reset_time(value).ok())
-                .map(|datetime| datetime.localized_label(language))
-                .unwrap_or_else(|| reset_unavailable_label(language).to_owned());
+                .map(|datetime| datetime.localized_label(language));
+            if language == Language::Russian {
+                let reset = reset
+                    .map(|time| format!("{}: {time}", reset_at_label(language)))
+                    .unwrap_or_else(|| reset_unavailable_label(language).to_owned());
+                return format!(
+                    "{label} ({}): {} {:.0}% · {reset}",
+                    window.period_label(language),
+                    localized_text(LocalizationKey::UsageProfileUsed, language),
+                    window.used_percent,
+                );
+            }
+            let reset = reset.unwrap_or_else(|| reset_unavailable_label(language).to_owned());
             format!(
                 "{label} ({}): {:.0}% {} · {} {reset}",
                 window.period_label(language),
@@ -1645,7 +1659,7 @@ fn row_view_with_reset_time_and_forecast(
         window.used_percent
     };
     UsageRowView {
-        label: window.period_label(language),
+        label: window.compact_period_label(language),
         used_percent: window.used_percent,
         display_percent,
         percent_text: format!("{display_percent:.0}%"),
@@ -1747,14 +1761,14 @@ fn consumption_pace_view(
             let duration = pace_duration_text(metrics.observation_span, language);
             let recent = localized_text(LocalizationKey::UsagePaceRecentActivity, language)
                 .replace("{duration}", &duration)
-                .replace("{rise}", &compact_decimal(metrics.total_rise))
-                .replace("{rate}", &compact_decimal(metrics.hourly_rate));
+                .replace("{rise}", &compact_decimal(metrics.total_rise, language))
+                .replace("{rate}", &compact_decimal(metrics.hourly_rate, language));
             let outcome = if metrics.level == ConsumptionPaceLevel::Fast {
                 localized_text(LocalizationKey::UsagePaceBeforeReset, language).to_owned()
             } else {
                 localized_text(LocalizationKey::UsagePaceExpectedRemaining, language).replace(
                     "{percent}",
-                    &compact_decimal(metrics.expected_remaining_percent_at_reset),
+                    &compact_decimal(metrics.expected_remaining_percent_at_reset, language),
                 )
             };
             ConsumptionPaceView {
@@ -1809,22 +1823,28 @@ fn measuring_pace_view(
     }
 }
 
-fn compact_decimal(value: f64) -> String {
+fn compact_decimal(value: f64, language: Language) -> String {
     let value = value.max(0.0);
-    if value > 0.0 && value < 0.1 {
-        return "<0.1".to_owned();
-    }
     let rounded = (value * 10.0).round() / 10.0;
-    if rounded.fract().abs() < f64::EPSILON {
+    let text = if value > 0.0 && value < 0.1 {
+        "<0.1".to_owned()
+    } else if rounded.fract().abs() < f64::EPSILON {
         format!("{rounded:.0}")
     } else {
         format!("{rounded:.1}")
+    };
+    match language {
+        Language::Russian => text.replace('.', ","),
+        _ => text,
     }
 }
 
 fn pace_duration_text(duration: Duration, language: Language) -> String {
     forecast_duration_text(duration, language).unwrap_or_else(|| {
-        let days = ((duration.as_secs() + 43_200) / 86_400).max(1);
+        let days = (duration.as_secs().saturating_add(43_200) / 86_400).max(1);
+        if language == Language::Russian {
+            return format_russian_duration(days, DurationUnit::Day);
+        }
         let unit = localized_text(LocalizationKey::UsageForecastDayOther, language);
         match language {
             Language::Korean | Language::Japanese => format!("{days}{unit}"),
@@ -1896,35 +1916,39 @@ fn forecast_duration_text(duration: Duration, language: Language) -> Option<Stri
     if seconds >= 7 * 24 * 60 * 60 {
         return None;
     }
-    let (value, key) = if seconds < 60 * 60 {
+    let (value, unit, singular, plural) = if seconds < 60 * 60 {
         (
             ((seconds + 30) / 60).max(1),
-            if ((seconds + 30) / 60).max(1) == 1 {
-                LocalizationKey::UsageForecastMinuteOne
-            } else {
-                LocalizationKey::UsageForecastMinuteOther
-            },
+            DurationUnit::Minute,
+            LocalizationKey::UsageForecastMinuteOne,
+            LocalizationKey::UsageForecastMinuteOther,
         )
     } else if seconds < 24 * 60 * 60 {
         (
             ((seconds + 1_800) / 3_600).max(1),
-            if ((seconds + 1_800) / 3_600).max(1) == 1 {
-                LocalizationKey::UsageForecastHourOne
-            } else {
-                LocalizationKey::UsageForecastHourOther
-            },
+            DurationUnit::Hour,
+            LocalizationKey::UsageForecastHourOne,
+            LocalizationKey::UsageForecastHourOther,
         )
     } else {
         (
             ((seconds + 43_200) / 86_400).max(1),
-            if ((seconds + 43_200) / 86_400).max(1) == 1 {
-                LocalizationKey::UsageForecastDayOne
-            } else {
-                LocalizationKey::UsageForecastDayOther
-            },
+            DurationUnit::Day,
+            LocalizationKey::UsageForecastDayOne,
+            LocalizationKey::UsageForecastDayOther,
         )
     };
-    let unit = localized_text(key, language);
+    if language == Language::Russian {
+        // 러시아어에서 «через»와 «за» 뒤의 분 단위는 대격을 사용합니다.
+        return Some(match unit {
+            DurationUnit::Minute => {
+                let noun = russian_plural(value, ["минуту", "минуты", "минут"]);
+                format!("{value} {noun}")
+            }
+            _ => format_russian_duration(value, unit),
+        });
+    }
+    let unit = localized_text(if value == 1 { singular } else { plural }, language);
     let duration = match language {
         Language::Korean | Language::Japanese => format!("{value}{unit}"),
         _ => format!("{value} {unit}"),
@@ -2049,6 +2073,7 @@ fn last_success_text(seconds: u64, language: Language) -> String {
         Language::Vietnamese => format!("Thành công lần cuối {seconds} giây trước"),
         Language::Turkish => format!("Son başarılı deneme {seconds} sn önce"),
         Language::Arabic => format!("آخر نجاح قبل {seconds} ثانية"),
+        Language::Russian => format!("Данные получены {seconds} с назад"),
     }
 }
 
@@ -2066,6 +2091,7 @@ const fn taskbar_label(show_remaining: bool, language: Language) -> &'static str
         (true, Language::Vietnamese) => "Mức dùng còn lại",
         (true, Language::Turkish) => "Kalan kullanım",
         (true, Language::Arabic) => "الاستخدام المتبقي",
+        (true, Language::Russian) => "Осталось",
         (false, Language::Korean) => "주간 사용량",
         (false, Language::English) => "Weekly usage",
         (false, Language::Spanish) => "Uso semanal",
@@ -2078,6 +2104,7 @@ const fn taskbar_label(show_remaining: bool, language: Language) -> &'static str
         (false, Language::Vietnamese) => "Mức dùng hằng tuần",
         (false, Language::Turkish) => "Haftalık kullanım",
         (false, Language::Arabic) => "الاستخدام الأسبوعي",
+        (false, Language::Russian) => "Использовано",
     }
 }
 
@@ -2095,6 +2122,7 @@ const fn codex_usage_title(language: Language) -> &'static str {
         Language::Vietnamese => "Mức dùng Codex",
         Language::Turkish => "Codex kullanımı",
         Language::Arabic => "استخدام Codex",
+        Language::Russian => "Использование Codex",
     }
 }
 
@@ -2110,7 +2138,7 @@ const fn taskbar_usage_title_prefix(language: Language) -> &'static str {
         Language::Vietnamese => "Mức dùng Codex",
         Language::Turkish => "Codex kullanımı",
         Language::Arabic => "استخدام Codex",
-        Language::Korean | Language::English => codex_usage_title(language),
+        Language::Korean | Language::English | Language::Russian => codex_usage_title(language),
     }
 }
 
@@ -2128,6 +2156,7 @@ pub(crate) const fn current_usage_label(language: Language) -> &'static str {
         Language::Vietnamese => "Mức dùng hiện tại",
         Language::Turkish => "Geçerli kullanım",
         Language::Arabic => "الاستخدام الحالي",
+        Language::Russian => "Использовано",
     }
 }
 
@@ -2145,6 +2174,7 @@ pub(crate) const fn remaining_usage_label(language: Language) -> &'static str {
         Language::Vietnamese => "Còn lại",
         Language::Turkish => "Kalan",
         Language::Arabic => "المتبقي",
+        Language::Russian => "Осталось",
     }
 }
 
@@ -2162,6 +2192,7 @@ pub(crate) const fn reset_at_label(language: Language) -> &'static str {
         Language::Vietnamese => "Đặt lại lúc",
         Language::Turkish => "Sıfırlanma zamanı",
         Language::Arabic => "إعادة التعيين عند",
+        Language::Russian => "Сброс",
     }
 }
 
@@ -2179,6 +2210,7 @@ pub(crate) const fn status_label(language: Language) -> &'static str {
         Language::Vietnamese => "Trạng thái",
         Language::Turkish => "Durum",
         Language::Arabic => "الحالة",
+        Language::Russian => "Состояние",
     }
 }
 
@@ -2196,6 +2228,7 @@ fn taskbar_risk_text(percent: f64, language: Language) -> &'static str {
         (value, Language::Vietnamese) if value >= 90.0 => "Nghiêm trọng",
         (value, Language::Turkish) if value >= 90.0 => "Kritik",
         (value, Language::Arabic) if value >= 90.0 => "حرج",
+        (value, Language::Russian) if value >= 90.0 => "Критический расход",
         (value, Language::Korean) if value >= 70.0 => "주의",
         (value, Language::English) if value >= 70.0 => "Warning",
         (value, Language::Spanish) if value >= 70.0 => "Advertencia",
@@ -2208,6 +2241,7 @@ fn taskbar_risk_text(percent: f64, language: Language) -> &'static str {
         (value, Language::Vietnamese) if value >= 70.0 => "Cảnh báo",
         (value, Language::Turkish) if value >= 70.0 => "Uyarı",
         (value, Language::Arabic) if value >= 70.0 => "تحذير",
+        (value, Language::Russian) if value >= 70.0 => "Высокий расход",
         (_, Language::Korean) => "안정",
         (_, Language::English) => "Healthy",
         (_, Language::Spanish) => "Correcto",
@@ -2220,6 +2254,7 @@ fn taskbar_risk_text(percent: f64, language: Language) -> &'static str {
         (_, Language::Vietnamese) => "Ổn định",
         (_, Language::Turkish) => "Sağlıklı",
         (_, Language::Arabic) => "سليم",
+        (_, Language::Russian) => "В норме",
     }
 }
 
@@ -2452,6 +2487,17 @@ const fn diagnostic_copy(language: Language) -> DiagnosticCopy {
             login: "تسجيل الدخول",
             response_format: "تنسيق الاستجابة",
         },
+        Language::Russian => DiagnosticCopy {
+            title: "Диагностика монитора использования Codex",
+            settings: "Настройки",
+            proxy: "Прокси",
+            login_file: "Файл авторизации",
+            taskbar: "Совместимость с панелью задач",
+            cli: "Codex CLI",
+            app_server: "Сервер приложения",
+            login: "Вход",
+            response_format: "Формат ответа",
+        },
     }
 }
 
@@ -2481,6 +2527,8 @@ const fn pass_fail(value: bool, language: Language) -> &'static str {
         (false, Language::Turkish) => "dikkat gerekiyor",
         (true, Language::Arabic) => "حسنًا",
         (false, Language::Arabic) => "يتطلب الانتباه",
+        (true, Language::Russian) => "В норме",
+        (false, Language::Russian) => "Требуется проверка",
     }
 }
 
@@ -2510,6 +2558,8 @@ const fn proxy_presence(present: bool, language: Language) -> &'static str {
         (false, Language::Turkish) => "yok",
         (true, Language::Arabic) => "تم الاكتشاف",
         (false, Language::Arabic) => "لا يوجد",
+        (true, Language::Russian) => "Обнаружен",
+        (false, Language::Russian) => "Отсутствует",
     }
 }
 
@@ -2542,6 +2592,7 @@ const fn diagnostic_ok(language: Language) -> &'static str {
         Language::Vietnamese => "OK",
         Language::Turkish => "Tamam",
         Language::Arabic => "حسنًا",
+        Language::Russian => "В норме",
     }
 }
 
@@ -2559,6 +2610,7 @@ const fn diagnostic_unavailable(language: Language) -> &'static str {
         Language::Vietnamese => "không khả dụng",
         Language::Turkish => "kullanılamıyor",
         Language::Arabic => "غير متاح",
+        Language::Russian => "Недоступно",
     }
 }
 
@@ -2576,6 +2628,7 @@ const fn diagnostic_failed(language: Language) -> &'static str {
         Language::Vietnamese => "thất bại",
         Language::Turkish => "başarısız",
         Language::Arabic => "فشل",
+        Language::Russian => "Ошибка",
     }
 }
 
@@ -2593,6 +2646,7 @@ const fn diagnostic_invalid(language: Language) -> &'static str {
         Language::Vietnamese => "không hợp lệ",
         Language::Turkish => "geçersiz",
         Language::Arabic => "غير صالح",
+        Language::Russian => "Некорректно",
     }
 }
 
@@ -2610,6 +2664,7 @@ const fn diagnostic_not_checked(language: Language) -> &'static str {
         Language::Vietnamese => "chưa kiểm tra",
         Language::Turkish => "kontrol edilmedi",
         Language::Arabic => "لم يتم الفحص",
+        Language::Russian => "Без проверки",
     }
 }
 
@@ -2627,6 +2682,7 @@ const fn diagnostic_unknown(language: Language) -> &'static str {
         Language::Vietnamese => "không xác định",
         Language::Turkish => "bilinmiyor",
         Language::Arabic => "غير معروف",
+        Language::Russian => "Неизвестно",
     }
 }
 
@@ -2819,20 +2875,6 @@ mod tests {
         UsageError, UsageForecastService, UsageHistoryStore, UsageLevel, UsageProfileId,
         UsageProfileRoot, UsageWindow, WindowKind,
     };
-    const ALL_LANGUAGES: [Language; 12] = [
-        Language::Korean,
-        Language::English,
-        Language::Spanish,
-        Language::PortugueseBrazil,
-        Language::Indonesian,
-        Language::Japanese,
-        Language::Hindi,
-        Language::German,
-        Language::French,
-        Language::Vietnamese,
-        Language::Turkish,
-        Language::Arabic,
-    ];
 
     fn usage_window(used_percent: f64) -> UsageWindow {
         UsageWindow::new(WindowKind::Secondary, used_percent, None, None).unwrap()
@@ -3492,7 +3534,7 @@ mod tests {
             response_format: "invalid",
         };
 
-        for language in ALL_LANGUAGES {
+        for &language in Language::ALL {
             assert!(!last_success_text(42, language).trim().is_empty());
             assert!(last_success_text(42, language).contains("42"));
             assert!(!pass_fail(true, language).trim().is_empty());
@@ -3724,6 +3766,82 @@ mod tests {
         assert_eq!(unavailable.reset_text, "Reset unavailable");
     }
 
+    #[test]
+    fn russian_usage_labels_follow_percentage_mode_and_keep_reset_time_absolute() {
+        use crate::windows::popup::{tests::ready_view, usage_popup_presentation};
+
+        let language = Language::Russian;
+        let window = UsageWindow::new(WindowKind::Primary, 28.0, Some(135), None).unwrap();
+        let reset = Some(ResetDateTime::new(2026, 7, 27, 1, 18, 30).unwrap());
+        let mut view = ready_view();
+        view.secondary = None;
+        for (remaining, label, percent) in
+            [(false, "Использовано", "28%"), (true, "Осталось", "72%")]
+        {
+            let row = row_view_with_reset_time(&window, language, remaining, reset);
+            assert_eq!(row.label, "135 мин");
+            assert_eq!(row.reset_text, "27.07.2026 (пн) 18:30");
+            let copy = taskbar_copy(Some(&row), language, "Обновление данных", remaining, None);
+            assert_eq!(copy.label, label);
+            assert!(copy.tooltip.contains("Использовано: 28% · Осталось: 72%"));
+            assert!(copy.tooltip.contains("Сброс: 27.07.2026 (пн) 18:30"));
+
+            view.primary = Some(row);
+            view.show_remaining_percent = remaining;
+            let popup = usage_popup_presentation(&view, language);
+            assert_eq!(popup.lead_label, label);
+            assert_eq!(popup.lead_percent, percent);
+        }
+    }
+
+    #[test]
+    fn russian_profile_and_tooltip_explain_missing_usage_and_cli_failure() {
+        let language = Language::Russian;
+        let profile = profile_usage_presentation_for_snapshot(None, false, language);
+        assert_eq!(profile.summary, "Данные об использовании недоступны");
+        let status = UsageError::CliNotFound.user_message(language);
+        let tooltip = taskbar_copy(None, language, status, false, None).tooltip;
+        assert_eq!(
+            tooltip,
+            "Использование Codex\nСостояние: Codex CLI не найден."
+        );
+        assert_eq!(
+            UsageError::RpcTimeout.user_message(language),
+            "Codex не ответил вовремя."
+        );
+    }
+
+    #[test]
+    fn russian_forecast_and_pace_use_declined_durations() {
+        let lang = Language::Russian;
+        for (hours, expected) in [
+            (1, "1 час"),
+            (2, "2 часа"),
+            (5, "5 часов"),
+            (11, "11 часов"),
+            (21, "21 час"),
+            (22, "22 часа"),
+        ] {
+            let duration = Duration::from_secs(hours * 3_600);
+            assert_eq!(
+                forecast_duration_text(duration, lang).as_deref(),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            forecast_duration_text(Duration::from_secs(60), lang).as_deref(),
+            Some("1 минуту")
+        );
+        assert_eq!(
+            forecast_duration_text(Duration::from_secs(22 * 60), lang).as_deref(),
+            Some("22 минуты")
+        );
+        assert_eq!(
+            super::pace_duration_text(Duration::from_secs(22 * 86_400), lang),
+            "22 дня"
+        );
+    }
+
     fn sample_forecast(
         now: SystemTime,
         seconds_until_exhaustion: u64,
@@ -3821,8 +3939,10 @@ mod tests {
             insufficient.summary,
             "사용량 변화가 적어 소진 시점을 예측할 수 없음"
         );
-        assert_eq!(compact_decimal(0.04), "<0.1");
-        assert_eq!(compact_decimal(0.0), "0");
+        assert_eq!(compact_decimal(0.04, Language::English), "<0.1");
+        assert_eq!(compact_decimal(0.0, Language::English), "0");
+        assert_eq!(compact_decimal(0.04, Language::Russian), "<0,1");
+        assert_eq!(compact_decimal(1.5, Language::Russian), "1,5");
     }
 
     #[test]
@@ -3991,7 +4111,7 @@ mod tests {
             forecast_duration_text(Duration::from_secs(60), Language::Japanese).as_deref(),
             Some("1分")
         );
-        for language in ALL_LANGUAGES {
+        for &language in Language::ALL {
             let singular = forecast_duration_text(Duration::from_secs(60), language).unwrap();
             let plural = forecast_duration_text(Duration::from_secs(2 * 60), language).unwrap();
             assert!(singular.contains('1'), "{language:?}: {singular}");

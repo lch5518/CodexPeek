@@ -986,7 +986,8 @@ pub(crate) unsafe fn show_profile_manager_owned_live(
 /// 사용량 프로필 흐름의 메시지를 경로별 배치 계약에 따라 표시합니다.
 ///
 /// `route`는 호출 출처를 구분하며, `owner`, 문구, 제목, 버튼 스타일은 변경하지 않고 플랫폼의
-/// 공통 메시지 상자 경계로 전달합니다. 반환값은 원래 `MessageBoxW` 결과를 보존합니다.
+/// 공통 메시지 상자 경계로 전달합니다. `language`는 기본 버튼 문구에 적용합니다.
+/// 반환값은 원래 `MessageBoxW` 결과를 보존합니다.
 ///
 /// # Safety
 ///
@@ -999,10 +1000,11 @@ pub(crate) unsafe fn show_profile_message(
     message: &str,
     title: &str,
     style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+    language: Language,
 ) -> io::Result<windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_RESULT> {
     match profile_message_placement(route) {
         ProfileMessagePlacement::Centered => {
-            show_centered_profile_message(owner, message, title, style)
+            show_centered_profile_message(owner, message, title, style, language)
         }
     }
 }
@@ -1011,6 +1013,7 @@ pub(crate) unsafe fn show_profile_message(
 ///
 /// 유효하고 보이는 `owner`가 있으면 그 창의 모니터를 사용하고, 그렇지 않으면 커서 모니터를
 /// 사용합니다. 모니터 조회, 훅 설치, 창 이동 실패는 Windows 기본 배치로 안전하게 대체됩니다.
+/// 기본 버튼 문구에는 `language`를 적용합니다.
 ///
 /// # Safety
 ///
@@ -1022,8 +1025,9 @@ pub(crate) unsafe fn show_centered_profile_message(
     message: &str,
     title: &str,
     style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+    language: Language,
 ) -> io::Result<windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_RESULT> {
-    platform::show_centered_profile_message(owner, message, title, style)
+    platform::show_centered_profile_message(owner, message, title, style, language)
 }
 
 #[cfg(windows)]

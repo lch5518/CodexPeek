@@ -8,6 +8,8 @@ use super::{profile_dialog::ProfileDialogAction, UiAction, UiBackend, UiSettings
 mod platform;
 #[cfg(windows)]
 mod usage_popup;
+#[cfg(windows)]
+pub(crate) use platform::localized_message_box;
 
 /// 프로세스가 살아 있는 동안 이름 있는 뮤텍스를 보유하는 단일 인스턴스 가드입니다.
 pub struct SingleInstanceGuard {
@@ -199,13 +201,22 @@ pub fn user_ui_language() -> (Option<u16>, Option<String>) {
 
 /// 진단 결과를 민감 정보가 없는 모달 Windows 대화 상자로 표시합니다.
 pub fn show_diagnostic_summary(title: &str, message: &str) -> io::Result<()> {
+    show_localized_diagnostic_summary(title, message, crate::Language::English)
+}
+
+/// 진단 요약과 기본 버튼을 선택한 UI 언어로 표시합니다.
+pub(crate) fn show_localized_diagnostic_summary(
+    title: &str,
+    message: &str,
+    language: crate::Language,
+) -> io::Result<()> {
     #[cfg(windows)]
     unsafe {
-        platform::show_diagnostic_summary(title, message)
+        platform::show_diagnostic_summary(title, message, language)
     }
     #[cfg(not(windows))]
     {
-        let _ = (title, message);
+        let _ = (title, message, language);
         Err(io::Error::new(io::ErrorKind::Unsupported, "Windows only"))
     }
 }

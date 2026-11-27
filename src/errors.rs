@@ -38,6 +38,7 @@ struct LocalizedMessages {
     vietnamese: &'static str,
     turkish: &'static str,
     arabic: &'static str,
+    russian: &'static str,
 }
 
 impl LocalizedMessages {
@@ -55,6 +56,7 @@ impl LocalizedMessages {
             Language::Vietnamese => self.vietnamese,
             Language::Turkish => self.turkish,
             Language::Arabic => self.arabic,
+            Language::Russian => self.russian,
         }
     }
 }
@@ -92,6 +94,7 @@ impl UsageError {
                 vietnamese: "Không tìm thấy Codex CLI.",
                 turkish: "Codex CLI bulunamadı.",
                 arabic: "لم يتم العثور على Codex CLI.",
+                russian: "Codex CLI не найден.",
             },
             Self::UnsupportedCli => LocalizedMessages {
                 korean: "지원하지 않는 Codex CLI 버전입니다.",
@@ -106,6 +109,7 @@ impl UsageError {
                 vietnamese: "Phiên bản Codex CLI đã cài đặt không được hỗ trợ.",
                 turkish: "Yüklü Codex CLI sürümü desteklenmiyor.",
                 arabic: "إصدار Codex CLI المثبت غير مدعوم.",
+                russian: "Установленная версия Codex CLI не поддерживается.",
             },
             Self::AppServerStartFailed => LocalizedMessages {
                 korean: "Codex 앱 서버를 시작할 수 없습니다.",
@@ -120,6 +124,7 @@ impl UsageError {
                 vietnamese: "Không thể khởi động máy chủ ứng dụng Codex.",
                 turkish: "Codex uygulama sunucusu başlatılamadı.",
                 arabic: "تعذر بدء خادم تطبيق Codex.",
+                russian: "Не удалось запустить сервер приложения Codex.",
             },
             Self::RpcTimeout => LocalizedMessages {
                 korean: "Codex 응답 시간이 초과되었습니다.",
@@ -134,6 +139,7 @@ impl UsageError {
                 vietnamese: "Codex không phản hồi kịp thời.",
                 turkish: "Codex zamanında yanıt vermedi.",
                 arabic: "لم يستجب Codex في الوقت المناسب.",
+                russian: "Codex не ответил вовремя.",
             },
             Self::RpcOverloaded => LocalizedMessages {
                 korean: "Codex 요청이 혼잡합니다. 잠시 후 다시 시도하세요.",
@@ -148,6 +154,7 @@ impl UsageError {
                 vietnamese: "Codex đang bận. Vui lòng thử lại sau ít phút.",
                 turkish: "Codex meşgul. Lütfen kısa süre sonra tekrar deneyin.",
                 arabic: "Codex مشغول. يرجى المحاولة مرة أخرى قريبًا.",
+                russian: "Codex занят. Повторите попытку чуть позже.",
             },
             Self::NotLoggedIn => LocalizedMessages {
                 korean: "Codex에 로그인되어 있지 않습니다.",
@@ -162,6 +169,7 @@ impl UsageError {
                 vietnamese: "Bạn chưa đăng nhập vào Codex.",
                 turkish: "Codex'te oturum açmadınız.",
                 arabic: "لم تسجل الدخول إلى Codex.",
+                russian: "Войдите в Codex, чтобы получать данные об использовании.",
             },
             Self::AuthenticationExpired => LocalizedMessages {
                 korean: "Codex 인증이 만료되었습니다.",
@@ -176,6 +184,7 @@ impl UsageError {
                 vietnamese: "Xác thực Codex đã hết hạn.",
                 turkish: "Codex kimlik doğrulamasının süresi doldu.",
                 arabic: "انتهت صلاحية مصادقة Codex.",
+                russian: "Срок действия авторизации Codex истёк. Войдите снова.",
             },
             Self::InvalidResponse => LocalizedMessages {
                 korean: "Codex 응답이 올바르지 않습니다.",
@@ -190,6 +199,7 @@ impl UsageError {
                 vietnamese: "Codex trả về phản hồi không hợp lệ.",
                 turkish: "Codex geçersiz bir yanıt döndürdü.",
                 arabic: "أعاد Codex استجابة غير صالحة.",
+                russian: "Codex вернул некорректный ответ.",
             },
             Self::RateLimitUnavailable => LocalizedMessages {
                 korean: "사용량 한도 정보를 사용할 수 없습니다.",
@@ -204,6 +214,7 @@ impl UsageError {
                 vietnamese: "Thông tin giới hạn sử dụng không có sẵn.",
                 turkish: "Kullanım sınırı bilgisi kullanılamıyor.",
                 arabic: "معلومات حد الاستخدام غير متاحة.",
+                russian: "Сведения о лимитах недоступны.",
             },
             Self::RequestFailed => LocalizedMessages {
                 korean: "사용량 요청에 실패했습니다.",
@@ -218,6 +229,7 @@ impl UsageError {
                 vietnamese: "Yêu cầu sử dụng không thành công.",
                 turkish: "Kullanım isteği başarısız oldu.",
                 arabic: "فشل طلب الاستخدام.",
+                russian: "Не удалось получить данные об использовании.",
             },
         };
         messages.for_language(language)
