@@ -54,11 +54,11 @@ use codex_usage_monitor::{
         MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
         MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
         MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
-        MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
-        MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH,
-        MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
-        MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_USAGE_FORECAST_CLEAR_HISTORY,
-        MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
+        MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_RUSSIAN, MENU_LANGUAGE_SPANISH,
+        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES,
+        MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET,
+        MENU_TASKBAR_ALL, MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK,
+        MENU_USAGE_FORECAST_CLEAR_HISTORY, MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
     },
     Language, LanguagePreference, LocalizationKey, ProfileValidationError, StartupView,
     TaskbarDisplayMode, UpdatePresentationStatus, UsageLevel, UsageProfileId,
@@ -979,6 +979,7 @@ fn tray_menu_groups_major_settings_into_submenus() {
             MENU_LANGUAGE_VIETNAMESE,
             MENU_LANGUAGE_TURKISH,
             MENU_LANGUAGE_ARABIC,
+            MENU_LANGUAGE_RUSSIAN,
         ]
     );
 }
@@ -1056,6 +1057,7 @@ fn tray_menu_entries_localize_english_labels_and_preserve_state() {
             (MENU_LANGUAGE_VIETNAMESE, "Tiếng Việt".to_string(), false),
             (MENU_LANGUAGE_TURKISH, "Türkçe".to_string(), false),
             (MENU_LANGUAGE_ARABIC, "العربية".to_string(), false),
+            (MENU_LANGUAGE_RUSSIAN, "Русский".to_string(), false),
             (MENU_DIAGNOSTICS, "Diagnostics".to_string(), false),
             (MENU_UPDATE_CHECK, "Update check failed".to_string(), false),
             (MENU_EXIT, "Exit".to_string(), false),
@@ -1467,6 +1469,10 @@ fn every_menu_command_maps_to_a_typed_action() {
             MENU_LANGUAGE_ARABIC,
             UiAction::SetLanguage(LanguagePreference::Arabic),
         ),
+        (
+            MENU_LANGUAGE_RUSSIAN,
+            UiAction::SetLanguage(LanguagePreference::Russian),
+        ),
         (MENU_DIAGNOSTICS, UiAction::RunDiagnostics),
         (MENU_UPDATE_CHECK, UiAction::CheckForUpdates),
         (MENU_WIDGET_VISIBLE, UiAction::ToggleWidget),
@@ -1553,6 +1559,7 @@ fn windows_ui_language_resolves_auto_without_process_environment() {
         (0x042a, Language::Vietnamese),
         (0x041f, Language::Turkish),
         (0x0401, Language::Arabic),
+        (0x0419, Language::Russian),
     ];
     for (langid, expected) in langid_cases {
         assert_eq!(
@@ -1576,6 +1583,9 @@ fn windows_ui_language_resolves_auto_without_process_environment() {
         ("vi-VN", Language::Vietnamese),
         ("tr-TR", Language::Turkish),
         ("ar-SA", Language::Arabic),
+        ("ru", Language::Russian),
+        ("ru-RU", Language::Russian),
+        ("RU_ru", Language::Russian),
     ];
     for (locale, expected) in locale_cases {
         assert_eq!(
@@ -1604,6 +1614,18 @@ fn windows_ui_language_resolves_auto_without_process_environment() {
     assert_eq!(
         resolve_windows_language(LanguagePreference::Arabic, Some(0x0409), Some("en-US")),
         Language::Arabic
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::English, Some(0x0419), Some("ru-RU")),
+        Language::English
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Auto, Some(0), Some("ru-RU")),
+        Language::Russian
+    );
+    assert_eq!(
+        resolve_windows_language(LanguagePreference::Russian, Some(0x0409), Some("en-US")),
+        Language::Russian
     );
     assert_eq!(
         resolve_windows_language(LanguagePreference::Auto, None, None),

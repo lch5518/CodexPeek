@@ -46,6 +46,7 @@ fn schema_v1_migrates_to_system_profile_and_is_persisted_as_v2() {
     assert_eq!(loaded.schema_version, 2);
     assert_eq!(loaded.usage_profiles.selected(), UsageProfileId::System);
     assert_eq!(loaded.refresh_interval_minutes, 15);
+    assert_eq!(loaded.language, LanguagePreference::Korean);
     assert!(loaded.usage_forecast_enabled);
     let persisted: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join("settings.json")).unwrap()).unwrap();
@@ -342,17 +343,22 @@ fn language_preferences_round_trip_all_persisted_variants() {
         (LanguagePreference::Vietnamese, "vietnamese"),
         (LanguagePreference::Turkish, "turkish"),
         (LanguagePreference::Arabic, "arabic"),
+        (LanguagePreference::Russian, "russian"),
     ];
     for (preference, persisted) in cases {
         let root = test_root(persisted);
         let store = SettingsStore::for_root(&root);
-        let settings = Settings {
+        let mut settings = Settings {
             language: preference,
+            refresh_interval_minutes: 15,
+            show_remaining_percent: true,
             ..Settings::default()
         };
+        let profile = settings.usage_profiles.add("Work").unwrap().id();
+        settings.usage_profiles.select(profile).unwrap();
 
         store.save(&settings).unwrap();
-        assert_eq!(store.load().unwrap().language, preference);
+        assert_eq!(SettingsStore::for_root(&root).load().unwrap(), settings);
         let json: serde_json::Value =
             serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
         assert_eq!(json["schema_version"], 2);

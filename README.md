@@ -249,7 +249,7 @@ Use the tray menu to refresh usage, choose a 1/5/10/15/30-minute refresh interva
 It also provides Windows startup, startup view, authentication refresh, automatic authentication refresh, language, and diagnostics settings.
 Choose **Widget: all monitors** or **Widget: primary monitor only** to control multi-monitor placement; the selection is remembered across restarts.
 
-By default, the UI language follows the Windows locale when it matches a supported language. You can also choose a language manually from the tray menu. Supported languages are Korean, English, Spanish, Brazilian Portuguese, Indonesian, Japanese, Hindi, German, French, Vietnamese, Turkish, and Arabic.
+By default, the UI language follows the Windows locale when it matches a supported language. You can also choose a language manually from the tray menu. Supported languages are Korean, English, Spanish, Brazilian Portuguese, Indonesian, Japanese, Hindi, German, French, Vietnamese, Turkish, Arabic, and Russian (Русский).
 
 The taskbar widget uses the Windows light/dark system theme for its text and lets the native taskbar material show through its background.
 

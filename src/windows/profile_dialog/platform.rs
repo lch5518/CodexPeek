@@ -40,9 +40,9 @@ use windows::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
                 EnumChildWindows, GetClientRect, GetCursorPos, GetDlgItem, GetMessageW,
                 GetWindowLongPtrW, GetWindowRect, GetWindowTextW, IsDialogMessageW, IsWindow,
-                IsWindowVisible, KillTimer, LoadCursorW, MessageBoxW, PostQuitMessage,
-                RegisterClassW, SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-                SetWindowPos, SetWindowTextW, SetWindowsHookExW, ShowWindow, TranslateMessage,
+                IsWindowVisible, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassW,
+                SendMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW, SetWindowPos,
+                SetWindowTextW, SetWindowsHookExW, ShowWindow, TranslateMessage,
                 UnhookWindowsHookEx, BS_DEFPUSHBUTTON, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW,
                 CW_USEDEFAULT, GWLP_USERDATA, HCBT_ACTIVATE, HHOOK, HMENU, IDCANCEL, IDC_ARROW,
                 IDOK, IDYES, LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
@@ -2229,7 +2229,7 @@ trait ProfileMessagePresenter {
     ) -> io::Result<MESSAGEBOX_RESULT>;
 }
 
-struct CenteredProfileMessagePresenter;
+struct CenteredProfileMessagePresenter(Language);
 
 impl ProfileMessagePresenter for CenteredProfileMessagePresenter {
     fn present(
@@ -2242,7 +2242,7 @@ impl ProfileMessagePresenter for CenteredProfileMessagePresenter {
     ) -> io::Result<MESSAGEBOX_RESULT> {
         // SAFETY: 제품 호출자는 기존과 동일하게 살아 있는 모달 소유자 또는 0 핸들을 전달하며,
         // presenter는 입력 문자열을 공통 경계에서 UTF-16 소유 버퍼로 복사합니다.
-        unsafe { show_profile_message(route, owner, message, title, style) }
+        unsafe { show_profile_message(route, owner, message, title, style, self.0) }
     }
 }
 
@@ -3555,7 +3555,7 @@ unsafe fn submit_rename_label(
     };
     let value = read_profile_label(edit)?;
     let action = (*state).controller.submit_rename(&value);
-    let mut presenter = CenteredProfileMessagePresenter;
+    let mut presenter = CenteredProfileMessagePresenter(language);
     handle_manager_rename_result_with_presenter(action, hwnd, language, &mut presenter)
 }
 
@@ -3643,7 +3643,7 @@ unsafe fn submit_add_dialog(hwnd: HWND, state: *mut AddDialogState) {
         }
     };
     let result = add_profile_prompt_result(&value, AddProfilePromptCommand::Submit);
-    let mut presenter = CenteredProfileMessagePresenter;
+    let mut presenter = CenteredProfileMessagePresenter((*state).language);
     handle_add_profile_prompt_result_with_presenter(hwnd, state, result, &mut presenter);
 }
 
@@ -3728,7 +3728,7 @@ unsafe fn show_add_dialog_warning(
     message_key: LocalizationKey,
     style: MESSAGEBOX_STYLE,
 ) {
-    let mut presenter = CenteredProfileMessagePresenter;
+    let mut presenter = CenteredProfileMessagePresenter((*state).language);
     show_add_dialog_warning_with_presenter(hwnd, state, message_key, style, &mut presenter);
 }
 
@@ -3867,7 +3867,7 @@ pub(super) unsafe fn confirm_profile_login_owned(
     label: &str,
     language: Language,
 ) -> io::Result<bool> {
-    let mut presenter = CenteredProfileMessagePresenter;
+    let mut presenter = CenteredProfileMessagePresenter(language);
     confirm_profile_login_with_presenter(owner, label, language, &mut presenter)
 }
 
@@ -3896,7 +3896,7 @@ unsafe fn confirm_profile_delete_owned(
     label: &str,
     language: Language,
 ) -> io::Result<bool> {
-    let mut presenter = CenteredProfileMessagePresenter;
+    let mut presenter = CenteredProfileMessagePresenter(language);
     confirm_profile_delete_with_presenter(owner, label, language, &mut presenter)
 }
 
@@ -3921,7 +3921,7 @@ fn confirm_profile_delete_with_presenter<P: ProfileMessagePresenter>(
 }
 
 unsafe fn show_safe_error(owner: HWND, language: Language) {
-    let mut presenter = CenteredProfileMessagePresenter;
+    let mut presenter = CenteredProfileMessagePresenter(language);
     show_safe_error_with_presenter(owner, language, &mut presenter);
 }
 
@@ -3945,17 +3945,19 @@ pub(super) unsafe fn show_centered_profile_message(
     message: &str,
     title: &str,
     style: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE,
+    language: Language,
 ) -> io::Result<windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_RESULT> {
     let work_area = profile_message_work_area(owner);
     let message = wide(message);
     let title = wide(title);
     let parent = (owner != HWND::default()).then_some(owner);
     let centering_guard = work_area.and_then(CenteredMessageBoxHookGuard::install);
-    let result = MessageBoxW(
+    let result = crate::windows::native::localized_message_box(
         parent,
         PCWSTR(message.as_ptr()),
         PCWSTR(title.as_ptr()),
         style,
+        language,
     );
     let error = (result.0 == 0).then(io::Error::last_os_error);
     drop(centering_guard);
@@ -4038,6 +4040,71 @@ mod tests {
             width - rect.left,
             rect.bottom,
         )
+    }
+
+    #[test]
+    #[ignore = "requires a live Windows desktop"]
+    fn russian_delete_confirmation_renders_full_profile_name_and_buttons() {
+        use std::cell::Cell;
+        use windows::Win32::UI::{
+            Input::KeyboardAndMouse::GetActiveWindow,
+            WindowsAndMessaging::{
+                GetWindowRect, GetWindowTextW, KillTimer, SendMessageW, SetTimer, IDNO,
+                PRF_CHILDREN, PRF_CLIENT, PRF_ERASEBKGND, PRF_NONCLIENT, WM_COMMAND, WM_PRINT,
+            },
+        };
+
+        thread_local! {
+            static VERIFIED: Cell<bool> = const { Cell::new(false) };
+        }
+
+        unsafe extern "system" fn capture_dialog(_: HWND, _: u32, timer: usize, _: u32) {
+            let dialog = GetActiveWindow();
+            if GetDlgItem(Some(dialog), IDNO.0).is_err() {
+                return;
+            }
+            let _ = KillTimer(None, timer);
+            let _ = PostMessageW(Some(dialog), WM_COMMAND, WPARAM(IDNO.0 as usize), LPARAM(0));
+            let outcome = std::panic::catch_unwind(|| {
+                for (id, expected) in [(IDYES, "&Да"), (IDNO, "&Нет")] {
+                    let button = GetDlgItem(Some(dialog), id.0).unwrap();
+                    let mut text = [0; 32];
+                    let length = GetWindowTextW(button, &mut text) as usize;
+                    assert_eq!(String::from_utf16_lossy(&text[..length]), expected);
+                }
+                let mut bounds = RECT::default();
+                GetWindowRect(dialog, &mut bounds).unwrap();
+                crate::windows::test_render::surface(
+                    "profile-delete-Russian",
+                    bounds.right - bounds.left,
+                    bounds.bottom - bounds.top,
+                    |dc| {
+                        SendMessageW(
+                            dialog,
+                            WM_PRINT,
+                            Some(WPARAM(dc.0 as usize)),
+                            Some(LPARAM(
+                                (PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND | PRF_NONCLIENT)
+                                    as isize,
+                            )),
+                        );
+                    },
+                );
+            });
+            VERIFIED.with(|verified| verified.set(outcome.is_ok()));
+        }
+
+        let name = "Длинное имя рабочего профиля отдела №123";
+        // SAFETY: the timer and fake confirmation are confined to this test's UI thread.
+        unsafe {
+            let timer = SetTimer(None, 0, 150, Some(capture_dialog));
+            assert_ne!(timer, 0);
+            let confirmed =
+                super::confirm_profile_delete_owned(HWND::default(), name, Language::Russian);
+            let _ = KillTimer(None, timer);
+            assert!(!confirmed.unwrap());
+        }
+        assert!(VERIFIED.with(Cell::get));
     }
 
     #[test]

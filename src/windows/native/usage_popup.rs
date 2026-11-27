@@ -296,26 +296,6 @@ fn daily_date_indices(count: usize) -> Vec<usize> {
     }
 }
 
-fn daily_date_label(start_date: &str) -> String {
-    let date = start_date.split('T').next().unwrap_or(start_date);
-    let mut parts = date.split('-');
-    let day_prefix = parts
-        .clone()
-        .nth(2)
-        .map(|day| day.chars().take(2).collect::<String>());
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(_year), Some(month), Some(_day))
-            if month.len() == 2
-                && day_prefix.as_deref().is_some_and(|day| {
-                    day.len() == 2 && day.chars().all(|c| c.is_ascii_digit())
-                }) =>
-        {
-            format!("{month}/{}", day_prefix.unwrap_or_default())
-        }
-        _ => date.to_owned(),
-    }
-}
-
 fn daily_date_text_format(rtl: bool) -> DRAW_TEXT_FORMAT {
     let direction = if rtl {
         DT_RTLREADING
@@ -757,6 +737,7 @@ unsafe fn paint_content(
             palette,
             dpi,
             rtl,
+            presentation.language,
         );
     }
 }
@@ -816,6 +797,7 @@ unsafe fn paint_daily_dates(
     palette: PopupPalette,
     dpi: u32,
     rtl: bool,
+    language: crate::Language,
 ) {
     let indices = daily_date_indices(daily_usage.len());
     if indices.is_empty() || area.width() <= 0 || area.height() <= 0 {
@@ -827,7 +809,10 @@ unsafe fn paint_daily_dates(
         else {
             continue;
         };
-        let label = daily_date_label(&daily_usage[index].start_date);
+        let label = crate::localization::localized_daily_date_label(
+            &daily_usage[index].start_date,
+            language,
+        );
         draw_formatted_text(
             dc,
             &label,
@@ -984,9 +969,8 @@ mod tests {
 
     use super::{
         allowance_layout, apply_surface_alpha, daily_chart_bounds, daily_date_bounds,
-        daily_date_indices, daily_date_label, daily_date_text_format, daily_usage_bar_height,
-        daily_usage_slot, popup_columns, popup_render_size, rounded_surface_alpha,
-        wrapped_text_format, TextStyle,
+        daily_date_indices, daily_date_text_format, daily_usage_bar_height, daily_usage_slot,
+        popup_columns, popup_render_size, rounded_surface_alpha, wrapped_text_format, TextStyle,
     };
     use crate::windows::widget::Rect;
 
@@ -1036,13 +1020,22 @@ mod tests {
 
     #[test]
     fn allowance_measured_layout_and_render_keep_content_inside_paper() {
-        use crate::windows::popup::{popup_palette, tests::ready_view, usage_popup_presentation};
+        use crate::windows::popup::{
+            popup_palette,
+            tests::{ready_view, russian_ready_view},
+            usage_popup_presentation,
+        };
         for (language, rtl) in [
             (crate::Language::Korean, false),
             (crate::Language::English, false),
             (crate::Language::Arabic, true),
+            (crate::Language::Russian, false),
         ] {
-            let mut view = ready_view();
+            let mut view = if language == crate::Language::Russian {
+                russian_ready_view()
+            } else {
+                ready_view()
+            };
             if language == crate::Language::Korean {
                 view.usage_profile_label = "개인 프로필".into();
                 view.consumption_pace.summary = "사용 속도 여유 · 최근 관측 기준".into();
@@ -1289,8 +1282,20 @@ mod tests {
 
     #[test]
     fn daily_date_label_keeps_month_and_day_compact() {
-        assert_eq!(daily_date_label("2026-08-19"), "08/19");
-        assert_eq!(daily_date_label("invalid"), "invalid");
+        use crate::{localization::localized_daily_date_label, Language};
+
+        assert_eq!(
+            localized_daily_date_label("2026-08-19", Language::English),
+            "08/19"
+        );
+        assert_eq!(
+            localized_daily_date_label("2026-08-19T00:00:00Z", Language::Russian),
+            "19.08"
+        );
+        assert_eq!(
+            localized_daily_date_label("invalid", Language::Russian),
+            "invalid"
+        );
     }
 
     #[test]

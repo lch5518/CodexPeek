@@ -14,9 +14,9 @@ use super::{
     MENU_INTERVAL_30, MENU_INTERVAL_5, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
     MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
     MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
-    MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
-    MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES, MENU_REFRESH,
-    MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
+    MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_RUSSIAN, MENU_LANGUAGE_SPANISH,
+    MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE, MENU_LOGIN, MENU_MANAGE_USAGE_PROFILES,
+    MENU_REFRESH, MENU_SHOW_REMAINING, MENU_STARTUP_TRAY, MENU_STARTUP_WIDGET, MENU_TASKBAR_ALL,
     MENU_TASKBAR_PRIMARY, MENU_UPDATE_CHECK, MENU_USAGE_FORECAST_CLEAR_HISTORY,
     MENU_USAGE_FORECAST_TOGGLE, MENU_WIDGET_VISIBLE,
 };
@@ -400,6 +400,7 @@ pub fn language_menu_label(option: LanguagePreference, resolved: Language) -> St
         LanguagePreference::Vietnamese => language_menu_endonym_label(resolved, "Tiếng Việt"),
         LanguagePreference::Turkish => language_menu_endonym_label(resolved, "Türkçe"),
         LanguagePreference::Arabic => language_menu_endonym_label(resolved, "العربية"),
+        LanguagePreference::Russian => language_menu_endonym_label(resolved, "Русский"),
     }
 }
 
@@ -421,6 +422,7 @@ fn language_menu_choice_label(option: LanguagePreference, resolved: Language) ->
         LanguagePreference::Vietnamese => "Tiếng Việt",
         LanguagePreference::Turkish => "Türkçe",
         LanguagePreference::Arabic => "العربية",
+        LanguagePreference::Russian => "Русский",
     }
 }
 
@@ -440,6 +442,7 @@ const LANGUAGE_MENU_OPTIONS: &[(u16, LanguagePreference)] = &[
     (MENU_LANGUAGE_VIETNAMESE, LanguagePreference::Vietnamese),
     (MENU_LANGUAGE_TURKISH, LanguagePreference::Turkish),
     (MENU_LANGUAGE_ARABIC, LanguagePreference::Arabic),
+    (MENU_LANGUAGE_RUSSIAN, LanguagePreference::Russian),
 ];
 
 fn auto_language_menu_label(resolved: Language) -> &'static str {
@@ -456,6 +459,7 @@ fn auto_language_menu_label(resolved: Language) -> &'static str {
         Language::Vietnamese => "Ngôn ngữ: tự động",
         Language::Turkish => "Dil: otomatik",
         Language::Arabic => "اللغة: تلقائي",
+        Language::Russian => "Язык: автоматически",
     }
 }
 
@@ -476,6 +480,7 @@ fn language_menu_prefix(resolved: Language) -> &'static str {
         Language::Vietnamese => "Ngôn ngữ:",
         Language::Turkish => "Dil:",
         Language::Arabic => "اللغة:",
+        Language::Russian => "Язык:",
     }
 }
 
@@ -489,8 +494,8 @@ mod tests {
         UiSettings, UsageProfileView, MENU_LANGUAGE_ARABIC, MENU_LANGUAGE_AUTO,
         MENU_LANGUAGE_ENGLISH, MENU_LANGUAGE_FRENCH, MENU_LANGUAGE_GERMAN, MENU_LANGUAGE_HINDI,
         MENU_LANGUAGE_INDONESIAN, MENU_LANGUAGE_JAPANESE, MENU_LANGUAGE_KOREAN,
-        MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_SPANISH, MENU_LANGUAGE_TURKISH,
-        MENU_LANGUAGE_VIETNAMESE,
+        MENU_LANGUAGE_PORTUGUESE_BRAZIL, MENU_LANGUAGE_RUSSIAN, MENU_LANGUAGE_SPANISH,
+        MENU_LANGUAGE_TURKISH, MENU_LANGUAGE_VIETNAMESE,
     };
     use crate::{
         Language, LanguagePreference, StartupView, TaskbarDisplayMode, UpdatePresentationStatus,
@@ -551,6 +556,7 @@ mod tests {
                 "Tiếng Việt",
                 "Türkçe",
                 "العربية",
+                "Русский",
             ]
         );
         assert_eq!(
@@ -590,6 +596,7 @@ mod tests {
             (Language::Vietnamese, "Ngôn ngữ: tự động"),
             (Language::Turkish, "Dil: otomatik"),
             (Language::Arabic, "اللغة: تلقائي"),
+            (Language::Russian, "Язык: автоматически"),
         ];
 
         for (language, expected) in cases {
@@ -601,7 +608,7 @@ mod tests {
         }
     }
 
-    fn expected_language_options() -> [(u16, LanguagePreference); 13] {
+    fn expected_language_options() -> [(u16, LanguagePreference); 14] {
         [
             (MENU_LANGUAGE_AUTO, LanguagePreference::Auto),
             (MENU_LANGUAGE_KOREAN, LanguagePreference::Korean),
@@ -619,6 +626,7 @@ mod tests {
             (MENU_LANGUAGE_VIETNAMESE, LanguagePreference::Vietnamese),
             (MENU_LANGUAGE_TURKISH, LanguagePreference::Turkish),
             (MENU_LANGUAGE_ARABIC, LanguagePreference::Arabic),
+            (MENU_LANGUAGE_RUSSIAN, LanguagePreference::Russian),
         ]
     }
 

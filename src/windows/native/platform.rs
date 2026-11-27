@@ -29,7 +29,7 @@ use windows::{
             },
             Console::{AttachConsole, ATTACH_PARENT_PROCESS},
             LibraryLoader::GetModuleHandleW,
-            Threading::CreateMutexW,
+            Threading::{CreateMutexW, GetCurrentThreadId},
         },
         UI::{
             Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW},
@@ -47,21 +47,23 @@ use windows::{
             Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
             Shell::{ShellExecuteW, NIN_SELECT},
             WindowsAndMessaging::{
-                CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect,
-                GetMessageW, GetParent, GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW,
-                MessageBoxW, MoveWindow, PostQuitMessage, RegisterClassW, RegisterWindowMessageW,
-                SendMessageW, SetParent, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
-                ShowWindow, SystemParametersInfoW, TranslateMessage, UpdateLayeredWindow,
-                CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_HWNDPARENT,
-                GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, IDC_ARROW, IDYES,
-                MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TASKMODAL,
-                MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MSG, SPI_GETHIGHCONTRAST,
-                SPI_GETSCREENREADER, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-                SWP_NOZORDER, SW_HIDE, SW_SHOWNA, SW_SHOWNORMAL, ULW_ALPHA, WINDOW_STYLE, WM_CLOSE,
-                WM_CONTEXTMENU, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_DRAWITEM,
-                WM_MEASUREITEM, WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT,
-                WM_SETTINGCHANGE, WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
-                WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_POPUP,
+                CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+                GetClassNameW, GetClientRect, GetDlgItem, GetMessageW, GetParent,
+                GetWindowLongPtrW, IsWindow, KillTimer, LoadCursorW, MessageBoxW, MoveWindow,
+                PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW, SetParent,
+                SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, SetWindowsHookExW,
+                ShowWindow, SystemParametersInfoW, TranslateMessage, UnhookWindowsHookEx,
+                UpdateLayeredWindow, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+                GWLP_HWNDPARENT, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HCBT_ACTIVATE,
+                HWND_TOPMOST, IDCANCEL, IDC_ARROW, IDNO, IDOK, IDYES, MB_ICONINFORMATION,
+                MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MB_TASKMODAL, MB_YESNO, MESSAGEBOX_RESULT,
+                MESSAGEBOX_STYLE, MSG, SPI_GETHIGHCONTRAST, SPI_GETSCREENREADER, SWP_FRAMECHANGED,
+                SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA,
+                SW_SHOWNORMAL, ULW_ALPHA, WH_CBT, WINDOW_STYLE, WM_CLOSE, WM_CONTEXTMENU,
+                WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_DRAWITEM, WM_MEASUREITEM,
+                WM_MOUSEMOVE, WM_NCCREATE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETTINGCHANGE,
+                WM_THEMECHANGED, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED,
+                WS_EX_TOOLWINDOW, WS_POPUP,
             },
         },
     },
@@ -110,6 +112,7 @@ static TASKBAR_CREATED_MESSAGE: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static UPDATE_DIALOG_IN_PROGRESS: Cell<bool> = const { Cell::new(false) };
+    static RUSSIAN_MESSAGE_BOX_PENDING: Cell<bool> = const { Cell::new(false) };
 }
 
 struct UpdateDialogGuard;
@@ -791,7 +794,69 @@ enum UpdateChoice {
     SkipVersion,
 }
 
-struct WindowsNativeMessagePresenter;
+/// 동기 메시지 상자의 표준 버튼을 러시아어 UI 선택에 맞춥니다.
+///
+/// # Safety
+///
+/// 유효한 소유 창 또는 `None`과 호출 동안 유효한 NUL 종료 문자열을 전달해야 합니다.
+pub(crate) unsafe fn localized_message_box(
+    owner: Option<HWND>,
+    message: PCWSTR,
+    title: PCWSTR,
+    style: MESSAGEBOX_STYLE,
+    language: Language,
+) -> MESSAGEBOX_RESULT {
+    let hook = (language == Language::Russian)
+        .then(|| {
+            SetWindowsHookExW(
+                WH_CBT,
+                Some(localize_message_box_buttons),
+                None,
+                GetCurrentThreadId(),
+            )
+        })
+        .and_then(Result::ok);
+    let previous = hook.map(|_| RUSSIAN_MESSAGE_BOX_PENDING.with(|pending| pending.replace(true)));
+    let result = MessageBoxW(owner, message, title, style);
+    if let Some((hook, previous)) = hook.zip(previous) {
+        RUSSIAN_MESSAGE_BOX_PENDING.with(|pending| pending.set(previous));
+        let _ = UnhookWindowsHookEx(hook);
+    }
+    result
+}
+
+/// 표준 대화상자의 활성화 시 정확히 한 번 현재 스레드의 버튼 문구를 바꿉니다.
+///
+/// # Safety
+///
+/// Windows가 CBT 훅 계약에 따라 호출해야 합니다.
+unsafe extern "system" fn localize_message_box_buttons(
+    code: i32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if code == HCBT_ACTIVATE as i32 && RUSSIAN_MESSAGE_BOX_PENDING.with(Cell::get) {
+        let hwnd = HWND(wparam.0 as *mut _);
+        let mut class = [0_u16; 16];
+        let length = GetClassNameW(hwnd, &mut class) as usize;
+        if class.get(..length) == Some(w!("#32770").as_wide()) {
+            RUSSIAN_MESSAGE_BOX_PENDING.with(|pending| pending.set(false));
+            for (id, label) in [
+                (IDOK, w!("ОК")),
+                (IDCANCEL, w!("Отмена")),
+                (IDYES, w!("&Да")),
+                (IDNO, w!("&Нет")),
+            ] {
+                if let Ok(button) = GetDlgItem(Some(hwnd), id.0) {
+                    let _ = SetWindowTextW(button, label);
+                }
+            }
+        }
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+struct WindowsNativeMessagePresenter(Language);
 
 impl NativeMessagePresenter for WindowsNativeMessagePresenter {
     fn present_profile(
@@ -804,7 +869,7 @@ impl NativeMessagePresenter for WindowsNativeMessagePresenter {
     ) -> io::Result<MESSAGEBOX_RESULT> {
         // SAFETY: 네이티브 UI 호출자는 기존과 동일한 owner 수명 계약을 지키며, 공통 경계가
         // 문자열을 소유 UTF-16 버퍼로 복사한 뒤 동기적으로 표시합니다.
-        unsafe { show_profile_message(route, owner, message, title, style) }
+        unsafe { show_profile_message(route, owner, message, title, style, self.0) }
     }
 
     fn present_application(
@@ -820,11 +885,12 @@ impl NativeMessagePresenter for WindowsNativeMessagePresenter {
         // SAFETY: 두 버퍼는 NUL 종료되어 있고 동기 `MessageBoxW` 호출이 반환될 때까지 살아
         // 있습니다. 유효한 숨은 소유 창을 전달해 대화상자가 트레이 앱과 함께 표시됩니다.
         let result = unsafe {
-            MessageBoxW(
+            localized_message_box(
                 owner,
                 PCWSTR(message.as_ptr()),
                 PCWSTR(title.as_ptr()),
                 style,
+                self.0,
             )
         };
         if result.0 == 0 {
@@ -893,7 +959,7 @@ impl NativeMessagePresenter for WindowsNativeMessagePresenter {
 }
 
 unsafe fn show_profile_dialog_error(owner: HWND, language: crate::Language) {
-    let mut presenter = WindowsNativeMessagePresenter;
+    let mut presenter = WindowsNativeMessagePresenter(language);
     show_profile_dialog_error_with_presenter(owner, language, &mut presenter);
 }
 
@@ -902,7 +968,7 @@ unsafe fn confirm_usage_forecast_clear_owned(
     owner: HWND,
     language: crate::Language,
 ) -> io::Result<bool> {
-    let mut presenter = WindowsNativeMessagePresenter;
+    let mut presenter = WindowsNativeMessagePresenter(language);
     confirm_usage_forecast_clear_with_presenter(owner, language, &mut presenter)
 }
 
@@ -2236,8 +2302,12 @@ impl Drop for ShellComApartment {
     }
 }
 
-pub(super) unsafe fn show_diagnostic_summary(title: &str, message: &str) -> io::Result<()> {
-    let mut presenter = WindowsNativeMessagePresenter;
+pub(super) unsafe fn show_diagnostic_summary(
+    title: &str,
+    message: &str,
+    language: Language,
+) -> io::Result<()> {
+    let mut presenter = WindowsNativeMessagePresenter(language);
     show_diagnostic_summary_with_presenter(title, message, &mut presenter)
 }
 
@@ -2263,7 +2333,7 @@ unsafe fn show_pending_update_notice_if_ready(state_pointer: *mut NativeState<'_
         begin_exit(state_pointer);
         return;
     }
-    let mut presenter = WindowsNativeMessagePresenter;
+    let mut presenter = WindowsNativeMessagePresenter((*state_pointer).settings.resolved_language);
     let _ = show_update_notice_with_presenter(
         (*state_pointer).owner,
         &notice,
@@ -2797,5 +2867,51 @@ mod tests {
         assert_ne!(light.material, dark.material);
         assert!(light.label < light.material);
         assert!(dark.label > dark.material);
+    }
+
+    #[test]
+    fn russian_widgets_render_compact_periods_with_real_fonts() {
+        let view = crate::windows::popup::tests::russian_ready_view();
+        let palette = taskbar_palette(true);
+        for (name, width, height, attached) in [
+            ("full", 208, 48, true),
+            ("compact", 110, 48, true),
+            ("floating", 208, 66, false),
+        ] {
+            crate::windows::test_render::surface(
+                &format!("widget-Russian-{name}"),
+                width,
+                height,
+                |dc| {
+                    let bounds = super::RECT {
+                        left: 0,
+                        top: 0,
+                        right: width,
+                        bottom: height,
+                    };
+                    // SAFETY: the test owns this bitmap DC and releases the temporary brush.
+                    unsafe {
+                        let brush = super::CreateSolidBrush(COLORREF(palette.material));
+                        super::FillRect(dc, &bounds, brush);
+                        let _ = super::DeleteObject(super::HGDIOBJ(brush.0));
+                        let layout = super::widget_surface_layout(width, height, 96, attached);
+                        super::paint_compact_taskbar_content(
+                            dc,
+                            super::native_rect(layout.content),
+                            96,
+                            &view,
+                            palette,
+                            false,
+                        );
+                        if let (Some(header), Some(label)) = (
+                            layout.profile_header,
+                            super::profile_header_text(&view, layout),
+                        ) {
+                            super::paint_profile_header(dc, header, label, 96, palette, false);
+                        }
+                    }
+                },
+            );
+        }
     }
 }

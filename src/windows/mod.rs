@@ -71,6 +71,8 @@ pub const MENU_LANGUAGE_VIETNAMESE: u16 = 210;
 pub const MENU_LANGUAGE_TURKISH: u16 = 211;
 /// 아랍어 메뉴 식별자입니다.
 pub const MENU_LANGUAGE_ARABIC: u16 = 212;
+/// 러시아어 메뉴 식별자입니다.
+pub const MENU_LANGUAGE_RUSSIAN: u16 = 213;
 /// 진단 메뉴 식별자입니다.
 pub const MENU_DIAGNOSTICS: u16 = 220;
 /// 업데이트 확인 메뉴 식별자입니다.
@@ -160,6 +162,7 @@ pub fn resolve_windows_language(
         LanguagePreference::Vietnamese => Language::Vietnamese,
         LanguagePreference::Turkish => Language::Turkish,
         LanguagePreference::Arabic => Language::Arabic,
+        LanguagePreference::Russian => Language::Russian,
         LanguagePreference::Auto => ui_language
             .and_then(language_from_langid)
             .or_else(|| locale_name.and_then(language_from_locale_name))
@@ -178,6 +181,7 @@ fn language_from_langid(language: u16) -> Option<Language> {
         0x11 => Some(Language::Japanese),
         0x12 => Some(Language::Korean),
         0x16 if language == 0x0416 => Some(Language::PortugueseBrazil),
+        0x19 => Some(Language::Russian),
         0x1f => Some(Language::Turkish),
         0x21 => Some(Language::Indonesian),
         0x2a => Some(Language::Vietnamese),
@@ -202,6 +206,7 @@ fn language_from_locale_name(locale: &str) -> Option<Language> {
         "pt" if locale == "pt-br" || locale.starts_with("pt-br-") => {
             Some(Language::PortugueseBrazil)
         }
+        "ru" => Some(Language::Russian),
         "tr" => Some(Language::Turkish),
         "vi" => Some(Language::Vietnamese),
         _ => None,
@@ -358,6 +363,7 @@ pub fn menu_action(menu_id: u16) -> Option<UiAction> {
         MENU_LANGUAGE_VIETNAMESE => UiAction::SetLanguage(LanguagePreference::Vietnamese),
         MENU_LANGUAGE_TURKISH => UiAction::SetLanguage(LanguagePreference::Turkish),
         MENU_LANGUAGE_ARABIC => UiAction::SetLanguage(LanguagePreference::Arabic),
+        MENU_LANGUAGE_RUSSIAN => UiAction::SetLanguage(LanguagePreference::Russian),
         MENU_DIAGNOSTICS => UiAction::RunDiagnostics,
         MENU_UPDATE_CHECK => UiAction::CheckForUpdates,
         MENU_WIDGET_VISIBLE => UiAction::ToggleWidget,

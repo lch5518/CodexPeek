@@ -128,6 +128,7 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
         Language::Vietnamese,
         Language::Turkish,
         Language::Arabic,
+        Language::Russian,
     ];
 
     assert_eq!(LocalizationKey::ALL.len(), 111);
@@ -143,6 +144,31 @@ fn every_required_localization_key_has_nonempty_text_for_every_language() {
                 "{key:?} {language:?}"
             );
         }
+    }
+}
+
+#[test]
+fn russian_text_preserves_template_fields_and_paragraphs() {
+    fn fields(text: &str) -> Vec<&str> {
+        let mut fields = text
+            .split('{')
+            .skip(1)
+            .map(|part| part.split_once('}').unwrap().0)
+            .collect::<Vec<_>>();
+        fields.sort_unstable();
+        fields
+    }
+
+    for &key in LocalizationKey::ALL {
+        let english = localized_text(key, Language::English);
+        let russian = localized_text(key, Language::Russian);
+        assert!(russian.chars().any(|c| ('А'..='я').contains(&c)), "{key:?}");
+        assert_eq!(fields(russian), fields(english), "{key:?}");
+        assert_eq!(
+            russian.matches('\n').count(),
+            english.matches('\n').count(),
+            "{key:?}"
+        );
     }
 }
 

@@ -78,6 +78,7 @@ pub(crate) struct PopupForecastLine {
 /// 네이티브 렌더러가 문자열을 해석하지 않고 소비하는 사용량 상세 표현입니다.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UsagePopupPresentation {
+    pub(crate) language: Language,
     pub(crate) profile_label: String,
     pub(crate) lead_label: String,
     pub(crate) lead_percent: String,
@@ -117,6 +118,7 @@ pub(crate) fn usage_popup_presentation(
         });
 
     UsagePopupPresentation {
+        language,
         profile_label: view.usage_profile_label.clone(),
         lead_label: if view.show_remaining_percent {
             crate::app::remaining_usage_label(language)
@@ -306,6 +308,35 @@ pub(crate) mod tests {
                 crate::DailyTokenUsage::new("2026-08-18", 12_000),
             ],
         }
+    }
+
+    /// 위젯과 팝업에서 러시아어 글꼴과 간격을 확인할 고정 사용량입니다.
+    #[cfg(windows)]
+    pub(crate) fn russian_ready_view() -> WidgetViewModel {
+        let mut view = ready_view();
+        view.usage_profile_label = "Рабочий профиль".to_owned();
+        view.primary = Some(row(
+            "5 ч",
+            12.0,
+            88.0,
+            "11.08.2026 (вт) 15:00",
+            ForecastView::Hidden,
+        ));
+        view.secondary = Some(row(
+            "7 д",
+            34.4,
+            65.6,
+            "18.08.2026 (вт) 10:23",
+            ForecastView::ForecastAvailable {
+                line: "К моменту сброса останется около 52%".to_owned(),
+            },
+        ));
+        view.status = "Обновление данных".to_owned();
+        view.last_success = "Данные получены 120 с назад".to_owned();
+        view.consumption_pace.summary = "Темп расхода: низкий".to_owned();
+        view.consumption_pace.detail =
+            Some("За 2 часа использовано 2% · около 1% в час".to_owned());
+        view
     }
 
     #[test]

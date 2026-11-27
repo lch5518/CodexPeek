@@ -86,6 +86,8 @@ pub enum LanguagePreference {
     Turkish,
     /// 아랍어로 표시합니다.
     Arabic,
+    /// 러시아어로 표시합니다.
+    Russian,
 }
 
 /// 다중 모니터에서 작업표시줄 위젯을 표시할 범위입니다.
